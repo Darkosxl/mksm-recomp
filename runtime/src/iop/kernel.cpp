@@ -636,8 +636,8 @@ std::int32_t load_module_buffer(const std::vector<std::uint8_t> &data, const std
         if (g_trace_modules) std::fprintf(stderr, "[iop] %s handled natively\n", name.c_str());
         const int id = g_next_module++;
         g_modules[id] = Module{id, name, 0, 0, 0, 0};
-        if (hle->second) hle->second();
-        if (done) done(id, 0);
+        const int result = hle->second ? hle->second() : 0;
+        if (done) done(id, result);
         return id;
     }
     if (data.size() < 52 || std::memcmp(data.data(), "\x7f" "ELF", 4) != 0) {
