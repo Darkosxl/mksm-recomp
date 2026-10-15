@@ -15,7 +15,7 @@ for ((r = 1; r <= rounds; r++)); do
   misses=$G/misses-$tag.txt
   cp -f "$G/dev.ps2" "$G/explore-$tag.ps2" 2>/dev/null || true
   rm -f "$misses"
-  __NV_PRIME_RENDER_OFFLOAD=1 __VK_LAYER_NV_optimus=NVIDIA_only PS2_VU_RECORD=$G/vu1 timeout $((frames / 20 + 300)) "$R/build/native-mksm/ps2run" "$elf" \
+  SDL_AUDIODRIVER=dummy __NV_PRIME_RENDER_OFFLOAD=1 __VK_LAYER_NV_optimus=NVIDIA_only PS2_VU_RECORD=$G/vu1 timeout $((frames / 20 + 300)) "$R/build/native-mksm/ps2run" "$elf" \
     --disc "$G/disc.iso" "${load[@]}" --frames "$frames" --misses "$misses" --memcard "$G/explore-$tag.ps2" \
     $(cat "$args") > "$log" 2>&1 || echo "round $r: ps2run exit $?"
   reason=$(sed -n 's/^\[ee\] halted: //p' "$log" | head -1)

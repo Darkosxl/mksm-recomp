@@ -8,7 +8,7 @@ BIN=${1:-$P/ps2-web-recomp/build/native-mksm/ps2run}
 OUT=${2:-$P/logs/regress/$(date +%m%d-%H%M)}
 ST=$P/logs/states
 mkdir -p "$OUT"
-export __NV_PRIME_RENDER_OFFLOAD=1 __VK_LAYER_NV_optimus=NVIDIA_only
+export __NV_PRIME_RENDER_OFFLOAD=1 __VK_LAYER_NV_optimus=NVIDIA_only SDL_AUDIODRIVER=dummy
 
 run() {  # name frames state|- extra-args...
   local name=$1 frames=$2 state=$3; shift 3
