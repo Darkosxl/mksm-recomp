@@ -714,6 +714,12 @@ void handle_syscall(Cpu &c, std::uint32_t pc) {
     }
     case 0x7E: ret(c, 0); break;
     case 0x7F: ret(c, kRamSize); break;
+    case 0x80:
+        // _GetGsDxDyOffset(mode, &dx, &dy, &dw, &dh): BIOS display-position trim. Report no
+        // adjustment, the same zeros libgraph uses itself when the ROM predates the call.
+        for (int i = 1; i <= 4; ++i) st32(arg(c, i), 0);
+        ret(c, 0);
+        break;
     default:
         std::fprintf(stderr, "[sys] unhandled syscall 0x%02X from 0x%08X\n", n, pc);
         ret(c, 0);
@@ -800,6 +806,7 @@ const char *syscall_name(std::uint32_t n) {
     case 0x7C: return "Deci2Call";
     case 0x7E: return "MachineType";
     case 0x7F: return "GetMemorySize";
+    case 0x80: return "GetGsDxDyOffset";
     default: return "?";
     }
 }
