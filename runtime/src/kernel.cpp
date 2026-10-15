@@ -688,6 +688,10 @@ void handle_syscall(Cpu &c, std::uint32_t pc) {
     case 0x4B: st32(arg(c, 0), g_osd_config); ret(c, 0); break;
     case 0x64: case 0x68: ret(c, 0); break;
     case 0x5B: case 0x6B: ret(c, 0); break;
+    // _SetTLBEntry(index, ...) / _InitTLB: guest memory is mapped flat, so there is no TLB to
+    // program. Report success the way the kernel does (index, or -1 past the 48 entries).
+    case 0x56: ret(c, arg(c, 0) < 48u ? static_cast<std::int64_t>(arg(c, 0)) : -1); break;
+    case 0x82: ret(c, 0); break;
     case 0x70: ret(c, static_cast<std::int64_t>(hw::gs_imr())); break;
     case 0x71: { const std::uint64_t old = hw::gs_imr(); hw::gs_set_imr(arg(c, 0)); ret(c, static_cast<std::int64_t>(old)); break; }
     case 0x73: g_vsync_flag = arg(c, 0); g_vsync_data = arg(c, 1); ret(c, 0); break;
@@ -790,6 +794,7 @@ const char *syscall_name(std::uint32_t n) {
     case 0x48: return "iReferSemaStatus";
     case 0x4A: return "SetOsdConfigParam";
     case 0x4B: return "GetOsdConfigParam";
+    case 0x56: return "SetTLBEntry";
     case 0x5B: return "GetEntryAddress";
     case 0x64: return "FlushCache";
     case 0x6B: return "SifStopDma";
@@ -807,6 +812,7 @@ const char *syscall_name(std::uint32_t n) {
     case 0x7E: return "MachineType";
     case 0x7F: return "GetMemorySize";
     case 0x80: return "GetGsDxDyOffset";
+    case 0x82: return "InitTLB";
     default: return "?";
     }
 }
