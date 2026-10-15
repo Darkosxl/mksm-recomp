@@ -85,6 +85,11 @@ bool *block_end(const Voice &v) {
 std::uint16_t g_spdif_out = 0, g_spdif_mode = 0, g_spdif_media = 0;
 std::vector<std::int16_t> g_audio;
 bool g_record = false;
+// PS2_DUMP_STEMS=path: 8-channel WAV beside PS2_DUMP_AUDIO with the mixer's inputs per sample: core 0 ADMA in L/R,
+// core 1 ADMA in L/R (both before BVOL), core 0 voices dry L/R, core 1 voices dry L/R.
+constexpr unsigned kStems = 8;
+std::vector<std::int16_t> g_stems;
+const char *g_stems_path = nullptr;
 std::function<void(const std::int16_t *, std::size_t)> g_sink;
 std::uint64_t g_next_tick = 0;
 bool g_tick_pending = false;
@@ -130,6 +135,13 @@ void decode_block(Voice &v, std::int16_t *out) {
 }
 
 void key_on(Voice &v) {
+    static const bool trace = std::getenv("PS2_TRACE_SPU2") != nullptr;
+    if (trace) {
+        const int c = &v >= g_cores[1].voices ? 1 : 0;
+        std::fprintf(stderr, "[spu2] core %d voice %d key on ssa 0x%05X pitch 0x%04X adsr %04X/%04X vol %04X/%04X time %llu\n", c,
+                     static_cast<int>(&v - g_cores[c].voices), v.ssa, v.pitch, v.adsr1, v.adsr2, v.voll, v.volr,
+                     static_cast<unsigned long long>(kernel::now()));
+    }
     v.key_on = false;
     v.lsax_written = false;
     v.end = false;
@@ -174,7 +186,8 @@ std::int32_t volume(std::uint16_t reg, Envelope &e) {
 
 std::int16_t clamp16(std::int32_t v) { return static_cast<std::int16_t>(std::clamp(v, -32768, 32767)); }
 
-void render_voice(Voice &v, std::int32_t (*sum)[2], std::int16_t *raw) {
+// gates: bit 0/1 = dry L/R (VMIXL/VMIXR), bit 2/3 = wet L/R (VMIXEL/VMIXER).
+void render_voice(Voice &v, unsigned gates, std::int32_t (*dry)[2], std::int32_t (*wet)[2], std::int16_t *raw) {
     if (v.key_on) key_on(v);
     const std::uint32_t step = std::min<std::uint32_t>(v.pitch, 0x3FFFu);
     const bool sweep_l = v.voll & 0x8000u, sweep_r = v.volr & 0x8000u;
@@ -198,8 +211,12 @@ void render_voice(Voice &v, std::int32_t (*sum)[2], std::int16_t *raw) {
         update_envelope(v);
         const std::int32_t out = sample * v.env.level >> 15;
         if (raw) raw[n] = clamp16(out);
-        sum[n][0] += out * (sweep_l ? volume(v.voll, v.vol[0]) : fixed_l) >> 15;
-        sum[n][1] += out * (sweep_r ? volume(v.volr, v.vol[1]) : fixed_r) >> 15;
+        const std::int32_t l = out * (sweep_l ? volume(v.voll, v.vol[0]) : fixed_l) >> 15;
+        const std::int32_t r = out * (sweep_r ? volume(v.volr, v.vol[1]) : fixed_r) >> 15;
+        if (gates & 1u) dry[n][0] += l;
+        if (gates & 2u) dry[n][1] += r;
+        if (gates & 4u) wet[n][0] += l;
+        if (gates & 8u) wet[n][1] += r;
     }
     v.position = position;
 }
@@ -232,20 +249,28 @@ void feed_input(int core) {
     }
 }
 
-void render_input(int core, std::int32_t &left, std::int32_t &right, std::int16_t &raw_l, std::int16_t &raw_r) {
+// Next ADMA frame of a core, raw (as streamed to SPU RAM 0x2000/0x2400); silence when the ring has run dry.
+void read_input(int core, std::int16_t &raw_l, std::int16_t &raw_r) {
     Core &k = g_cores[core];
+    raw_l = raw_r = 0;
     if (!k.input_count) return;
     const unsigned slot = k.input_read;
     check_irq(kInputBase[core] + slot, 1);
     raw_l = k.input[slot][0];
     raw_r = k.input[slot][1];
-    left += k.input[slot][0] * static_cast<std::int16_t>(k.bvol[0]) >> 15;
-    right += k.input[slot][1] * static_cast<std::int16_t>(k.bvol[1]) >> 15;
     k.input_read = (k.input_read + 1) % kInputFrames;
     --k.input_count;
 }
 
+// MVOL is a volume/sweep register like VOLL/VOLR: fixed mode holds a 15-bit level (0x3FFF = full scale); sweeps are
+// approximated at full scale. AVOL, BVOL and EVOL are plain signed 16-bit gains.
 std::int32_t master(std::uint16_t reg) { return reg & 0x8000u ? 0x7FFF : static_cast<std::int16_t>(reg << 1); }
+std::int32_t gain(std::int32_t sample, std::uint16_t vol) { return sample * static_cast<std::int16_t>(vol) >> 15; }
+
+// 24-bit per-voice mask from a register pair: the lower address holds voices 0-15, the upper one voices 16-23.
+std::uint32_t voice_mask(const Core &k, std::uint32_t off) {
+    return k.regs[off >> 1] | (static_cast<std::uint32_t>(k.regs[(off + 2) >> 1] & 0xFFu) << 16);
+}
 
 // Each core streams every sample into fixed rings in SPU RAM, per core c at c*0x800: input L/R (core 1's input is core 0's
 // output), voice 1, voice 3; at 0x1000+c*0x800: dry L/R, wet L/R. Those writes trip IRQA, and some games (Burnout 3:
@@ -259,13 +284,22 @@ void write_rings(int core, const std::int16_t (*rings)[kBatch]) {
     }
 }
 
+// SPU2 signal flow, per 48 kHz sample (cf. PCSX2 Mixer.cpp, Play! Iop_SpuBase.cpp and the SPU2 register manual):
+//   voices -> VMIXL/VMIXR -> dry sum, voices -> VMIXEL/VMIXER -> wet sum (each clamped to 16 bits);
+//   per core, MMIX gates the voice sums, the ADMA input (x BVOL) and the external input into the dry and wet buses
+//   (bits 11..0: voices dry L/R, wet L/R, input dry L/R, wet L/R, external dry L/R, wet L/R; core 0 has no external input);
+//   core out = dry + reverb(wet) x EVOL;
+//   core 0 out x MVOL0 is core 1's external input (after AVOL1), and only core 1 out x MVOL1 reaches the DAC.
 void tick() {
     std::int16_t out[kBatch * 2];
-    std::int32_t sum[2][kBatch][2] = {};
+    std::int32_t dry[2][kBatch][2] = {}, wet[2][kBatch][2] = {};
     std::int16_t rings[2][8][kBatch] = {};
+    std::int16_t stems[kBatch][kStems] = {};
     static const bool count = std::getenv("PS2_SPU2_COUNT") != nullptr;
     static std::uint64_t ticks = 0, active = 0, phases[5] = {};
     for (int c = 0; c < 2; ++c) {
+        const Core &k = g_cores[c];
+        const std::uint32_t mix[4] = {voice_mask(k, 0x188), voice_mask(k, 0x190), voice_mask(k, 0x18C), voice_mask(k, 0x194)};
         for (int i = 0; i < 24; ++i) {
             Voice &v = g_cores[c].voices[i];
             if (!v.key_on && v.phase == kOff) continue;
@@ -273,31 +307,54 @@ void tick() {
                 ++active;
                 ++phases[v.phase];
             }
-            render_voice(v, sum[c], i == 1 ? rings[c][2] : i == 3 ? rings[c][3] : nullptr);
+            unsigned gates = 0;
+            for (unsigned g = 0; g < 4; ++g) gates |= ((mix[g] >> i) & 1u) << g;
+            render_voice(v, gates, dry[c], wet[c], i == 1 ? rings[c][2] : i == 3 ? rings[c][3] : nullptr);
         }
-        // Reverb is not modelled, so the wet rings stay silent.
-        for (unsigned n = 0; n < kBatch; ++n) {
-            rings[c][4][n] = clamp16(sum[c][n][0]);
-            rings[c][5][n] = clamp16(sum[c][n][1]);
-        }
-        std::int16_t unused[2];
-        for (unsigned n = 0; n < kBatch; ++n)
-            render_input(c, sum[c][n][0], sum[c][n][1], c ? unused[0] : rings[0][0][n], c ? unused[1] : rings[0][1][n]);
     }
     for (unsigned n = 0; n < kBatch; ++n) {
-        std::int32_t mix[2] = {};
+        std::int32_t ext[2] = {};
         for (int c = 0; c < 2; ++c) {
-            const std::int32_t l = sum[c][n][0] * master(g_cores[c].mvol[0]) >> 15, r = sum[c][n][1] * master(g_cores[c].mvol[1]) >> 15;
-            if (!c) {
-                rings[1][0][n] = clamp16(l);
-                rings[1][1][n] = clamp16(r);
+            Core &k = g_cores[c];
+            const std::int32_t vd[2] = {clamp16(dry[c][n][0]), clamp16(dry[c][n][1])};
+            const std::int32_t vw[2] = {clamp16(wet[c][n][0]), clamp16(wet[c][n][1])};
+            for (int s = 0; s < 2; ++s) {
+                rings[c][4 + s][n] = static_cast<std::int16_t>(vd[s]);
+                rings[c][6 + s][n] = static_cast<std::int16_t>(vw[s]);
             }
-            mix[0] += l;
-            mix[1] += r;
+            std::int16_t raw[2];
+            read_input(c, raw[0], raw[1]);
+            if (!c) {
+                rings[0][0][n] = raw[0];
+                rings[0][1][n] = raw[1];
+            }
+            if (g_stems_path) {
+                stems[n][c * 2] = raw[0];
+                stems[n][c * 2 + 1] = raw[1];
+                stems[n][4 + c * 2] = static_cast<std::int16_t>(vd[0]);
+                stems[n][5 + c * 2] = static_cast<std::int16_t>(vd[1]);
+            }
+            const std::int32_t in[2] = {gain(raw[0], k.bvol[0]), gain(raw[1], k.bvol[1])};
+            const unsigned mmix = k.regs[0x198 >> 1] & (c ? 0xFFFu : 0xFF0u);
+            std::int32_t bus_dry[2], bus_wet[2];
+            for (int s = 0; s < 2; ++s) {
+                const unsigned l = s ? 0u : 1u;  // MMIX lists R before L within each pair
+                bus_dry[s] = (mmix & (0x400u << l) ? vd[s] : 0) + (mmix & (0x40u << l) ? in[s] : 0) + (mmix & (0x4u << l) ? ext[s] : 0);
+                bus_wet[s] = (mmix & (0x100u << l) ? vw[s] : 0) + (mmix & (0x10u << l) ? in[s] : 0) + (mmix & (0x1u << l) ? ext[s] : 0);
+            }
+            (void)bus_wet;  // reverb is not modelled yet
+            for (int s = 0; s < 2; ++s) {
+                const std::int16_t o = clamp16(bus_dry[s] * master(k.mvol[s]) >> 15);
+                if (!c) {
+                    rings[1][s][n] = o;
+                    ext[s] = gain(o, g_cores[1].avol[s]);
+                } else {
+                    out[n * 2 + s] = o;
+                }
+            }
         }
-        out[n * 2] = clamp16(mix[0]);
-        out[n * 2 + 1] = clamp16(mix[1]);
     }
+    if (g_stems_path) g_stems.insert(g_stems.end(), &stems[0][0], &stems[0][0] + kBatch * kStems);
     write_rings(0, rings[0]);
     write_rings(1, rings[1]);
     if (count && ++ticks % 15000 == 0)
@@ -477,12 +534,12 @@ std::uint32_t read_global(std::uint32_t off) {
     }
 }
 
-void write_global(std::uint32_t off, std::uint32_t value) {
+bool write_global(std::uint32_t off, std::uint32_t value) {
     switch (off) {
-    case 0x7C0: g_spdif_out = static_cast<std::uint16_t>(value); break;
-    case 0x7C6: g_spdif_mode = static_cast<std::uint16_t>(value); break;
-    case 0x7C8: g_spdif_media = static_cast<std::uint16_t>(value); break;
-    default: break;
+    case 0x7C0: g_spdif_out = static_cast<std::uint16_t>(value); return true;
+    case 0x7C6: g_spdif_mode = static_cast<std::uint16_t>(value); return true;
+    case 0x7C8: g_spdif_media = static_cast<std::uint16_t>(value); return true;
+    default: return false;
     }
 }
 
@@ -496,6 +553,8 @@ void reset() {
     g_spdif_out = g_spdif_mode = g_spdif_media = 0;
     g_audio.clear();
     g_record = std::getenv("PS2_DUMP_AUDIO") != nullptr;
+    g_stems.clear();
+    g_stems_path = std::getenv("PS2_DUMP_STEMS");
     g_next_tick = 0;
     g_tick_pending = false;
 }
@@ -523,10 +582,22 @@ void write(std::uint32_t a, std::uint32_t v, unsigned size) {
     }
     const std::uint32_t off = a & 0x7FEu;
     v &= 0xFFFFu;
-    if (off < 0x760u) write_core((off & 0x400u) ? 1 : 0, off & 0x3FEu, v);
-    else if (off < 0x7B0u) {
-        if (std::uint16_t *reg = master_reg((off - 0x760u) / 0x28, (off - 0x760u) % 0x28)) *reg = static_cast<std::uint16_t>(v);
-    } else write_global(off, v);
+    if (off < 0x760u) {
+        write_core((off & 0x400u) ? 1 : 0, off & 0x3FEu, v);
+        return;
+    }
+    static const bool trace = std::getenv("PS2_TRACE_SPU2") != nullptr;
+    if (trace) std::fprintf(stderr, "[spu2] reg 0x%03X = 0x%04X\n", off, v);
+    std::uint16_t *reg = nullptr;
+    if (off < 0x7B0u) reg = master_reg((off - 0x760u) / 0x28, (off - 0x760u) % 0x28);
+    if (reg) *reg = static_cast<std::uint16_t>(v);
+    else if (!write_global(off, v)) {
+        static bool reported[0x400];
+        if (!reported[off >> 1]) {
+            reported[off >> 1] = true;
+            std::fprintf(stderr, "[spu2] unhandled write 0x%03X = 0x%04X\n", off, v);
+        }
+    }
 }
 
 void dma(int core, std::uint32_t madr, std::uint32_t words, bool to_spu, int channel) {
@@ -562,15 +633,24 @@ void dump_voices() {
         }
 }
 
-void dump_audio(const char *path) {
+namespace {
+
+void write_wav(const char *path, const std::vector<std::int16_t> &samples, std::uint32_t channels) {
     std::FILE *f = std::fopen(path, "wb");
     if (!f) return;
-    const std::uint32_t bytes = static_cast<std::uint32_t>(g_audio.size() * 2);
-    const std::uint32_t header[] = {0x46464952u, 36 + bytes, 0x45564157u, 0x20746D66u, 16,         0x00020001u,
-                                    48000,       48000 * 4,  0x00100004u, 0x61746164u, bytes};
+    const std::uint32_t bytes = static_cast<std::uint32_t>(samples.size() * 2);
+    const std::uint32_t header[] = {0x46464952u, 36 + bytes, 0x45564157u, 0x20746D66u, 16, 0x00000001u | (channels << 16),
+                                    48000, 48000 * 2 * channels, (2 * channels) | (16u << 16), 0x61746164u, bytes};
     std::fwrite(header, 4, sizeof header / 4, f);
-    std::fwrite(g_audio.data(), 2, g_audio.size(), f);
+    std::fwrite(samples.data(), 2, samples.size(), f);
     std::fclose(f);
+}
+
+}
+
+void dump_audio(const char *path) {
+    write_wav(path, g_audio, 2);
+    if (g_stems_path) write_wav(g_stems_path, g_stems, kStems);
 }
 
 }
