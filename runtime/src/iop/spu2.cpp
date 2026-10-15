@@ -72,7 +72,15 @@ struct Core {
     unsigned input_read = 0, input_count = 0;
     std::deque<Transfer> transfers;
     std::uint16_t regs[0x200] = {};
+    // STATX (0x344): 0x80 = DMA ready, 0x400 = DMA busy until busy_until (the transfer's completion time).
+    std::uint16_t statx = 0x80;
+    std::uint64_t busy_until = 0;
 };
+
+// State that has no field of its own in the savestate layout rides in regs[] slots that only the voice registers
+// (offsets 0x000-0x17F, never stored there) map to; states saved before these existed load them as zero, which is the
+// idle value of each.
+constexpr unsigned kShadowStatx = 0x10, kShadowBusy = 0x12;
 
 std::vector<std::uint16_t> g_ram(kRamWords);
 Core g_cores[2];
@@ -92,6 +100,7 @@ std::vector<std::int16_t> g_stems;
 const char *g_stems_path = nullptr;
 std::function<void(const std::int16_t *, std::size_t)> g_sink;
 std::uint64_t g_next_tick = 0;
+std::uint64_t g_statx_reads[2] = {};
 bool g_tick_pending = false;
 
 void check_irq(std::uint32_t address, std::uint32_t words) {
@@ -445,6 +454,29 @@ void key(Core &k, std::uint32_t mask, bool on) {
     }
 }
 
+// The busy phase of a block transfer ends when its completion interrupt is due.
+std::uint16_t statx(Core &k) {
+    if ((k.statx & 0x400u) && kernel::now() >= k.busy_until) k.statx = static_cast<std::uint16_t>((k.statx | 0x80u) & ~0x400u);
+    return k.statx;
+}
+
+// ADMAS cleared: the stream stops at once. Drop queued halves (no stale PCM, no late DMA-done) and clear the input
+// ring and its SPU RAM image, as the hardware's input buffer is reset.
+void stop_adma(int core) {
+    Core &k = g_cores[core];
+    static const bool trace = std::getenv("PS2_TRACE_SPU2") != nullptr;
+    if (trace && (k.input_count || !k.transfers.empty())) {
+        std::uint32_t bytes = 0;
+        for (const Transfer &t : k.transfers) bytes += t.bytes;
+        std::fprintf(stderr, "[spu2] core %d ADMA stop: dropped %u ring frames, %zu queued transfers (%u bytes)\n", core, k.input_count,
+                     k.transfers.size(), bytes);
+    }
+    k.transfers.clear();
+    k.input_count = k.input_read = 0;
+    std::memset(k.input, 0, sizeof k.input);
+    std::fill_n(g_ram.begin() + kInputBase[core], 0x400u, std::uint16_t{0});
+}
+
 std::uint32_t read_core(int core, std::uint32_t off) {
     Core &k = g_cores[core];
     if (off < 0x180u || (off >= 0x1C0u && off < 0x2E0u)) return read_voice(k, off);
@@ -462,7 +494,11 @@ std::uint32_t read_core(int core, std::uint32_t off) {
             if (k.voices[i].end) endx |= 1u << i;
         return off == 0x340 ? endx & 0xFFFFu : endx >> 16;
     }
-    case 0x344: return 0x80u;
+    case 0x344: {
+        static const bool trace = std::getenv("PS2_TRACE_SPU2") != nullptr;
+        if (trace) ++g_statx_reads[core];
+        return statx(k);
+    }
     default: return k.regs[off >> 1];
     }
 }
@@ -478,10 +514,18 @@ void write_core(int core, std::uint32_t off, std::uint32_t value) {
     }
     k.regs[off >> 1] = static_cast<std::uint16_t>(value);
     switch (off) {
-    case 0x19A:
+    case 0x19A: {
+        // STATX follows the ATTR DMA mode (bits 4-5): leaving DMA mode while idle drops "ready", entering it raises it.
+        // sceSdInit's cold reset writes ATTR 0 then 0x8000 and waits for (STATX & 0x7FF) == 0; the DMA ISR and the
+        // stop path wait for 0x80 before they clear the mode bits (LIBSD 0x2864, 0x2498).
+        const unsigned old_mode = (k.attr >> 4) & 3u, mode = (value >> 4) & 3u;
         k.attr = static_cast<std::uint16_t>(value);
         if (!(value & 0x40u)) k.irq = false;
+        statx(k);
+        if (!mode && !(k.statx & 0x400u)) k.statx &= static_cast<std::uint16_t>(~0x80u);
+        else if (!old_mode && mode) k.statx |= 0x80u;
         break;
+    }
     case 0x19C: k.irqa = set_hi(k.irqa, value); break;
     case 0x19E: k.irqa = set_lo(k.irqa, value); break;
     case 0x1A0: key(k, value, true); break;
@@ -497,7 +541,7 @@ void write_core(int core, std::uint32_t off, std::uint32_t value) {
         break;
     case 0x1B0:
         k.admas = static_cast<std::uint16_t>(value);
-        if (!value) k.input_count = k.input_read = 0;
+        if (!(value & (1u << core))) stop_adma(core);
         break;
     case 0x340:
         for (int i = 0; i < 16; ++i) k.voices[i].end = false;
@@ -617,12 +661,17 @@ void dma(int core, std::uint32_t madr, std::uint32_t words, bool to_spu, int cha
         else std::memcpy(iop, spu, 2);
     }
     k.tsa = (k.tsa + halfwords) & kRamMask;
-    if (channel >= 0) kernel::schedule(kernel::now() + 64 + words / 4, kernel::Job{kernel::kJobDmaDone, static_cast<std::uint32_t>(channel)});
+    const std::uint64_t done = kernel::now() + 64 + words / 4;
+    k.statx = static_cast<std::uint16_t>((k.statx & ~0x80u) | 0x400u);
+    k.busy_until = done;
+    if (channel >= 0) kernel::schedule(done, kernel::Job{kernel::kJobDmaDone, static_cast<std::uint32_t>(channel)});
 }
 
 void set_sink(std::function<void(const std::int16_t *, std::size_t)> sink) { g_sink = std::move(sink); }
 
 void dump_voices() {
+    std::fprintf(stderr, "[spu2] STATX reads: core 0 %llu, core 1 %llu\n", static_cast<unsigned long long>(g_statx_reads[0]),
+                 static_cast<unsigned long long>(g_statx_reads[1]));
     for (int c = 0; c < 2; ++c)
         for (int i = 0; i < 24; ++i) {
             const Voice &v = g_cores[c].voices[i];
@@ -682,7 +731,14 @@ void state(ps2::state::Stream &s) {
             s.pod(t.bytes);
             s.pod(t.channel);
         });
+        if (s.saving()) {
+            k.regs[kShadowStatx] = k.statx;
+            for (unsigned i = 0; i < 4; ++i) k.regs[kShadowBusy + i] = static_cast<std::uint16_t>(k.busy_until >> (16 * i));
+        }
         s.pod(k.regs);
+        k.statx = k.regs[kShadowStatx];
+        k.busy_until = 0;
+        for (unsigned i = 0; i < 4; ++i) k.busy_until |= static_cast<std::uint64_t>(k.regs[kShadowBusy + i]) << (16 * i);
     }
     s.pod(g_spdif_out);
     s.pod(g_spdif_mode);
