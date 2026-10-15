@@ -109,7 +109,7 @@ build_native() {
     . "$here/cxx.sh"
     cmake -S "$ROOT" -B "$native" -G Ninja -DCMAKE_BUILD_TYPE=Release "${cxx_flags[@]}" -DPS2_GENERATED="$generated" > /dev/null
   fi
-  ninja -C "$native" ps2run > "$native/ninja.log" 2>&1 || { tail -30 "$native/ninja.log"; exit 1; }
+  ninja -j"${PS2_JOBS:-4}" -C "$native" ps2run > "$native/ninja.log" 2>&1 || { tail -30 "$native/ninja.log"; exit 1; }
 }
 
 echo "== [4/6] exploring"
