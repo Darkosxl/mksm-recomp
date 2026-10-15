@@ -35,7 +35,7 @@ constexpr std::uint32_t kParamStride = 256;
 constexpr std::uint32_t kClutSlots = 2048;
 constexpr std::uint32_t kClutEntries = 512;
 constexpr std::uint32_t kPrimWords = 28;
-constexpr std::uint32_t kSetupWords = 25;
+constexpr std::uint32_t kSetupWords = 32;
 constexpr std::uint32_t kDecodedWords = 4u << 20;
 constexpr std::uint32_t kDecodePrims = 64;
 
@@ -153,6 +153,8 @@ struct SetupCache {
     std::uint32_t flags = 0;
     std::uint64_t key = 0;
     Range tex;
+    Range levels[7];
+    std::uint32_t mips = 0;
 } g_setup_cache;
 
 struct PreOp {
@@ -208,6 +210,21 @@ Range region(std::uint32_t bp, std::uint32_t bw, std::uint32_t psm, int x0, int 
     Range r;
     r.add(std::min(page(x0, y0), static_cast<std::uint64_t>(bp) * 256), page(x1, y1) + 8192);
     return r;
+}
+
+// Highest mipmap level a setup can sample: MXL when MMIN selects a *_MIPMAP_* filter, else 0.
+std::uint32_t mip_levels(const std::uint32_t *w) {
+    const std::uint32_t mmin = (w[25] >> 4) & 7u;
+    return mmin >= 2 && mmin <= 5 ? (w[25] >> 1) & 7u : 0u;
+}
+
+// GS memory a mipmap level occupies (level 0 included), as far as the CLAMP mode lets coordinates reach.
+Range level_range(const std::uint32_t *w, std::uint32_t n) {
+    const std::uint32_t tw = w[15] & 0xFFu, th = w[15] >> 8;
+    const int lw = 1 << (tw > n ? tw - n : 0), lh = 1 << (th > n ? th - n : 0);
+    const int tex_w = std::max(lw, static_cast<int>((w[18] >> 16) >> n) + 1), tex_h = std::max(lh, static_cast<int>((w[19] >> 16) >> n) + 1);
+    if (!n) return region(w[12], w[13], w[14], 0, 0, tex_w - 1, tex_h - 1);
+    return region(w[25 + n] & 0x3FFFu, w[25 + n] >> 16, w[14], 0, 0, tex_w - 1, tex_h - 1);
 }
 
 std::uint32_t z_max(std::uint32_t psm) {
@@ -502,6 +519,11 @@ std::uint32_t snapshot_batch(std::uint32_t prims, std::uint32_t &lo, std::uint32
         const Range t = read_range(rec, setup, region(setup[12], setup[13], setup[14], 0, 0, tw - 1, th - 1));
         for (const Range *w : {&fb, b.zwrite ? &z : nullptr})
             if (w && t.overlaps(w->lo, w->hi)) shared.add(std::max(t.lo, w->lo), std::min(t.hi, w->hi));
+        for (std::uint32_t n = 1; n <= mip_levels(setup); ++n) {
+            const Range m = level_range(setup, n);
+            for (const Range *w : {&fb, b.zwrite ? &z : nullptr})
+                if (w && m.overlaps(w->lo, w->hi)) shared.add(std::max(m.lo, w->lo), std::min(m.hi, w->hi));
+        }
     }
     if (shared.lo >= shared.hi) return 0;
     lo = static_cast<std::uint32_t>(std::min<std::uint64_t>(shared.lo, kMemorySize) / 4);
@@ -1011,6 +1033,15 @@ std::uint32_t make_setup(const State &st, std::uint64_t attr, std::uint32_t *w) 
     w[22] = g_clut_slot;
     w[23] = z_max(zpsm);
     w[24] = 0xFFFFFFFFu;
+    // Mipmapping (TEX1.MXL > 0): LCM | MXL << 1 | MMIN << 4 | L << 7 | K << 16, then TBP | TBW << 16 for levels 1-6.
+    const std::uint32_t mxl = std::min<std::uint32_t>(static_cast<std::uint32_t>(c.tex1 >> 2) & 7u, 6u);
+    w[25] = mxl ? (static_cast<std::uint32_t>(c.tex1) & 1u) | (mxl << 1) | ((static_cast<std::uint32_t>(c.tex1 >> 6) & 7u) << 4) |
+                      ((static_cast<std::uint32_t>(c.tex1 >> 19) & 3u) << 7) | ((static_cast<std::uint32_t>(c.tex1 >> 32) & 0xFFFu) << 16)
+                : 0u;
+    for (std::uint32_t n = 1; n < 7; ++n) {
+        const std::uint64_t m = n < 4 ? c.miptbp1 >> ((n - 1) * 20) : c.miptbp2 >> ((n - 4) * 20);
+        w[25 + n] = mip_levels(w) >= n ? (static_cast<std::uint32_t>(m) & 0x3FFFu) | ((static_cast<std::uint32_t>(m >> 14) & 0x3Fu) << 16) : 0u;
+    }
     return flags;
 }
 
@@ -1258,10 +1289,11 @@ void draw(const State &st, const Vertex *v, int count) {
         cache.flags = make_setup(st, attr, cache.setup);
         cache.key = static_cast<std::uint64_t>(w[1]) | (static_cast<std::uint64_t>(w[2]) << 14) | (static_cast<std::uint64_t>(w[3]) << 20) |
                     (static_cast<std::uint64_t>(w[5]) << 26) | (static_cast<std::uint64_t>(w[6]) << 40);
+        cache.mips = 0;
         if (cache.flags & 2u) {
-            const std::uint32_t tw = w[15] & 0xFFu, th = w[15] >> 8;
-            const int tex_w = std::max(1 << tw, static_cast<int>(w[18] >> 16) + 1), tex_h = std::max(1 << th, static_cast<int>(w[19] >> 16) + 1);
-            cache.tex = region(w[12], w[13], w[14], 0, 0, tex_w - 1, tex_h - 1);
+            cache.tex = level_range(w, 0);
+            cache.mips = mip_levels(w);
+            for (std::uint32_t n = 1; n <= cache.mips; ++n) cache.levels[n] = level_range(w, n);
         }
     }
     const std::uint32_t *setup = cache.setup;
@@ -1380,6 +1412,8 @@ void draw(const State &st, const Vertex *v, int count) {
                     if (frame || (b.zwrite && used.overlaps(b.z_range.lo, b.z_range.hi))) emit_all();
                 }
             }
+            for (std::uint32_t n = 1; n <= cache.mips && !b.prims.empty(); ++n)
+                if (written(cache.levels[n])) emit_all();
         }
     }
     if (b.prims.empty()) {
@@ -1405,10 +1439,12 @@ void draw(const State &st, const Vertex *v, int count) {
         b.setups.insert(b.setups.end(), setup, setup + kSetupWords);
     }
     if (flags & 2u) {
-        if (g_batch_reads.empty() || g_batch_reads.back().lo != tex.lo || g_batch_reads.back().hi != tex.hi) {
+        for (std::uint32_t n = 0; n <= cache.mips; ++n) {
+            const Range &t = n ? cache.levels[n] : tex;
+            if (!g_batch_reads.empty() && g_batch_reads.back().lo == t.lo && g_batch_reads.back().hi == t.hi) continue;
             bool known = false;
-            for (const Range &t : g_batch_reads) known = known || (t.lo <= tex.lo && tex.hi <= t.hi);
-            if (!known) g_batch_reads.push_back(tex);
+            for (const Range &r : g_batch_reads) known = known || (r.lo <= t.lo && t.hi <= r.hi);
+            if (!known) g_batch_reads.push_back(t);
         }
     }
     rec[0] = setup_index;
@@ -1494,6 +1530,7 @@ void load_clut(std::uint64_t tex0, std::uint64_t texclut) {
     g_clut_slot = next;
     ++g_clut_loads;
 }
+
 
 void texflush() { ++g_texflushes; }
 

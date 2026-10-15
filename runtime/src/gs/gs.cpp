@@ -294,6 +294,32 @@ void local_copy() {
     }
 }
 
+// TEX1.MTBA: a TEX0 write derives MIPTBP1 (levels 1-3) from the level-0 address, packing each level right after the
+// previous one and halving the buffer width (from TW only; TH and TBW are ignored). Only for 32x32 up to the largest
+// square that fits, and not for Z formats.
+void auto_mip_base(Context &c) {
+    if (!((c.tex1 >> 9) & 1u)) return;
+    const std::uint32_t psm = static_cast<std::uint32_t>(c.tex0 >> 20) & 0x3Fu, tw = static_cast<std::uint32_t>(c.tex0 >> 26) & 0xFu;
+    std::uint32_t bpp;
+    switch (psm) {
+    case PSMCT32: case PSMCT24: case PSMT8H: case PSMT4HL: case PSMT4HH: bpp = 32; break;
+    case PSMCT16: case PSMCT16S: bpp = 16; break;
+    case PSMT8: bpp = 8; break;
+    case PSMT4: bpp = 4; break;
+    default: return;
+    }
+    if (tw < 5 || tw > (bpp == 32 ? 9u : 10u)) return;
+    const std::uint64_t w = 1ull << tw;
+    std::uint64_t size = (w * w * bpp / 4) >> 9, tbp = c.tex0 & 0x3FFFu, tbw = std::max<std::uint64_t>(1, w >> 6), out = 0;
+    for (int n = 0; n < 3; ++n) {
+        tbp += size;
+        tbw = std::max<std::uint64_t>(tbw >> 1, 1);
+        size = std::max<std::uint64_t>(size >> 2, 1);
+        out |= ((tbp & 0x3FFFu) | ((tbw & 0x3Fu) << 14)) << (n * 20);
+    }
+    c.miptbp1 = out;
+}
+
 void load_clut(std::uint64_t tex0) {
     const std::uint32_t cld = static_cast<std::uint32_t>(tex0 >> 61) & 7u;
     static std::uint32_t cbp0 = ~0u, cbp1 = ~0u;
@@ -550,6 +576,7 @@ void write(std::uint32_t reg, std::uint64_t value) {
                       static_cast<std::uint32_t>(value >> 32), static_cast<std::uint8_t>(s.fog >> 56), true); break;
     case 0x06: case 0x07:
         s.ctx[reg - 6].tex0 = value;
+        auto_mip_base(s.ctx[reg - 6]);
         load_clut(value);
         break;
     case 0x08: case 0x09: s.ctx[reg - 8].clamp = value; break;

@@ -25,6 +25,11 @@ struct Setup {
     int ofx, ofy;
     std::uint32_t tbp, tbw, tpsm, tw, th, cpsm, csa;
     bool tcc, bilinear;
+    // TEX1 mipmapping: LCM, MXL, MMIN, L, K (as a float) and the base/width of levels 1-6 (MIPTBP1/2).
+    bool lcm;
+    int mxl, mmin, lod_l;
+    float lod_k;
+    std::uint32_t mip_tbp[7], mip_tbw[7];
     int tfx, wms, wmt;
     std::uint32_t minu, maxu, minv, maxv;
     std::uint32_t ta0, ta1;
@@ -70,7 +75,18 @@ std::uint32_t expand16(std::uint32_t c, const Setup &s) {
     return r | (g << 8) | (b << 16) | (a << 24);
 }
 
-std::uint32_t fetch(const Setup &s, int x, int y) {
+// One mipmap level: where it lives, its log2 size, and the CLAMP region scaled to it.
+struct Level {
+    std::uint32_t tbp, tbw, tw, th, minu, maxu, minv, maxv;
+};
+
+Level level(const Setup &s, int n) {
+    if (n == 0) return {s.tbp, s.tbw, s.tw, s.th, s.minu, s.maxu, s.minv, s.maxv};
+    const auto un = static_cast<std::uint32_t>(n);
+    return {s.mip_tbp[n], s.mip_tbw[n], s.tw > un ? s.tw - un : 0u, s.th > un ? s.th - un : 0u, s.minu >> n, s.maxu >> n, s.minv >> n, s.maxv >> n};
+}
+
+std::uint32_t fetch(const Setup &s, const Level &l, int x, int y) {
     const auto wrap = [](int v, int size, int mode, std::uint32_t min, std::uint32_t max) {
         switch (mode) {
         case 0: return v & (size - 1);
@@ -79,9 +95,9 @@ std::uint32_t fetch(const Setup &s, int x, int y) {
         default: return static_cast<int>((static_cast<std::uint32_t>(v) & min) | max);
         }
     };
-    x = wrap(x, 1 << s.tw, s.wms, s.minu, s.maxu);
-    y = wrap(y, 1 << s.th, s.wmt, s.minv, s.maxv);
-    const std::uint32_t raw = read_pixel(s.tpsm, s.tbp, s.tbw, static_cast<std::uint32_t>(x), static_cast<std::uint32_t>(y));
+    x = wrap(x, 1 << l.tw, s.wms, l.minu, l.maxu);
+    y = wrap(y, 1 << l.th, s.wmt, l.minv, l.maxv);
+    const std::uint32_t raw = read_pixel(s.tpsm, l.tbp, l.tbw, static_cast<std::uint32_t>(x), static_cast<std::uint32_t>(y));
     switch (s.tpsm) {
     case PSMCT32: case PSMZ32: return raw;
     case PSMCT24: case PSMZ24: return (raw & 0xFFFFFFu) | (((s.aem && !(raw & 0xFFFFFFu)) ? 0u : s.ta0) << 24);
@@ -98,19 +114,52 @@ std::uint32_t fetch(const Setup &s, int x, int y) {
     }
 }
 
-std::uint32_t sample(const Setup &s, float u, float v) {
-    if (!s.bilinear) return fetch(s, static_cast<int>(std::floor(u)), static_cast<int>(std::floor(v)));
+std::uint32_t sample(const Setup &s, const Level &l, float u, float v, bool linear) {
+    if (!linear) return fetch(s, l, static_cast<int>(std::floor(u)), static_cast<int>(std::floor(v)));
     u -= 0.5f;
     v -= 0.5f;
     const int x0 = static_cast<int>(std::floor(u)), y0 = static_cast<int>(std::floor(v));
     const float fx = u - static_cast<float>(x0), fy = v - static_cast<float>(y0);
-    const std::uint32_t c00 = fetch(s, x0, y0), c10 = fetch(s, x0 + 1, y0), c01 = fetch(s, x0, y0 + 1), c11 = fetch(s, x0 + 1, y0 + 1);
+    const std::uint32_t c00 = fetch(s, l, x0, y0), c10 = fetch(s, l, x0 + 1, y0), c01 = fetch(s, l, x0, y0 + 1), c11 = fetch(s, l, x0 + 1, y0 + 1);
     std::uint32_t out = 0;
     for (int ch = 0; ch < 32; ch += 8) {
         const float a = static_cast<float>((c00 >> ch) & 0xFFu), b = static_cast<float>((c10 >> ch) & 0xFFu);
         const float c = static_cast<float>((c01 >> ch) & 0xFFu), d = static_cast<float>((c11 >> ch) & 0xFFu);
         const float top = a + (b - a) * fx, bottom = c + (d - c) * fx;
         out |= static_cast<std::uint32_t>(std::clamp(top + (bottom - top) * fy + 0.5f, 0.0f, 255.0f)) << ch;
+    }
+    return out;
+}
+
+// GS texture LOD: K when LCM=1 or the coordinates are UV (no per-pixel Q), else log2(1/|Q|) * 2^L + K.
+float texture_lod(const Setup &s, float q) {
+    if (s.lcm || s.fst) return s.lod_k;
+    return -std::log2(std::fabs(q)) * static_cast<float>(1 << s.lod_l) + s.lod_k;
+}
+
+// MXL=0 always filters with MMAG on level 0. Otherwise LOD <= 0 magnifies (MMAG, level 0) and LOD > 0 minifies with MMIN:
+// NEAREST/LINEAR stay on level 0, *_MIPMAP_NEAREST rounds the LOD to a level, *_MIPMAP_LINEAR blends floor(LOD) and the next level.
+std::uint32_t texture(const Setup &s, float u, float v, float q) {
+    if (s.mxl == 0) return sample(s, level(s, 0), u, v, s.bilinear);
+    const float lod = texture_lod(s, q);
+    if (!(lod > 0.0f)) return sample(s, level(s, 0), u, v, s.bilinear);
+    const bool linear = s.mmin == 1 || (s.mmin & 4);
+    if (s.mmin < 2 || s.mmin > 5) return sample(s, level(s, 0), u, v, linear);
+    const float l = std::min(lod, static_cast<float>(s.mxl));
+    if (!(s.mmin & 1)) {
+        const int n = std::min(static_cast<int>(std::floor(l + 0.5f)), s.mxl);
+        const float scale = 1.0f / static_cast<float>(1 << n);
+        return sample(s, level(s, n), u * scale, v * scale, linear);
+    }
+    const int n = std::min(static_cast<int>(std::floor(l)), s.mxl - 1);
+    const float f = std::clamp(l - static_cast<float>(n), 0.0f, 1.0f);
+    const float scale = 1.0f / static_cast<float>(1 << n);
+    const std::uint32_t c0 = sample(s, level(s, n), u * scale, v * scale, linear);
+    const std::uint32_t c1 = sample(s, level(s, n + 1), u * scale * 0.5f, v * scale * 0.5f, linear);
+    std::uint32_t out = 0;
+    for (int ch = 0; ch < 32; ch += 8) {
+        const float a = static_cast<float>((c0 >> ch) & 0xFFu), b = static_cast<float>((c1 >> ch) & 0xFFu);
+        out |= static_cast<std::uint32_t>(std::clamp(std::floor(a + (b - a) * f), 0.0f, 255.0f)) << ch;
     }
     return out;
 }
@@ -172,16 +221,16 @@ void plot(const Setup &s, int x, int y, const Attr &at) {
 
     int r = static_cast<int>(at.r), g = static_cast<int>(at.g), b = static_cast<int>(at.b), a = static_cast<int>(at.a);
     if (s.tme) {
-        float u, v;
+        float u, v, q = 1.0f;
         if (s.fst) {
             u = at.s / 16.0f;
             v = at.t / 16.0f;
         } else {
-            const float q = at.q != 0.0f ? at.q : 1.0f;
+            q = at.q != 0.0f ? at.q : 1.0f;
             u = at.s / q * static_cast<float>(1 << s.tw);
             v = at.t / q * static_cast<float>(1 << s.th);
         }
-        const std::uint32_t t = sample(s, u, v);
+        const std::uint32_t t = texture(s, u, v, q);
         const int tr = static_cast<int>(t & 0xFFu), tg = static_cast<int>((t >> 8) & 0xFFu), tb = static_cast<int>((t >> 16) & 0xFFu), ta = static_cast<int>(t >> 24);
         switch (s.tfx) {
         case 0:
@@ -353,6 +402,18 @@ Setup make_setup(const State &st) {
     s.cpsm = static_cast<std::uint32_t>(c.tex0 >> 51) & 0xFu;
     s.csa = static_cast<std::uint32_t>(c.tex0 >> 56) & 0x1Fu;
     s.bilinear = (c.tex1 >> 5) & 1u;
+    s.lcm = c.tex1 & 1u;
+    s.mxl = std::min(static_cast<int>(c.tex1 >> 2) & 7, 6);
+    s.mmin = static_cast<int>(c.tex1 >> 6) & 7;
+    s.lod_l = static_cast<int>(c.tex1 >> 19) & 3;
+    s.lod_k = static_cast<float>(static_cast<std::int32_t>(static_cast<std::uint32_t>(c.tex1 >> 32) << 20) >> 20) / 16.0f;
+    s.mip_tbp[0] = s.tbp;
+    s.mip_tbw[0] = s.tbw;
+    for (int n = 1; n < 7; ++n) {
+        const std::uint64_t m = n < 4 ? c.miptbp1 >> ((n - 1) * 20) : c.miptbp2 >> ((n - 4) * 20);
+        s.mip_tbp[n] = static_cast<std::uint32_t>(m) & 0x3FFFu;
+        s.mip_tbw[n] = static_cast<std::uint32_t>(m >> 14) & 0x3Fu;
+    }
     s.wms = static_cast<int>(c.clamp) & 3;
     s.wmt = static_cast<int>(c.clamp >> 2) & 3;
     s.minu = static_cast<std::uint32_t>(c.clamp >> 4) & 0x3FFu;
@@ -506,7 +567,7 @@ void draw(const State &st, const Vertex *v, int count) {
                 std::fprintf(f, "P7\nWIDTH %u\nHEIGHT %u\nDEPTH 4\nMAXVAL 255\nTUPLTYPE RGB_ALPHA\nENDHDR\n", 1u << s.tw, 1u << s.th);
                 for (int y = 0; y < (1 << s.th); ++y)
                     for (int x = 0; x < (1 << s.tw); ++x) {
-                        const std::uint32_t t = fetch(s, x, y);
+                        const std::uint32_t t = fetch(s, level(s, 0), x, y);
                         std::fwrite(&t, 4, 1, f);
                     }
                 std::fclose(f);
