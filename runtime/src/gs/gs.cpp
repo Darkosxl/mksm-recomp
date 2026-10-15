@@ -528,6 +528,9 @@ void write(std::uint32_t reg, std::uint64_t value) {
     ++g_writes[reg & 127u];
     constexpr std::uint64_t kVertexRegs = (1ull << 0x01) | (1ull << 0x02) | (1ull << 0x03) | (1ull << 0x04) | (1ull << 0x05) | (1ull << 0x0A) | (1ull << 0x0C) | (1ull << 0x0D);
     if (reg >= 64 || !((kVertexRegs >> reg) & 1u)) ++g_setup_generation;
+    static const long long trace_frame = std::getenv("PS2_TRACE_GSFRAME") ? std::atoll(std::getenv("PS2_TRACE_GSFRAME")) : -1;
+    if (trace_frame >= 0 && static_cast<long long>(frame_count()) == trace_frame && (reg >= 64 || !((kVertexRegs >> reg) & 1u)))
+        std::fprintf(stderr, "[gw] %02X %016llX\n", reg, static_cast<unsigned long long>(value));
     static const char *seq = std::getenv("PS2_TRACE_GSSEQ");
     if (seq) {
         static std::uint64_t n = 0, start = std::strtoull(seq, nullptr, 10);

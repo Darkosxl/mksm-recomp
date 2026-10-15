@@ -8,6 +8,7 @@
 
 #include <algorithm>
 #include <cstdio>
+#include <cstdlib>
 #include <cstring>
 
 namespace ps2::gif {
@@ -77,6 +78,10 @@ struct GsSink {
     int path;
     void tag(const Path &p, const Reg128 &q) {
         ++g_tags[path][p.flg];
+        static const long long trace_frame = std::getenv("PS2_TRACE_GSFRAME") ? std::atoll(std::getenv("PS2_TRACE_GSFRAME")) : -1;
+        if (trace_frame >= 0 && static_cast<long long>(frame_count()) == trace_frame)
+            std::fprintf(stderr, "[tag] path %d nloop %u flg %u nreg %u eop %d pre %d regs %016llx\n", path, p.nloop, p.flg, p.nreg, p.eop ? 1 : 0,
+                         static_cast<int>((q.d[0] >> 46) & 1u), static_cast<unsigned long long>(p.regs));
         gs::g_state.q = 1.0f;
         if (((q.d[0] >> 46) & 1u) && p.flg == 0) gs::write(0x00, (q.d[0] >> 47) & 0x7FFu);
     }

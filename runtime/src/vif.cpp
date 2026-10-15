@@ -7,8 +7,11 @@
 #include "vu_micro.hpp"
 
 #include "ps2/state.hpp"
+#include "ps2/system.hpp"
 
+#include <algorithm>
 #include <cstdio>
+#include <cstdlib>
 #include <cstring>
 #include <vector>
 
@@ -235,6 +238,17 @@ void execute(int unit, std::uint32_t cmd, const std::uint32_t *data) {
     const std::uint32_t op = (cmd >> 24) & 0x7Fu, imm = cmd & 0xFFFFu, num = (cmd >> 16) & 0xFFu;
     u.code = cmd;
     if (!on_vu_thread()) ++g_commands[unit][op];
+    static const long long trace_frame = std::getenv("PS2_TRACE_GSFRAME") ? std::atoll(std::getenv("PS2_TRACE_GSFRAME")) : -1;
+    if (unit == 1 && !shadow(unit) && trace_frame >= 0 && static_cast<long long>(ps2::frame_count()) == trace_frame && op != 0x50 && op != 0x51) {
+        std::fprintf(stderr, "[vif] cmd %08x cycle %04x mode %u mask %08x tops %03x", cmd, u.cycle, u.mode, u.mask, u.tops);
+        if ((op & 0x60u) == 0x60u) {
+            std::fprintf(stderr, " unpack vn%u vl%u num %u addr %03x%s%s%s |", (cmd >> 26) & 3u, (cmd >> 24) & 3u, num ? num : 256u, cmd & 0x3FFu,
+                         (cmd >> 14) & 1u ? " usn" : "", (cmd >> 15) & 1u ? " +tops" : "", (cmd >> 28) & 1u ? " masked" : "");
+            const std::uint32_t words = std::min<std::uint32_t>(unpack_words(cmd, u, num ? num : 256u), 12u);
+            for (std::uint32_t i = 0; i < words; ++i) std::fprintf(stderr, " %08x", data[i]);
+        }
+        std::fprintf(stderr, "\n");
+    }
     switch (op) {
     case 0x00: break;
     case 0x01: u.cycle = imm; break;
