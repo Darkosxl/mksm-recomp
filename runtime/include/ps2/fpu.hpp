@@ -98,6 +98,36 @@ inline Result div(std::uint32_t a, std::uint32_t b) {
     return {from_double(to_double(a) / to_double(b)), false};
 }
 
+// Round to nearest even into the PS2 format (no Inf/NaN: overflow clamps, underflow flushes to zero).
+inline std::uint32_t from_double_nearest(double d) {
+    const std::uint64_t bits = std::bit_cast<std::uint64_t>(d);
+    const std::uint32_t sign = static_cast<std::uint32_t>(bits >> 32) & kSign;
+    int e = static_cast<int>((bits >> 52) & 0x7FFu);
+    if (!e) return sign;
+    std::uint64_t m = (bits & ((1ull << 52) - 1)) | (1ull << 52);
+    const std::uint64_t rest = m & ((1ull << 29) - 1);
+    m >>= 29;
+    if (rest > (1ull << 28) || (rest == (1ull << 28) && (m & 1))) ++m;
+    if (m >> 24) {
+        m >>= 1;
+        ++e;
+    }
+    return pack(sign, e - 1023 + 127, static_cast<std::uint32_t>(m));
+}
+
+// EE COP1 DIV.S rounds to nearest, unlike the other COP1 ops and VU DIV, which chop (PCSX2's default
+// FPUDivFPCR is Nearest for the same reason). Code such as (int)(logf(128.f) / logf(2.f)) depends on it:
+// chopping gives 6.9999995 and truncates to 6. The double quotient of two 24-bit mantissas rounds to a
+// float without double-rounding error (53 >= 2 * 24 + 2).
+inline Result div_nearest(std::uint32_t a, std::uint32_t b) {
+    a = flush(a);
+    b = flush(b);
+    const std::uint32_t sign = (a ^ b) & kSign;
+    if (!(b & kAbs)) return {sign | kAbs, true};
+    if (!(a & kAbs)) return {sign, false};
+    return {from_double_nearest(to_double(a) / to_double(b)), false};
+}
+
 inline std::uint32_t sqrt(std::uint32_t a) {
     a = flush(a) & kAbs;
     if (!a) return 0;
