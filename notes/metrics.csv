@@ -1,0 +1,7 @@
+ts,milestone,round,entries,new_misses,halt_reason,last_frame,fps
+2026-10-15T16:05:34+03:00,M2,build,17589,,,,
+2026-10-15T16:07:18+03:00,M2,boot2,17589,0,frame limit,5400,
+2026-10-15T16:11:03+03:00,M3,run3,17589,0,0xCDCDCDCC @ra 0x20C61C,4977,
+2026-10-15T16:21:37+03:00,M4,verify,17589,0,frame limit,10800,
+2026-10-15T16:36:35+03:00,explore-mash1,1,17589,0,frame limit reached,,,
+2026-10-15T16:50:41+03:00,M4,merge-fixes,17589,0,frame limit,9000,

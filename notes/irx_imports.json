@@ -1,0 +1,2238 @@
+[
+ {
+  "name": "CDVDSTM",
+  "origin": "/home/darkwarro/Documents/Twitter/PS2_REA/analysis/elf/IOP/CDVDSTM.IRX",
+  "size": 33521,
+  "sha1": "c781a649c39bb77af76de67dc9e5af4cb7d0addb",
+  "elf_type": "0xff80",
+  "iopmod_name": "cdvd_st_driver",
+  "iopmod_version": "2.2",
+  "imports": {
+   "sysmem": {
+    "version": "1.2",
+    "ordinals": [
+     14
+    ]
+   },
+   "loadcore": {
+    "version": "1.3",
+    "ordinals": [
+     6,
+     7
+    ]
+   },
+   "intrman": {
+    "version": "1.2",
+    "ordinals": [
+     17,
+     18,
+     23
+    ]
+   },
+   "stdio": {
+    "version": "1.3",
+    "ordinals": [
+     4
+    ]
+   },
+   "thbase": {
+    "version": "1.2",
+    "ordinals": [
+     33,
+     36,
+     37,
+     38
+    ]
+   },
+   "thevent": {
+    "version": "1.1",
+    "ordinals": [
+     6,
+     7,
+     8,
+     9,
+     10
+    ]
+   },
+   "thsemap": {
+    "version": "1.1",
+    "ordinals": [
+     4,
+     5,
+     6,
+     8
+    ]
+   },
+   "sifman": {
+    "version": "1.1",
+    "ordinals": [
+     7,
+     8
+    ]
+   },
+   "ioman": {
+    "version": "1.4",
+    "ordinals": [
+     20,
+     21
+    ]
+   },
+   "cdvdman": {
+    "version": "1.1",
+    "ordinals": [
+     11,
+     12,
+     39,
+     40,
+     46,
+     48,
+     49,
+     50,
+     61,
+     114
+    ]
+   }
+  },
+  "exports": {
+   "cdvdstm": {
+    "version": "1.1",
+    "count": 5
+   }
+  },
+  "duplicates": [
+   "/home/darkwarro/Documents/Twitter/PS2_REA/analysis/elf/MODULES/CDVDSTM.IRX"
+  ]
+ },
+ {
+  "name": "CRI_ADXI",
+  "origin": "/home/darkwarro/Documents/Twitter/PS2_REA/analysis/elf/IOP/CRI_ADXI.IRX",
+  "size": 75013,
+  "sha1": "e071feac749532f58d463e60e39c648e7eceb938",
+  "elf_type": "0xff80",
+  "iopmod_name": "CRI_ADX_Driver",
+  "iopmod_version": "9.52",
+  "imports": {
+   "libsd": {
+    "version": "1.5",
+    "ordinals": [
+     4,
+     5,
+     6,
+     11,
+     17,
+     18,
+     19,
+     20,
+     26,
+     28
+    ]
+   },
+   "intrman": {
+    "version": "1.2",
+    "ordinals": [
+     17,
+     18
+    ]
+   },
+   "loadcore": {
+    "version": "1.3",
+    "ordinals": [
+     5
+    ]
+   },
+   "sifcmd": {
+    "version": "1.1",
+    "ordinals": [
+     14,
+     16,
+     17,
+     19,
+     22,
+     24,
+     25
+    ]
+   },
+   "sifman": {
+    "version": "1.1",
+    "ordinals": [
+     5,
+     7,
+     29
+    ]
+   },
+   "stdio": {
+    "version": "1.3",
+    "ordinals": [
+     4
+    ]
+   },
+   "sysclib": {
+    "version": "1.4",
+    "ordinals": [
+     8,
+     11,
+     12,
+     14,
+     19,
+     20,
+     23,
+     29,
+     30,
+     36
+    ]
+   },
+   "thbase": {
+    "version": "1.2",
+    "ordinals": [
+     4,
+     5,
+     6,
+     10,
+     20
+    ]
+   },
+   "thsemap": {
+    "version": "1.1",
+    "ordinals": [
+     4,
+     5,
+     7,
+     8
+    ]
+   },
+   "vblank": {
+    "version": "1.1",
+    "ordinals": [
+     5
+    ]
+   }
+  },
+  "exports": {},
+  "duplicates": []
+ },
+ {
+  "name": "IOPRP300.IMG",
+  "origin": "/home/darkwarro/Documents/Twitter/PS2_REA/analysis/elf/IOP/IOPRP300.IMG",
+  "kind": "romdir_image",
+  "sha1": "51fe51e904bb4ef87e996b8a5062aaeb46d53b31",
+  "duplicates": [
+   "/home/darkwarro/Documents/Twitter/PS2_REA/analysis/elf/MODULES/IOPRP300.IMG"
+  ],
+  "members": [
+   {
+    "name": "RESET",
+    "offset": 0,
+    "size": 0,
+    "skipped": true
+   },
+   {
+    "name": "ROMDIR",
+    "offset": 0,
+    "size": 320,
+    "skipped": true
+   },
+   {
+    "name": "EXTINFO",
+    "offset": 320,
+    "size": 596,
+    "skipped": true
+   },
+   {
+    "name": "SYSMEM",
+    "origin": "IOPRP300.IMG:SYSMEM",
+    "size": 6041,
+    "sha1": "2e5f4bb11f7abc0d6a7d1210534a4e319a9e5730",
+    "elf_type": "0xff80",
+    "iopmod_name": "System_Memory_Manager",
+    "iopmod_version": "2.3",
+    "imports": {},
+    "exports": {
+     "sysmem": {
+      "version": "1.2",
+      "count": 16
+     }
+    },
+    "offset": 928
+   },
+   {
+    "name": "LOADCORE",
+    "origin": "IOPRP300.IMG:LOADCORE",
+    "size": 10433,
+    "sha1": "f56737438702b2dfa5d690a7e18158bf3bf26f8f",
+    "elf_type": "0xff80",
+    "iopmod_name": "Module_Manager",
+    "iopmod_version": "2.6",
+    "imports": {
+     "sysmem": {
+      "version": "1.2",
+      "ordinals": [
+       4,
+       5,
+       6,
+       9,
+       10
+      ]
+     }
+    },
+    "exports": {
+     "loadcore": {
+      "version": "1.3",
+      "count": 28
+     }
+    },
+    "offset": 6976
+   },
+   {
+    "name": "SIFCMD",
+    "origin": "IOPRP300.IMG:SIFCMD",
+    "size": 10529,
+    "sha1": "a5f96db14ca4189e77a0a7163203d6c1c2b28494",
+    "elf_type": "0xff80",
+    "iopmod_name": "IOP_SIF_rpc_interface",
+    "iopmod_version": "2.8",
+    "imports": {
+     "loadcore": {
+      "version": "1.3",
+      "ordinals": [
+       6,
+       12
+      ]
+     },
+     "intrman": {
+      "version": "1.2",
+      "ordinals": [
+       4,
+       5,
+       6,
+       7,
+       17,
+       18
+      ]
+     },
+     "stdio": {
+      "version": "1.3",
+      "ordinals": [
+       4
+      ]
+     },
+     "sifman": {
+      "version": "1.1",
+      "ordinals": [
+       2,
+       5,
+       6,
+       7,
+       22,
+       24,
+       27,
+       29,
+       32
+      ]
+     },
+     "thbase": {
+      "version": "1.2",
+      "ordinals": [
+       24,
+       26,
+       36,
+       41
+      ]
+     },
+     "thevent": {
+      "version": "1.1",
+      "ordinals": [
+       4,
+       7,
+       8,
+       10
+      ]
+     }
+    },
+    "exports": {
+     "sifcmd": {
+      "version": "1.1",
+      "count": 32
+     }
+    },
+    "offset": 17424
+   },
+   {
+    "name": "SIFMAN",
+    "origin": "IOPRP300.IMG:SIFMAN",
+    "size": 5969,
+    "sha1": "3dbc568e0db8399d42552ebfc5763bbe70c7aaea",
+    "elf_type": "0xff80",
+    "iopmod_name": "IOP_SIF_manager",
+    "iopmod_version": "2.3",
+    "imports": {
+     "loadcore": {
+      "version": "1.3",
+      "ordinals": [
+       6
+      ]
+     },
+     "intrman": {
+      "version": "1.2",
+      "ordinals": [
+       4,
+       5,
+       6,
+       7,
+       17,
+       18
+      ]
+     }
+    },
+    "exports": {
+     "sifman": {
+      "version": "1.1",
+      "count": 36
+     }
+    },
+    "offset": 27968
+   },
+   {
+    "name": "THREADMAN",
+    "origin": "IOPRP300.IMG:THREADMAN",
+    "size": 39405,
+    "sha1": "9790cfd520356d2dfa875e76ca5c6c5dbfedb622",
+    "elf_type": "0xff80",
+    "iopmod_name": "Multi_Thread_Manager",
+    "iopmod_version": "2.3",
+    "imports": {
+     "sysmem": {
+      "version": "1.2",
+      "ordinals": [
+       4,
+       5,
+       9,
+       10,
+       14
+      ]
+     },
+     "intrman": {
+      "version": "1.2",
+      "ordinals": [
+       4,
+       6,
+       8,
+       9,
+       14,
+       17,
+       18,
+       23,
+       28,
+       30
+      ]
+     },
+     "stdio": {
+      "version": "1.3",
+      "ordinals": [
+       4
+      ]
+     },
+     "sysclib": {
+      "version": "1.4",
+      "ordinals": [
+       12,
+       14
+      ]
+     },
+     "timrman": {
+      "version": "1.3",
+      "ordinals": [
+       4,
+       7,
+       8,
+       9,
+       10,
+       11,
+       16,
+       18
+      ]
+     },
+     "heaplib": {
+      "version": "1.1",
+      "ordinals": [
+       4,
+       5,
+       6,
+       7,
+       8
+      ]
+     },
+     "loadcore": {
+      "version": "1.3",
+      "ordinals": [
+       6,
+       10,
+       12,
+       20,
+       24
+      ]
+     }
+    },
+    "exports": {
+     "thbase": {
+      "version": "1.2",
+      "count": 52
+     },
+     "thevent": {
+      "version": "1.1",
+      "count": 15
+     },
+     "thsemap": {
+      "version": "1.1",
+      "count": 13
+     },
+     "thmsgbx": {
+      "version": "1.1",
+      "count": 13
+     },
+     "thfpool": {
+      "version": "1.1",
+      "count": 13
+     },
+     "thvpool": {
+      "version": "1.1",
+      "count": 13
+     },
+     "thrdman": {
+      "version": "1.2",
+      "count": 4
+     }
+    },
+    "offset": 33952
+   },
+   {
+    "name": "IOMAN",
+    "origin": "IOPRP300.IMG:IOMAN",
+    "size": 12545,
+    "sha1": "6924de1491b5545b27af9683b456b38f20bc37cc",
+    "elf_type": "0xff80",
+    "iopmod_name": "IO/File_Manager",
+    "iopmod_version": "2.3",
+    "imports": {
+     "sysmem": {
+      "version": "1.2",
+      "ordinals": [
+       14
+      ]
+     },
+     "loadcore": {
+      "version": "1.3",
+      "ordinals": [
+       6,
+       12,
+       27
+      ]
+     },
+     "intrman": {
+      "version": "1.2",
+      "ordinals": [
+       17,
+       18
+      ]
+     },
+     "sysclib": {
+      "version": "1.4",
+      "ordinals": [
+       8,
+       17,
+       22,
+       25,
+       27,
+       30,
+       36
+      ]
+     },
+     "thbase": {
+      "version": "1.2",
+      "ordinals": [
+       14,
+       22
+      ]
+     }
+    },
+    "exports": {
+     "ioman": {
+      "version": "1.4",
+      "count": 35
+     }
+    },
+    "offset": 73360
+   },
+   {
+    "name": "MODLOAD",
+    "origin": "IOPRP300.IMG:MODLOAD",
+    "size": 18565,
+    "sha1": "e8ffb03b28413e5d4a85bd23fb007e4c1180b69d",
+    "elf_type": "0xff80",
+    "iopmod_name": "Moldule_File_loader",
+    "iopmod_version": "2.9",
+    "imports": {
+     "sysmem": {
+      "version": "1.2",
+      "ordinals": [
+       3,
+       4,
+       5,
+       6,
+       9,
+       14
+      ]
+     },
+     "loadcore": {
+      "version": "1.3",
+      "ordinals": [
+       3,
+       4,
+       6,
+       8,
+       9,
+       12,
+       16,
+       17,
+       20,
+       21,
+       22,
+       23,
+       24,
+       25,
+       26
+      ]
+     },
+     "sysclib": {
+      "version": "1.4",
+      "ordinals": [
+       12,
+       14,
+       22,
+       23,
+       27,
+       30,
+       41
+      ]
+     },
+     "stdio": {
+      "version": "1.3",
+      "ordinals": [
+       4
+      ]
+     },
+     "ioman": {
+      "version": "1.4",
+      "ordinals": [
+       4,
+       5,
+       6,
+       8
+      ]
+     },
+     "intrman": {
+      "version": "1.2",
+      "ordinals": [
+       17,
+       18,
+       23
+      ]
+     },
+     "thbase": {
+      "version": "1.2",
+      "ordinals": [
+       4,
+       5,
+       6,
+       10,
+       14,
+       20,
+       21,
+       24
+      ]
+     },
+     "thevent": {
+      "version": "1.1",
+      "ordinals": [
+       4,
+       6,
+       10
+      ]
+     },
+     "thsemap": {
+      "version": "1.1",
+      "ordinals": [
+       4,
+       6,
+       8
+      ]
+     }
+    },
+    "exports": {
+     "modload": {
+      "version": "1.7",
+      "count": 32
+     }
+    },
+    "offset": 85920
+   },
+   {
+    "name": "FILEIO",
+    "origin": "IOPRP300.IMG:FILEIO",
+    "size": 19661,
+    "sha1": "bfd5d56b2ba7a6f3efed6d87789fad372a3f26f9",
+    "elf_type": "0xff80",
+    "iopmod_name": "FILEIO_service",
+    "iopmod_version": "2.18",
+    "imports": {
+     "sysmem": {
+      "version": "1.2",
+      "ordinals": [
+       4,
+       5,
+       6,
+       7,
+       8,
+       9,
+       10,
+       14
+      ]
+     },
+     "loadcore": {
+      "version": "1.3",
+      "ordinals": [
+       12
+      ]
+     },
+     "intrman": {
+      "version": "1.2",
+      "ordinals": [
+       9,
+       17,
+       18
+      ]
+     },
+     "sifman": {
+      "version": "1.1",
+      "ordinals": [
+       5,
+       7,
+       8,
+       29
+      ]
+     },
+     "thbase": {
+      "version": "1.2",
+      "ordinals": [
+       4,
+       5,
+       6,
+       8,
+       14,
+       20,
+       22,
+       33
+      ]
+     },
+     "thevent": {
+      "version": "1.1",
+      "ordinals": [
+       4,
+       6,
+       8,
+       10
+      ]
+     },
+     "thsemap": {
+      "version": "1.1",
+      "ordinals": [
+       4,
+       6,
+       8
+      ]
+     },
+     "thmsgbx": {
+      "version": "1.1",
+      "ordinals": [
+       4,
+       5,
+       6,
+       8
+      ]
+     },
+     "sifcmd": {
+      "version": "1.1",
+      "ordinals": [
+       12,
+       13,
+       14,
+       17,
+       19,
+       22,
+       23
+      ]
+     },
+     "stdio": {
+      "version": "1.3",
+      "ordinals": [
+       4
+      ]
+     },
+     "ioman": {
+      "version": "1.4",
+      "ordinals": [
+       4,
+       5,
+       6,
+       7,
+       8,
+       9,
+       10,
+       11,
+       12,
+       13,
+       14,
+       15,
+       16,
+       17,
+       18,
+       20,
+       21,
+       25,
+       26,
+       27,
+       28,
+       29,
+       30,
+       31,
+       32,
+       33,
+       34
+      ]
+     },
+     "sysclib": {
+      "version": "1.4",
+      "ordinals": [
+       12
+      ]
+     }
+    },
+    "exports": {},
+    "offset": 104496
+   },
+   {
+    "name": "CDVDMAN",
+    "origin": "IOPRP300.IMG:CDVDMAN",
+    "size": 83053,
+    "sha1": "d0bcb1d21f3ea2098a7b136868814bd8d7ef9273",
+    "elf_type": "0xff80",
+    "iopmod_name": "cdvd_driver",
+    "iopmod_version": "2.37",
+    "imports": {
+     "sysmem": {
+      "version": "1.2",
+      "ordinals": [
+       4,
+       5,
+       14
+      ]
+     },
+     "loadcore": {
+      "version": "1.3",
+      "ordinals": [
+       6,
+       12,
+       27
+      ]
+     },
+     "intrman": {
+      "version": "1.2",
+      "ordinals": [
+       4,
+       5,
+       6,
+       7,
+       17,
+       18,
+       23
+      ]
+     },
+     "stdio": {
+      "version": "1.3",
+      "ordinals": [
+       4
+      ]
+     },
+     "dmacman": {
+      "version": "1.2",
+      "ordinals": [
+       4,
+       5,
+       6,
+       8,
+       9,
+       14,
+       15
+      ]
+     },
+     "thbase": {
+      "version": "1.2",
+      "ordinals": [
+       20,
+       33,
+       35,
+       36,
+       37,
+       38
+      ]
+     },
+     "thevent": {
+      "version": "1.1",
+      "ordinals": [
+       4,
+       5,
+       6,
+       7,
+       8,
+       9,
+       10,
+       11,
+       13,
+       14
+      ]
+     },
+     "thsemap": {
+      "version": "1.1",
+      "ordinals": [
+       6,
+       7
+      ]
+     },
+     "sysclib": {
+      "version": "1.4",
+      "ordinals": [
+       12,
+       14,
+       19,
+       20,
+       22,
+       27,
+       29,
+       30,
+       36
+      ]
+     },
+     "ioman": {
+      "version": "1.4",
+      "ordinals": [
+       4,
+       5,
+       6,
+       7,
+       8,
+       10,
+       20,
+       21,
+       31,
+       34
+      ]
+     }
+    },
+    "exports": {
+     "cdvdman": {
+      "version": "1.1",
+      "count": 185
+     }
+    },
+    "offset": 124160
+   },
+   {
+    "name": "CDVDFSV",
+    "origin": "IOPRP300.IMG:CDVDFSV",
+    "size": 32653,
+    "sha1": "d103af23b626cd007a7c9cd202fbb289cbe80380",
+    "elf_type": "0xff80",
+    "iopmod_name": "cdvd_ee_driver",
+    "iopmod_version": "2.37",
+    "imports": {
+     "sysmem": {
+      "version": "1.2",
+      "ordinals": [
+       14
+      ]
+     },
+     "loadcore": {
+      "version": "1.3",
+      "ordinals": [
+       6,
+       7,
+       11,
+       12
+      ]
+     },
+     "intrman": {
+      "version": "1.2",
+      "ordinals": [
+       7,
+       17,
+       18
+      ]
+     },
+     "stdio": {
+      "version": "1.3",
+      "ordinals": [
+       4
+      ]
+     },
+     "dmacman": {
+      "version": "1.2",
+      "ordinals": [
+       4,
+       6,
+       8,
+       9
+      ]
+     },
+     "thbase": {
+      "version": "1.2",
+      "ordinals": [
+       4,
+       5,
+       6,
+       9,
+       10,
+       14,
+       20,
+       22,
+       33,
+       35,
+       37
+      ]
+     },
+     "thevent": {
+      "version": "1.1",
+      "ordinals": [
+       7,
+       8,
+       10
+      ]
+     },
+     "sifcmd": {
+      "version": "1.1",
+      "ordinals": [
+       12,
+       14,
+       17,
+       19,
+       22,
+       24,
+       25
+      ]
+     },
+     "sifman": {
+      "version": "1.1",
+      "ordinals": [
+       5,
+       7,
+       8,
+       29
+      ]
+     },
+     "sysclib": {
+      "version": "1.4",
+      "ordinals": [
+       29,
+       36
+      ]
+     },
+     "ioman": {
+      "version": "1.4",
+      "ordinals": [
+       31
+      ]
+     },
+     "cdvdman": {
+      "version": "1.1",
+      "ordinals": [
+       4,
+       5,
+       7,
+       8,
+       9,
+       10,
+       11,
+       12,
+       14,
+       15,
+       16,
+       22,
+       24,
+       28,
+       29,
+       38,
+       39,
+       40,
+       44,
+       45,
+       47,
+       50,
+       54,
+       62,
+       63,
+       64,
+       74,
+       75,
+       81,
+       83,
+       84,
+       114
+      ]
+     }
+    },
+    "exports": {
+     "cdvdfsv": {
+      "version": "1.1",
+      "count": 6
+     }
+    },
+    "offset": 207216
+   },
+   {
+    "name": "LOADFILE",
+    "origin": "IOPRP300.IMG:LOADFILE",
+    "size": 10505,
+    "sha1": "682ad669eeead88220fd3be92c70c6e14785a3fb",
+    "elf_type": "0xff80",
+    "iopmod_name": "LoadModuleByEE",
+    "iopmod_version": "2.2",
+    "imports": {
+     "sysmem": {
+      "version": "1.2",
+      "ordinals": [
+       4,
+       5
+      ]
+     },
+     "loadcore": {
+      "version": "1.3",
+      "ordinals": [
+       5,
+       12
+      ]
+     },
+     "intrman": {
+      "version": "1.2",
+      "ordinals": [
+       9,
+       17,
+       18
+      ]
+     },
+     "sysclib": {
+      "version": "1.4",
+      "ordinals": [
+       12,
+       22
+      ]
+     },
+     "stdio": {
+      "version": "1.3",
+      "ordinals": [
+       4
+      ]
+     },
+     "ioman": {
+      "version": "1.4",
+      "ordinals": [
+       4,
+       5,
+       6,
+       8
+      ]
+     },
+     "sifman": {
+      "version": "1.1",
+      "ordinals": [
+       7,
+       8
+      ]
+     },
+     "sifcmd": {
+      "version": "1.1",
+      "ordinals": [
+       14,
+       17,
+       19,
+       22
+      ]
+     },
+     "modload": {
+      "version": "1.7",
+      "ordinals": [
+       7,
+       8,
+       10,
+       11,
+       14,
+       15,
+       20,
+       21,
+       22,
+       23
+      ]
+     },
+     "thbase": {
+      "version": "1.2",
+      "ordinals": [
+       4,
+       6,
+       20
+      ]
+     }
+    },
+    "exports": {},
+    "offset": 239872
+   },
+   {
+    "name": "TIMEMANI",
+    "origin": "IOPRP300.IMG:TIMEMANI",
+    "size": 6085,
+    "sha1": "7b211ef37d4ffbc190b8e79b2754c2f37b533a72",
+    "elf_type": "0xff80",
+    "iopmod_name": "Timer_Manager",
+    "iopmod_version": "2.2",
+    "imports": {
+     "loadcore": {
+      "version": "1.3",
+      "ordinals": [
+       6
+      ]
+     },
+     "intrman": {
+      "version": "1.2",
+      "ordinals": [
+       4,
+       5,
+       6,
+       7,
+       17,
+       18,
+       23
+      ]
+     }
+    },
+    "exports": {
+     "timrman": {
+      "version": "1.3",
+      "count": 28
+     }
+    },
+    "offset": 250384
+   },
+   {
+    "name": "ROMDRV",
+    "origin": "IOPRP300.IMG:ROMDRV",
+    "size": 3881,
+    "sha1": "9d48ef491890b0792ac9f0beae88dd897eca93b2",
+    "elf_type": "0xff80",
+    "iopmod_name": "ROM_file_driver",
+    "iopmod_version": "2.1",
+    "imports": {
+     "loadcore": {
+      "version": "1.3",
+      "ordinals": [
+       6
+      ]
+     },
+     "intrman": {
+      "version": "1.2",
+      "ordinals": [
+       17,
+       18
+      ]
+     },
+     "sysclib": {
+      "version": "1.4",
+      "ordinals": [
+       12,
+       14
+      ]
+     },
+     "ioman": {
+      "version": "1.4",
+      "ordinals": [
+       20,
+       21
+      ]
+     }
+    },
+    "exports": {
+     "romdrv": {
+      "version": "2.1",
+      "count": 6
+     }
+    },
+    "offset": 256480
+   },
+   {
+    "name": "EESYNC",
+    "origin": "IOPRP300.IMG:EESYNC",
+    "size": 1545,
+    "sha1": "de595484d9aed4e61e1d3f09d311b626134376cf",
+    "elf_type": "0xff80",
+    "iopmod_name": "SyncEE",
+    "iopmod_version": "2.2",
+    "imports": {
+     "sifman": {
+      "version": "1.1",
+      "ordinals": [
+       24
+      ]
+     },
+     "loadcore": {
+      "version": "1.3",
+      "ordinals": [
+       6,
+       12,
+       20
+      ]
+     },
+     "ioman": {
+      "version": "1.4",
+      "ordinals": [
+       4,
+       5,
+       8
+      ]
+     },
+     "sysmem": {
+      "version": "1.2",
+      "ordinals": [
+       4
+      ]
+     }
+    },
+    "exports": {
+     "eesync": {
+      "version": "1.1",
+      "count": 6
+     }
+    },
+    "offset": 260368
+   },
+   {
+    "name": "SYSCLIB",
+    "origin": "IOPRP300.IMG:SYSCLIB",
+    "size": 10045,
+    "sha1": "19f0b9d15c12205238888e6841f90cd44280c5d3",
+    "elf_type": "0xff80",
+    "iopmod_name": "System_C_lib",
+    "iopmod_version": "2.3",
+    "imports": {
+     "loadcore": {
+      "version": "1.3",
+      "ordinals": [
+       6
+      ]
+     }
+    },
+    "exports": {
+     "sysclib": {
+      "version": "1.4",
+      "count": 48
+     },
+     "stdio": {
+      "version": "1.3",
+      "count": 15
+     }
+    },
+    "offset": 261920
+   },
+   {
+    "name": "STDIO",
+    "origin": "IOPRP300.IMG:STDIO",
+    "size": 3377,
+    "sha1": "aa7e5ba3f724b22b93b9c09d23ca1e44dc9154c4",
+    "elf_type": "0xff80",
+    "iopmod_name": "Stdio",
+    "iopmod_version": "2.3",
+    "imports": {
+     "loadcore": {
+      "version": "1.3",
+      "ordinals": [
+       6
+      ]
+     },
+     "sysclib": {
+      "version": "1.4",
+      "ordinals": [
+       8,
+       18
+      ]
+     },
+     "ioman": {
+      "version": "1.4",
+      "ordinals": [
+       6,
+       7,
+       22
+      ]
+     }
+    },
+    "exports": {
+     "stdio": {
+      "version": "1.3",
+      "count": 15
+     }
+    },
+    "offset": 271968
+   }
+  ]
+ },
+ {
+  "name": "LIBSD",
+  "origin": "/home/darkwarro/Documents/Twitter/PS2_REA/analysis/elf/IOP/LIBSD.IRX",
+  "size": 28661,
+  "sha1": "595db0576397dc2e4ea41d3ac56b1684c76cbb28",
+  "elf_type": "0xff80",
+  "iopmod_name": "Sound_Device_Library",
+  "iopmod_version": "3.3",
+  "imports": {
+   "intrman": {
+    "version": "1.2",
+    "ordinals": [
+     4,
+     5,
+     6,
+     7,
+     17,
+     18,
+     23
+    ]
+   },
+   "loadcore": {
+    "version": "1.3",
+    "ordinals": [
+     5,
+     6
+    ]
+   },
+   "sifman": {
+    "version": "1.1",
+    "ordinals": [
+     7,
+     8
+    ]
+   },
+   "sysclib": {
+    "version": "1.4",
+    "ordinals": [
+     17
+    ]
+   },
+   "thevent": {
+    "version": "1.1",
+    "ordinals": [
+     4,
+     5,
+     6,
+     7,
+     8,
+     9,
+     10
+    ]
+   }
+  },
+  "exports": {
+   "libsd": {
+    "version": "1.5",
+    "count": 34
+   }
+  },
+  "duplicates": [
+   "/home/darkwarro/Documents/Twitter/PS2_REA/analysis/elf/MODULES/LIBSD.IRX"
+  ]
+ },
+ {
+  "name": "MCMAN",
+  "origin": "/home/darkwarro/Documents/Twitter/PS2_REA/analysis/elf/IOP/MCMAN.IRX",
+  "size": 96181,
+  "sha1": "da2e9adc3102539e1c5cebf3e47535c438c2f477",
+  "elf_type": "0xff80",
+  "iopmod_name": "mcman",
+  "iopmod_version": "2.38",
+  "imports": {
+   "loadcore": {
+    "version": "1.3",
+    "ordinals": [
+     6,
+     7
+    ]
+   },
+   "intrman": {
+    "version": "1.2",
+    "ordinals": [
+     17,
+     18
+    ]
+   },
+   "sio2man": {
+    "version": "2.4",
+    "ordinals": [
+     24,
+     25,
+     26,
+     57,
+     59
+    ]
+   },
+   "sysclib": {
+    "version": "1.4",
+    "ordinals": [
+     12,
+     14,
+     20,
+     21,
+     22,
+     23,
+     27,
+     29,
+     30,
+     32
+    ]
+   },
+   "stdio": {
+    "version": "1.3",
+    "ordinals": [
+     4
+    ]
+   },
+   "thbase": {
+    "version": "1.2",
+    "ordinals": [
+     33,
+     35,
+     39
+    ]
+   },
+   "thsemap": {
+    "version": "1.1",
+    "ordinals": [
+     4,
+     5,
+     6,
+     7,
+     8
+    ]
+   },
+   "modload": {
+    "version": "1.7",
+    "ordinals": [
+     13
+    ]
+   },
+   "ioman": {
+    "version": "1.4",
+    "ordinals": [
+     20,
+     21
+    ]
+   },
+   "secrman": {
+    "version": "1.3",
+    "ordinals": [
+     4,
+     5,
+     6
+    ]
+   },
+   "cdvdman": {
+    "version": "1.1",
+    "ordinals": [
+     24
+    ]
+   }
+  },
+  "exports": {
+   "mcman": {
+    "version": "2.7",
+    "count": 62
+   }
+  },
+  "duplicates": [
+   "/home/darkwarro/Documents/Twitter/PS2_REA/analysis/elf/MODULES/MCMAN.IRX"
+  ]
+ },
+ {
+  "name": "MCSERV",
+  "origin": "/home/darkwarro/Documents/Twitter/PS2_REA/analysis/elf/IOP/MCSERV.IRX",
+  "size": 7385,
+  "sha1": "d31e97e3c86bd812421a26703a174ba972b24b79",
+  "elf_type": "0xff80",
+  "iopmod_name": "mcserv",
+  "iopmod_version": "2.16",
+  "imports": {
+   "loadcore": {
+    "version": "1.3",
+    "ordinals": [
+     6,
+     7
+    ]
+   },
+   "intrman": {
+    "version": "1.2",
+    "ordinals": [
+     17,
+     18
+    ]
+   },
+   "sysclib": {
+    "version": "1.4",
+    "ordinals": [
+     12,
+     14,
+     29,
+     36
+    ]
+   },
+   "stdio": {
+    "version": "1.3",
+    "ordinals": [
+     4
+    ]
+   },
+   "sifman": {
+    "version": "1.1",
+    "ordinals": [
+     5,
+     7,
+     8,
+     29
+    ]
+   },
+   "sifcmd": {
+    "version": "1.1",
+    "ordinals": [
+     14,
+     17,
+     19,
+     22,
+     23,
+     24,
+     25
+    ]
+   },
+   "thbase": {
+    "version": "1.2",
+    "ordinals": [
+     4,
+     5,
+     6,
+     10,
+     14,
+     20,
+     22,
+     33
+    ]
+   },
+   "thsemap": {
+    "version": "1.1",
+    "ordinals": [
+     6,
+     8
+    ]
+   },
+   "mcman": {
+    "version": "2.7",
+    "ordinals": [
+     6,
+     7,
+     8,
+     9,
+     10,
+     11,
+     12,
+     13,
+     14,
+     15,
+     16,
+     21,
+     22,
+     23,
+     24,
+     26,
+     36,
+     37,
+     38,
+     39,
+     42,
+     45,
+     53
+    ]
+   }
+  },
+  "exports": {
+   "mcserv": {
+    "version": "2.1",
+    "count": 8
+   }
+  },
+  "duplicates": [
+   "/home/darkwarro/Documents/Twitter/PS2_REA/analysis/elf/MODULES/MCSERV.IRX"
+  ]
+ },
+ {
+  "name": "PADMAN",
+  "origin": "/home/darkwarro/Documents/Twitter/PS2_REA/analysis/elf/IOP/PADMAN.IRX",
+  "size": 45797,
+  "sha1": "853f73969d13b00216119b0d55a703e585e2109a",
+  "elf_type": "0xff80",
+  "iopmod_name": "padman",
+  "iopmod_version": "4.33",
+  "imports": {
+   "sysmem": {
+    "version": "1.2",
+    "ordinals": [
+     14
+    ]
+   },
+   "loadcore": {
+    "version": "1.3",
+    "ordinals": [
+     6,
+     27
+    ]
+   },
+   "intrman": {
+    "version": "1.2",
+    "ordinals": [
+     4,
+     5,
+     6,
+     17,
+     18
+    ]
+   },
+   "stdio": {
+    "version": "1.3",
+    "ordinals": [
+     4
+    ]
+   },
+   "sio2man": {
+    "version": "2.4",
+    "ordinals": [
+     11,
+     46,
+     51,
+     52,
+     57,
+     58,
+     60
+    ]
+   },
+   "thbase": {
+    "version": "1.2",
+    "ordinals": [
+     4,
+     5,
+     6,
+     8,
+     20,
+     22,
+     23
+    ]
+   },
+   "thevent": {
+    "version": "1.1",
+    "ordinals": [
+     4,
+     5,
+     6,
+     7,
+     8,
+     10
+    ]
+   },
+   "thsemap": {
+    "version": "1.1",
+    "ordinals": [
+     4,
+     5,
+     7,
+     8
+    ]
+   },
+   "timrman": {
+    "version": "1.3",
+    "ordinals": [
+     4,
+     6,
+     7,
+     9,
+     11,
+     16
+    ]
+   },
+   "sifman": {
+    "version": "1.1",
+    "ordinals": [
+     5,
+     7,
+     8,
+     29,
+     32
+    ]
+   },
+   "sifcmd": {
+    "version": "1.1",
+    "ordinals": [
+     14,
+     17,
+     19,
+     22,
+     28
+    ]
+   },
+   "vblank": {
+    "version": "1.1",
+    "ordinals": [
+     8,
+     9
+    ]
+   },
+   "sysclib": {
+    "version": "1.4",
+    "ordinals": [
+     8,
+     12,
+     29,
+     36
+    ]
+   }
+  },
+  "exports": {
+   "padman": {
+    "version": "2.4",
+    "count": 18
+   }
+  },
+  "duplicates": [
+   "/home/darkwarro/Documents/Twitter/PS2_REA/analysis/elf/MODULES/PADMAN.IRX"
+  ]
+ },
+ {
+  "name": "SDRDRV",
+  "origin": "/home/darkwarro/Documents/Twitter/PS2_REA/analysis/elf/IOP/SDRDRV.IRX",
+  "size": 9161,
+  "sha1": "36b50dc82f36631d9cc06275f00df366c4ccaf93",
+  "elf_type": "0xff80",
+  "iopmod_name": "sdr_driver",
+  "iopmod_version": "4.1",
+  "imports": {
+   "libsd": {
+    "version": "1.5",
+    "ordinals": [
+     4,
+     5,
+     6,
+     7,
+     8,
+     9,
+     10,
+     11,
+     12,
+     13,
+     14,
+     15,
+     16,
+     17,
+     18,
+     19,
+     20,
+     23,
+     24,
+     25,
+     26,
+     27,
+     30,
+     31,
+     32,
+     33
+    ]
+   },
+   "sysmem": {
+    "version": "1.1",
+    "ordinals": [
+     14
+    ]
+   },
+   "intrman": {
+    "version": "1.2",
+    "ordinals": [
+     17,
+     18
+    ]
+   },
+   "loadcore": {
+    "version": "1.3",
+    "ordinals": [
+     6,
+     7
+    ]
+   },
+   "sifcmd": {
+    "version": "1.1",
+    "ordinals": [
+     14,
+     15,
+     16,
+     17,
+     19,
+     22,
+     24,
+     25
+    ]
+   },
+   "sysclib": {
+    "version": "1.3",
+    "ordinals": [
+     8,
+     29,
+     36
+    ]
+   },
+   "thbase": {
+    "version": "1.2",
+    "ordinals": [
+     4,
+     5,
+     6,
+     10,
+     14,
+     20,
+     22,
+     24,
+     26,
+     28
+    ]
+   }
+  },
+  "exports": {
+   "sdrdrv": {
+    "version": "1.1",
+    "count": 6
+   }
+  },
+  "duplicates": [
+   "/home/darkwarro/Documents/Twitter/PS2_REA/analysis/elf/MODULES/SDRDRV.IRX"
+  ]
+ },
+ {
+  "name": "SIO2MAN",
+  "origin": "/home/darkwarro/Documents/Twitter/PS2_REA/analysis/elf/IOP/SIO2MAN.IRX",
+  "size": 6641,
+  "sha1": "2eeb68eaf5b73659be9d4986578b0caadaafe484",
+  "elf_type": "0xff80",
+  "iopmod_name": "sio2man",
+  "iopmod_version": "3.1",
+  "imports": {
+   "loadcore": {
+    "version": "1.3",
+    "ordinals": [
+     6
+    ]
+   },
+   "intrman": {
+    "version": "1.2",
+    "ordinals": [
+     4,
+     5,
+     6,
+     7,
+     17,
+     18
+    ]
+   },
+   "stdio": {
+    "version": "1.3",
+    "ordinals": [
+     4
+    ]
+   },
+   "dmacman": {
+    "version": "1.2",
+    "ordinals": [
+     28,
+     32,
+     33,
+     34,
+     35
+    ]
+   },
+   "thbase": {
+    "version": "1.2",
+    "ordinals": [
+     4,
+     6,
+     20
+    ]
+   },
+   "thevent": {
+    "version": "1.1",
+    "ordinals": [
+     4,
+     6,
+     7,
+     8,
+     10
+    ]
+   },
+   "thsemap": {
+    "version": "1.1",
+    "ordinals": [
+     4,
+     6,
+     8,
+     11
+    ]
+   },
+   "sysclib": {
+    "version": "1.4",
+    "ordinals": [
+     8,
+     29,
+     36
+    ]
+   }
+  },
+  "exports": {
+   "sio2man": {
+    "version": "2.4",
+    "count": 64
+   }
+  },
+  "duplicates": [
+   "/home/darkwarro/Documents/Twitter/PS2_REA/analysis/elf/MODULES/SIO2MAN.IRX"
+  ]
+ },
+ {
+  "name": "SNDFI",
+  "origin": "/home/darkwarro/Documents/Twitter/PS2_REA/analysis/elf/IOP/SNDFI.IRX",
+  "size": 101968,
+  "sha1": "dabb89669b06d48b23b1a9f1fed282674fafc8f0",
+  "elf_type": "0xff80",
+  "iopmod_name": "SNDF_Driver",
+  "iopmod_version": "2.13",
+  "imports": {
+   "sysmem": {
+    "version": "1.2",
+    "ordinals": [
+     4,
+     5
+    ]
+   },
+   "intrman": {
+    "version": "1.2",
+    "ordinals": [
+     17,
+     18
+    ]
+   },
+   "loadcore": {
+    "version": "1.3",
+    "ordinals": [
+     6,
+     7
+    ]
+   },
+   "sifcmd": {
+    "version": "1.1",
+    "ordinals": [
+     14,
+     17,
+     19,
+     22,
+     24,
+     25
+    ]
+   },
+   "sifman": {
+    "version": "1.1",
+    "ordinals": [
+     7,
+     8
+    ]
+   },
+   "stdio": {
+    "version": "1.3",
+    "ordinals": [
+     4
+    ]
+   },
+   "sysclib": {
+    "version": "1.4",
+    "ordinals": [
+     12,
+     14
+    ]
+   },
+   "thbase": {
+    "version": "1.2",
+    "ordinals": [
+     4,
+     5,
+     6,
+     10,
+     20,
+     24,
+     26,
+     33,
+     34,
+     40
+    ]
+   },
+   "timrman": {
+    "version": "1.3",
+    "ordinals": [
+     4,
+     6,
+     20,
+     22,
+     23
+    ]
+   },
+   "libsd": {
+    "version": "1.5",
+    "ordinals": [
+     4,
+     5,
+     6,
+     7,
+     8,
+     9,
+     11,
+     17,
+     19,
+     23
+    ]
+   }
+  },
+  "exports": {
+   "sndfi": {
+    "version": "1.1",
+    "count": 18
+   }
+  },
+  "duplicates": []
+ },
+ {
+  "name": "MTAPMAN",
+  "origin": "/home/darkwarro/Documents/Twitter/PS2_REA/analysis/elf/MODULES/MTAPMAN.IRX",
+  "size": 10853,
+  "sha1": "6e0122cf36fb5e1aaee634e17da31d7e32099af1",
+  "elf_type": "0xff80",
+  "iopmod_name": "multitap_manager",
+  "iopmod_version": "3.16",
+  "imports": {
+   "sysmem": {
+    "version": "1.2",
+    "ordinals": [
+     14
+    ]
+   },
+   "loadcore": {
+    "version": "1.3",
+    "ordinals": [
+     6,
+     27
+    ]
+   },
+   "intrman": {
+    "version": "1.2",
+    "ordinals": [
+     17,
+     18
+    ]
+   },
+   "stdio": {
+    "version": "1.3",
+    "ordinals": [
+     4
+    ]
+   },
+   "thbase": {
+    "version": "1.2",
+    "ordinals": [
+     4,
+     6,
+     8,
+     14,
+     20,
+     33
+    ]
+   },
+   "thevent": {
+    "version": "1.1",
+    "ordinals": [
+     4,
+     6,
+     10
+    ]
+   },
+   "thsemap": {
+    "version": "1.1",
+    "ordinals": [
+     4,
+     5,
+     6,
+     8
+    ]
+   },
+   "sifman": {
+    "version": "1.1",
+    "ordinals": [
+     5,
+     7,
+     8,
+     29
+    ]
+   },
+   "sysclib": {
+    "version": "1.4",
+    "ordinals": [
+     8,
+     29,
+     36
+    ]
+   },
+   "sifcmd": {
+    "version": "1.1",
+    "ordinals": [
+     14,
+     17,
+     19,
+     22
+    ]
+   },
+   "sio2man": {
+    "version": "2.4",
+    "ordinals": [
+     48,
+     51,
+     52,
+     53,
+     54,
+     55,
+     56
+    ]
+   }
+  },
+  "exports": {
+   "mtapman": {
+    "version": "2.4",
+    "count": 7
+   }
+  },
+  "duplicates": []
+ }
+]
