@@ -23,7 +23,9 @@ int usage() {
                  "usage: ps2run <elf> [--arg text]... [--frames n] [--ntsc] [--misses file]\n"
                  "              [--disc image.iso] [--memcard card.ps2] [--pal | --ntsc] [--trace-syscalls] [--trace-io] [--trace-threads]\n"
                  "              [--trace-iop] [--trace-iop-hle] [--frames-dir dir] [--frame-every n]\n"
-                 "              [--press frame:button[+button][:frames]]... [--window] [--fullscreen]\n"
+                 "              [--press frame:[p2:]button[+button][:frames]]... [--press2 frame:button[+button][:frames]]...\n"
+                 "              [--stick frame:[p2:]lx,ly[:frames]]... [--stick2 frame:lx,ly[:frames]]... [--pad2]\n"
+                 "              [--window] [--fullscreen]\n"
                  "              [--save-state frame:file] [--load-state file]\n");
     return 2;
 }
@@ -35,6 +37,8 @@ int main(int argc, char **argv) {
     std::vector<std::string> args{argv[1]};
     [[maybe_unused]] bool window = false, fullscreen = false;
     std::string load_path;
+    // a second controller is plugged into port 2 when asked for, or when the input script drives it
+    bool pad2 = false;
     for (int i = 2; i < argc; ++i) {
         const std::string a = argv[i];
         if (a == "--arg" && i + 1 < argc) args.push_back(argv[++i]);
@@ -52,11 +56,15 @@ int main(int argc, char **argv) {
         else if (a == "--trace-iop") ps2::g_options.trace_iop_modules = true;
         else if (a == "--trace-iop-hle") ps2::g_options.trace_iop_hle = true;
         else if (a == "--frames-dir" && i + 1 < argc) ps2::g_options.frames_dir = argv[++i];
-        else if (a == "--press" && i + 1 < argc) {
+        else if ((a == "--press" || a == "--press2" || a == "--stick" || a == "--stick2") && i + 1 < argc) {
             ps2::Press press;
-            if (!ps2::parse_press(argv[++i], press)) return usage();
+            const bool stick = a.compare(0, 7, "--stick") == 0;
+            if (!(stick ? ps2::parse_stick(argv[++i], press) : ps2::parse_press(argv[++i], press))) return usage();
+            if (a.back() == '2') press.pad = 1;
+            if (press.pad == 1) pad2 = true;
             ps2::g_options.presses.push_back(press);
         }
+        else if (a == "--pad2") pad2 = true;
 #ifdef PS2_WINDOW
         else if (a == "--window") window = true;
         else if (a == "--fullscreen") window = fullscreen = true;
@@ -73,8 +81,9 @@ int main(int argc, char **argv) {
         else return usage();
     }
 
+    if (pad2) ps2::set_pad_connected(1, true);
 #ifdef PS2_WINDOW
-    if (window && !open_window(fullscreen)) return 1;
+    if (window && !open_window(fullscreen, pad2)) return 1;
 #endif
     register_generated_code();
     register_generated_vu();

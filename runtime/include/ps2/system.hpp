@@ -15,10 +15,15 @@ inline constexpr std::uint32_t kIdle = 0x00001010u;
 
 extern Cpu g_cpu;
 
+// a scripted input held for `frames` vblanks from `frame` on controller port `pad` (0 or 1): either buttons,
+// or (stick) the left analog stick at lx/ly (0x00 = left/up, 0x80 = centre, 0xFF = right/down)
 struct Press {
-    std::uint64_t frame;
-    std::uint32_t frames;
-    std::uint16_t buttons;
+    std::uint64_t frame = 0;
+    std::uint32_t frames = 6;
+    std::uint16_t buttons = 0;
+    int pad = 0;
+    bool stick = false;
+    std::uint8_t lx = 0x80, ly = 0x80;
 };
 
 struct Options {
@@ -71,6 +76,11 @@ void sync_iop();
 
 bool load_elf(const std::string &path, std::uint32_t &entry);
 void boot(std::uint32_t entry, const std::vector<std::string> &args);
+// LoadExecPS2 on a console wipes memory and starts another program. Only the loaded ELF exists here, so the
+// run loop restarts it from its entry point with fresh hardware and args[0] = its own cdrom0: path.
+void request_reboot(const std::vector<std::string> &args);
+// the program path and arguments the running ELF was last booted with
+const std::vector<std::string> &boot_args();
 int run();
 void halt(const std::string &reason);
 bool save_state(const std::string &path);
@@ -107,7 +117,10 @@ Rendered render_pending(bool surface, const std::function<void(const std::uint32
 void wait_render_work(int timeout_ms);
 void wake_render_thread();
 bool copy_frame(std::vector<std::uint32_t> &rgba, std::uint32_t &width, std::uint32_t &height);
+// "frame:[p1:|p2:]button[+button][:frames]"
 bool parse_press(const std::string &spec, Press &press);
+// "frame:[p1:|p2:]lx,ly[:frames]", axis values 0..255 (decimal or 0x hex)
+bool parse_stick(const std::string &spec, Press &press);
 double gpu_busy_ms();
 void browser_yield();
 std::uint64_t frames_run();

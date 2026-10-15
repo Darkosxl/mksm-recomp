@@ -37,6 +37,15 @@ constexpr KeyBinding kKeys[] = {
     {SDL_SCANCODE_RETURN, kStart},  {SDL_SCANCODE_BACKSPACE, kSelect},
 };
 
+// player 2 on the same keyboard: IJKL is the d-pad and left stick, the numpad holds the other buttons
+constexpr KeyBinding kKeys2[] = {
+    {SDL_SCANCODE_I, kUp},          {SDL_SCANCODE_K, kDown},        {SDL_SCANCODE_J, kLeft},
+    {SDL_SCANCODE_L, kRight},       {SDL_SCANCODE_KP_2, kCross},    {SDL_SCANCODE_KP_6, kCircle},
+    {SDL_SCANCODE_KP_4, kSquare},   {SDL_SCANCODE_KP_8, kTriangle}, {SDL_SCANCODE_KP_7, kL1},
+    {SDL_SCANCODE_KP_9, kR1},       {SDL_SCANCODE_KP_1, kL2},       {SDL_SCANCODE_KP_3, kR2},
+    {SDL_SCANCODE_KP_ENTER, kStart}, {SDL_SCANCODE_KP_PLUS, kSelect},
+};
+
 struct PadBinding {
     SDL_GameControllerButton button;
     std::uint16_t mask;
@@ -58,6 +67,7 @@ SDL_Texture *g_texture = nullptr;
 SDL_AudioDeviceID g_audio = 0;
 // the keyboard drives the first controller port along with the first game controller, a second one is player 2
 SDL_GameController *g_pads[2] = {};
+bool g_keyboard_pad2 = false;
 std::uint32_t g_tex_w = 0, g_tex_h = 0;
 std::uint64_t g_last = 0;
 std::vector<std::uint32_t> g_pixels;
@@ -140,21 +150,25 @@ void open_pad(int device) {
 void poll_port(int port) {
     static bool plugged[2] = {};
     SDL_GameController *pad = g_pads[port];
-    if (port > 0 && plugged[port] != (pad != nullptr)) {
-        plugged[port] = pad != nullptr;
+    const bool keyboard = port == 0 || g_keyboard_pad2;
+    if (port > 0 && plugged[port] != (pad != nullptr || keyboard)) {
+        plugged[port] = pad != nullptr || keyboard;
         ps2::set_pad_connected(port, plugged[port]);
     }
     std::uint16_t pressed = 0;
     std::uint8_t l2 = 0xFF, r2 = 0xFF;
     std::uint8_t lx = 0x80, ly = 0x80, rx = 0x80, ry = 0x80;
-    if (port == 0) {
+    if (keyboard) {
         const Uint8 *keys = SDL_GetKeyboardState(nullptr);
-        for (const KeyBinding &b : kKeys)
-            if (keys[b.key]) pressed |= b.button;
-        if (keys[SDL_SCANCODE_LEFT]) lx = 0x00;
-        if (keys[SDL_SCANCODE_RIGHT]) lx = 0xFF;
-        if (keys[SDL_SCANCODE_UP]) ly = 0x00;
-        if (keys[SDL_SCANCODE_DOWN]) ly = 0xFF;
+        const bool first = port == 0;
+        const KeyBinding *b = first ? std::begin(kKeys) : std::begin(kKeys2);
+        const KeyBinding *const end = first ? std::end(kKeys) : std::end(kKeys2);
+        for (; b != end; ++b)
+            if (keys[b->key]) pressed |= b->button;
+        if (keys[first ? SDL_SCANCODE_LEFT : SDL_SCANCODE_J]) lx = 0x00;
+        if (keys[first ? SDL_SCANCODE_RIGHT : SDL_SCANCODE_L]) lx = 0xFF;
+        if (keys[first ? SDL_SCANCODE_UP : SDL_SCANCODE_I]) ly = 0x00;
+        if (keys[first ? SDL_SCANCODE_DOWN : SDL_SCANCODE_K]) ly = 0xFF;
     }
     if (pad) {
         for (const PadBinding &b : kPadButtons)
@@ -308,7 +322,8 @@ void queue_audio(const std::int16_t *samples, std::size_t frames) {
 
 }
 
-bool open_window(bool fullscreen) {
+bool open_window(bool fullscreen, bool keyboard_pad2) {
+    g_keyboard_pad2 = keyboard_pad2;
     if (SDL_Init(SDL_INIT_VIDEO | SDL_INIT_AUDIO | SDL_INIT_GAMECONTROLLER) != 0) {
         std::fprintf(stderr, "SDL: %s\n", SDL_GetError());
         return false;

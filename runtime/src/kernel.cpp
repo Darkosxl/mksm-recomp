@@ -9,12 +9,14 @@
 #include "ps2/state.hpp"
 
 #include <algorithm>
+#include <cctype>
 #include <stdexcept>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
 #include <deque>
 #include <map>
+#include <string>
 #include <vector>
 
 namespace ps2::kernel {
@@ -456,6 +458,53 @@ void dump() {
         if (!s.waiters.empty()) std::fprintf(stderr, "[sema] %d count %d waiters %zu\n", id, s.count, s.waiters.size());
 }
 
+namespace {
+
+std::string guest_string(std::uint32_t at) {
+    std::string out;
+    for (std::uint32_t i = 0; i < 256; ++i) {
+        const char ch = static_cast<char>(ld8(at + i));
+        if (!ch) break;
+        out += ch;
+    }
+    return out;
+}
+
+// "cdrom0:\\DIR\\NAME.ELF;1" -> "NAME.ELF"
+std::string program_name(const std::string &path) {
+    std::string name = path.substr(path.find_last_of(":\\/") + 1);
+    name = name.substr(0, name.find(';'));
+    for (char &ch : name) ch = static_cast<char>(std::toupper(static_cast<unsigned char>(ch)));
+    return name;
+}
+
+// LoadExecPS2(path, argc, argv) / ExecPS2(entry, gp, argc, argv) never return on a console. The only program
+// here is the recompiled ELF, so it restarts: with the new arguments when it asked for itself, otherwise with
+// its boot arguments, as if the other program had run and handed control back.
+void load_exec(Cpu &c, std::uint32_t pc, std::uint32_t n) {
+    const bool in_memory = n == 0x07;
+    const std::uint32_t argc = arg(c, in_memory ? 2 : 1), argv = arg(c, in_memory ? 3 : 2);
+    std::vector<std::string> args{in_memory ? std::string() : guest_string(arg(c, 0))};
+    for (std::uint32_t i = 0; i < argc && i < 32; ++i) args.push_back(guest_string(ld32(argv + 4 * i)));
+    char head[48];
+    std::snprintf(head, sizeof head, "ExecPS2(0x%08X)", arg(c, 0));
+    std::string line = in_memory ? std::string(head) : "LoadExecPS2(" + args[0] + ")";
+    for (std::size_t i = 1; i < args.size(); ++i) line += " " + args[i];
+    const std::vector<std::string> &self = boot_args();
+    if (!in_memory && !self.empty() && program_name(args[0]) == program_name(self[0])) {
+        args[0] = self[0];
+        std::fprintf(stderr, "[ee] %s: restarting this program\n", line.c_str());
+        request_reboot(args);
+    } else {
+        std::fprintf(stderr, "[ee] %s: that program is not part of this recompilation, restarting %s as if it had exited\n",
+                     line.c_str(), self.empty() ? "the game" : self[0].c_str());
+        request_reboot(self);
+    }
+    c.pc = (pc + 4u) | kUnwind;
+}
+
+}
+
 void handle_syscall(Cpu &c, std::uint32_t pc) {
     std::uint32_t n = c.r[3].w[0];
     const bool interrupt_variant = (n & 0x80000000u) != 0;
@@ -474,7 +523,7 @@ void handle_syscall(Cpu &c, std::uint32_t pc) {
     switch (n) {
     case 0x02: hw::gs_set_crt(arg(c, 0), arg(c, 1), arg(c, 2)); ret(c, 0); break;
     case 0x04: halt("Exit"); break;
-    case 0x06: case 0x07: halt("program asked to run another executable"); break;
+    case 0x06: case 0x07: load_exec(c, pc, n); break;
     case 0x10: add_handler(c, g_intc_handlers); break;
     case 0x11: remove_handler(c, g_intc_handlers); break;
     case 0x12: add_handler(c, g_dmac_handlers); break;
