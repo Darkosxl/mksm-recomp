@@ -112,6 +112,11 @@ Rendered render_pending(bool surface, const std::function<void(const std::uint32
 void wait_render_work(int timeout_ms);
 void wake_render_thread();
 bool copy_frame(std::vector<std::uint32_t> &rgba, std::uint32_t &width, std::uint32_t &height);
+// also hands every presented frame to `tap` (on the render thread), e.g. for streaming it; with `wait` the
+// frame is read back before the next one is drawn (one frame less delay, the render thread waits for the GPU)
+void set_frame_tap(std::function<void(const std::uint32_t *rgba, std::uint32_t width, std::uint32_t height)> tap, bool wait = true);
+// the tap only costs a readback while enabled (any thread may call this)
+void enable_frame_tap(bool enabled);
 // "frame:[p1:|p2:]button[+button][:frames]"
 bool parse_press(const std::string &spec, Press &press);
 // "frame:[p1:|p2:]lx,ly[:frames]", axis values 0..255 (decimal or 0x hex)
