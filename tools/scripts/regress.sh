@@ -6,7 +6,7 @@ P=/home/darkwarro/Documents/Twitter/PS2_REA
 G=$P/ps2-web-recomp/games/mksm
 BIN=${1:-$P/ps2-web-recomp/build/native-mksm/ps2run}
 OUT=${2:-$P/logs/regress/$(date +%m%d-%H%M)}
-ST=$P/logs/modes/states
+ST=$P/logs/states
 mkdir -p "$OUT"
 export __NV_PRIME_RENDER_OFFLOAD=1 __VK_LAYER_NV_optimus=NVIDIA_only
 
@@ -25,7 +25,7 @@ run() {  # name frames state|- extra-args...
 }
 
 run boot     6000  -                         $(cat "$G/inputs/story.args")
-run gameplay 10800 "$P/logs/audio/f6900-g2.state" $(cat "$G/inputs/story.args")
+run gameplay 10800 "$ST/f6900-g2.state" $(cat "$G/inputs/story.args")
 run koop     9000  "$ST/koop-f6250.state"    --stick 6400:60,128:200 --stick2 6400:200,128:200 \
                                              --press 6700:square --press 6700:p2:square --press 6900:p2:triangle
 run versus   6000  "$ST/vs-f2790.state"      --press 3000:square --press 3100:p2:triangle --stick2 3200:40,128:120

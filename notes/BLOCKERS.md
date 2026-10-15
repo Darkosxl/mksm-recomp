@@ -29,3 +29,12 @@
 - [ ] "DUALSHOCK2 not detected — press ✕" at boot = timing race: game checks pad type at frame ~72, PADMAN's DS2 setup
       (1 SIO2 cmd/vblank, ~60 cmds) finishes ~frame 92. Native boot I/O has no seek latency so the check comes early.
       Real fix: disc/FILEIO latency model (timing fidelity), not a padman hack.
+
+## 2026-10-15 late
+- [x] Garbled menu font + square particles: NOT a current bug — fixed by DIV.S round-to-nearest (30e6276). Stale savestates
+      (saved before it) carried TEX0 TW/TH computed with chopped DIV.S. States regenerated → logs/states/; stale archived.
+- [ ] 16 maps fade 3D to black (0C 40 47 48 62 92 93 A2 A4 A5 A6 A7 BC E3 E9 EB) — re-testing on fresh states + HEAD (agent).
+- [ ] Re-run sweep visual verdicts on a post-30e6276 binary (Pi rebuild in progress).
+- [?] Map 0x14 pause-menu panel shows font sheet ~25 frames after L1/R1 tab mashing (game writes that TEX0 itself; needs PCSX2 check).
+- [?] Netherrealm loading: "LOADING" baked into art + drawn again on top (ZTST ALWAYS) — likely authentic; needs PCSX2 check.
+- [ ] 53 VU1 programs recorded (12 new) — compile with vurecomp (perf, parked).
