@@ -81,6 +81,14 @@ build/native-mygame/ps2run games/mygame/disc/SLUS_123.45 --disc games/mygame/dis
 
 `--fullscreen` starts in fullscreen and F11 switches back and forth. `PS2_SCALE=2` or `3` raises the internal resolution. As in the browser, the emulation, vector unit 1 and the GS each run on their own thread, which takes God of War II from 43 to 60 frames per second at the native resolution on the test laptop; `PS2_ONE_THREAD=1` puts everything back on one thread. Disc reads, module loads and the IOP reboot take as long as on the console's DVD drive, with its seeks and its constant-angular-velocity transfer rate, because some games time their boot against them; `PS2_FAST_DISC=1` makes them near-instant instead, which shortens loading screens but can trip such games. The memory card file uses the same layout as the page's exported cards. On a Steam Deck the runner can be added to Steam as a non-Steam game, though nobody has tried it on one yet.
 
+### Online co-op
+
+`--host` lets a friend play controller 2 over the network from a browser, with nothing to install: the game runs only on your machine, which streams its picture and sound to them over WebRTC and takes their gamepad or keyboard back as player 2. The host prints a link with a 6-digit code to send them; across the internet, Tailscale or ZeroTier is the easy way to reach each other. It needs libdatachannel, FFmpeg and Opus at build time. [docs/netplay.md](docs/netplay.md) has the details, the protocol and measured latency.
+
+```bash
+build/native-mygame/ps2run games/mygame/disc/SLUS_123.45 --disc games/mygame/disc.iso --window --host
+```
+
 ## Saves
 
 The page puts a memory card in slot 1 and keeps it in the browser's storage for the address you play from, so progress survives a reload. Games format and use it as they would a real card. **Export card** downloads it as a `.ps2` file in the layout PCSX2 uses, and **Import card** puts such a file back in the slot, so a card can travel between browsers or come from PCSX2. `?nocard` starts with the slot empty.

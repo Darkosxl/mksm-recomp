@@ -978,7 +978,7 @@ bool display(const DisplayRegs &r, std::vector<std::uint32_t> &rgba, std::uint32
 
 bool copy_frame(std::vector<std::uint32_t> &rgba, std::uint32_t &width, std::uint32_t &height) { return copy_frame(display_regs(), rgba, width, height); }
 
-bool copy_frame(const DisplayRegs &r, std::vector<std::uint32_t> &rgba, std::uint32_t &width, std::uint32_t &height) {
+bool copy_frame(const DisplayRegs &r, std::vector<std::uint32_t> &rgba, std::uint32_t &width, std::uint32_t &height, bool wait) {
     static std::vector<std::uint32_t> previous;
     bool got = false;
 #ifdef PS2_GPU
@@ -991,7 +991,7 @@ bool copy_frame(const DisplayRegs &r, std::vector<std::uint32_t> &rgba, std::uin
         if (!w || !h || w > 2048 || h > 2048) return false;
         const gpu::DisplaySource src{(static_cast<std::uint32_t>(fb) & 0x1FFu) * 32, static_cast<std::uint32_t>(fb >> 9) & 0x3Fu, static_cast<std::uint32_t>(fb >> 15) & 0x1Fu,
                                      static_cast<std::uint32_t>(fb >> 32) & 0x7FFu, static_cast<std::uint32_t>(fb >> 43) & 0x7FFu, w, h, (r.smode2 & 3u) == 3u};
-        got = gpu::display_async(src, rgba, width, height);
+        got = wait ? gpu::display(src, rgba, width, height) : gpu::display_async(src, rgba, width, height);
     } else
 #endif
         got = display(r, rgba, width, height);

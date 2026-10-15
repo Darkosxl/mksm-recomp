@@ -80,7 +80,8 @@ bool display(std::vector<std::uint32_t> &rgba, std::uint32_t &width, std::uint32
 bool display(const DisplayRegs &regs, std::vector<std::uint32_t> &rgba, std::uint32_t &width, std::uint32_t &height);
 // Frame for hosts that draw it themselves, with interlaced fields blended like present(); may lag a frame.
 bool copy_frame(std::vector<std::uint32_t> &rgba, std::uint32_t &width, std::uint32_t &height);
-bool copy_frame(const DisplayRegs &regs, std::vector<std::uint32_t> &rgba, std::uint32_t &width, std::uint32_t &height);
+// wait: read this very frame back (blocking) instead of the newest finished asynchronous copy, one frame older
+bool copy_frame(const DisplayRegs &regs, std::vector<std::uint32_t> &rgba, std::uint32_t &width, std::uint32_t &height, bool wait = false);
 bool attach_window(int kind, void *display, std::uint64_t window, void *surface, const char *selector, std::uint32_t width, std::uint32_t height);
 void resize_window(std::uint32_t width, std::uint32_t height);
 bool present();

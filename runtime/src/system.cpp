@@ -528,17 +528,29 @@ void run_vu_thread() {
 }
 void post_present() { gs::post_present(); }
 
+std::function<void(const std::uint32_t *, std::uint32_t, std::uint32_t)> g_frame_tap;
+bool g_frame_tap_wait = true;
+std::atomic<bool> g_frame_tap_on{false};
+
+void enable_frame_tap(bool enabled) { g_frame_tap_on.store(enabled, std::memory_order_relaxed); }
+
+void set_frame_tap(std::function<void(const std::uint32_t *, std::uint32_t, std::uint32_t)> tap, bool wait) {
+    g_frame_tap = std::move(tap);
+    g_frame_tap_wait = wait;
+}
+
 Rendered render_pending(bool surface, const std::function<void(const std::uint32_t *, std::uint32_t, std::uint32_t)> &copy,
                         const std::function<void()> &before_present, double budget_ms) {
     static std::vector<std::uint32_t> frame;
     return gs::render_pending([&](const gs::DisplayRegs &regs) {
         if (before_present) before_present();
-        if (surface) {
-            gs::present(regs);
-            return;
-        }
+        if (surface) gs::present(regs);
+        const bool show = copy && !surface, tap = g_frame_tap && g_frame_tap_on.load(std::memory_order_relaxed);
+        if (!show && !tap) return;
         std::uint32_t width = 0, height = 0;
-        if (copy && gs::copy_frame(regs, frame, width, height)) copy(frame.data(), width, height);
+        if (!gs::copy_frame(regs, frame, width, height, tap && g_frame_tap_wait)) return;
+        if (show) copy(frame.data(), width, height);
+        if (tap) g_frame_tap(frame.data(), width, height);
     }, budget_ms);
 }
 

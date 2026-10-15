@@ -12,6 +12,7 @@
 #include <cmath>
 #include <cstdio>
 #include <cstdlib>
+#include <cstring>
 #include <thread>
 #include <vector>
 
@@ -68,6 +69,8 @@ SDL_AudioDeviceID g_audio = 0;
 // the keyboard drives the first controller port along with the first game controller, a second one is player 2
 SDL_GameController *g_pads[2] = {};
 bool g_keyboard_pad2 = false;
+bool g_remote_pad2 = false;
+std::function<std::string()> g_status;
 std::uint32_t g_tex_w = 0, g_tex_h = 0;
 std::uint64_t g_last = 0;
 std::vector<std::uint32_t> g_pixels;
@@ -224,7 +227,7 @@ void poll() {
                 }
     }
     poll_port(0);
-    poll_port(1);
+    if (!g_remote_pad2) poll_port(1);
 }
 
 void show_pixels(const std::uint32_t *rgba, std::uint32_t w, std::uint32_t h) {
@@ -297,10 +300,14 @@ void show_speed() {
     const double seconds = static_cast<double>(now - start) / static_cast<double>(SDL_GetPerformanceFrequency());
     if (seconds < 1.0) return;
     const double cpu = process_cpu_seconds(), gpu = ps2::gpu_busy_ms();
-    char title[192];
+    char title[320];
     const double queued = g_audio ? SDL_GetQueuedAudioSize(g_audio) / static_cast<double>(kAudioBytesPerMs) : 0.0;
     std::snprintf(title, sizeof title, "ps2-web-recomp  %.1f fps  CPU %.0f%%  GPU %.0f%%  RAM %.0f MB  audio %.0f ms", static_cast<double>(frames) / seconds,
                   (cpu - cpu_start) / seconds * 100.0, (gpu - gpu_start) / (seconds * 10.0), resident_mb(), queued);
+    if (g_status) {
+        const std::string extra = g_status();
+        std::snprintf(title + std::strlen(title), sizeof title - std::strlen(title), "  |  %s", extra.c_str());
+    }
     SDL_SetWindowTitle(g_window, title);
     start = now;
     frames = 0;
@@ -322,8 +329,15 @@ void queue_audio(const std::int16_t *samples, std::size_t frames) {
 
 }
 
-bool open_window(bool fullscreen, bool keyboard_pad2) {
+void window_queue_audio(const std::int16_t *samples, std::size_t frames) {
+    if (g_audio) queue_audio(samples, frames);
+}
+
+void set_window_status(std::function<std::string()> status) { g_status = std::move(status); }
+
+bool open_window(bool fullscreen, bool keyboard_pad2, bool remote_pad2) {
     g_keyboard_pad2 = keyboard_pad2;
+    g_remote_pad2 = remote_pad2;
     if (SDL_Init(SDL_INIT_VIDEO | SDL_INIT_AUDIO | SDL_INIT_GAMECONTROLLER) != 0) {
         std::fprintf(stderr, "SDL: %s\n", SDL_GetError());
         return false;

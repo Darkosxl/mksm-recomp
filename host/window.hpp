@@ -1,7 +1,15 @@
 #pragma once
 
+#include <cstddef>
+#include <cstdint>
 #include <functional>
+#include <string>
 
-// keyboard_pad2 plugs controller 2 into the second port and drives it from the keyboard (IJKL + numpad)
-bool open_window(bool fullscreen, bool keyboard_pad2 = false);
+// keyboard_pad2 plugs controller 2 into the second port and drives it from the keyboard (IJKL + numpad);
+// remote_pad2 leaves the second port alone because a network player drives it
+bool open_window(bool fullscreen, bool keyboard_pad2 = false, bool remote_pad2 = false);
+// plays emulator sound through the window's audio device (does nothing without one)
+void window_queue_audio(const std::int16_t *samples, std::size_t frames);
+// text appended to the window title once a second
+void set_window_status(std::function<std::string()> status);
 int run_window(const std::function<int()> &emulate);
