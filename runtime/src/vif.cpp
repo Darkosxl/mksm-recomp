@@ -25,6 +25,7 @@ struct Unit {
     std::uint32_t row[4] = {}, col[4] = {};
     bool dbf = false, stalled = false;
     std::vector<std::uint32_t> pending;
+    std::uint32_t phase = 0;  // word position of pending[0] within its quadword in the VIF stream
 };
 
 Unit g_units[2];
@@ -127,7 +128,17 @@ constexpr FastUnpack kFastUnpack[4][4][2] = {
     {{fast_pair<16>(1, false), fast_pair<16>(1, true)}, {fast_pair<16>(2, false), fast_pair<16>(2, true)}, {fast_pair<16>(3, false), fast_pair<16>(3, true)}, {fast_pair<16>(4, false), fast_pair<16>(4, true)}},
 };
 
-void unpack(int unit, std::uint32_t cmd, const std::uint32_t *data) {
+// V3 unpacks write the element that follows the vector into W (the VIF fetches past it), except where PCSX2's tested
+// unpackers zero it; `align` is the word position of the first data word within its quadword.
+bool v3_keeps_w(std::uint32_t vl, std::uint32_t n, std::uint32_t align) {
+    switch (vl) {
+    case 0: return (n & 1u) == (align & 1u);
+    case 1: return !(n & 1u) || (((n + 1) >> 2) & 3u) != (align ? align : 4u) - 1;
+    default: return n == 0 && (align & 1u);
+    }
+}
+
+void unpack(int unit, std::uint32_t cmd, const std::uint32_t *data, std::uint32_t align, std::size_t avail) {
     Unit &u = state(unit);
     const bool dry = shadow(unit);
     if (dry && u.mode != 2) {
@@ -147,7 +158,7 @@ void unpack(int unit, std::uint32_t cmd, const std::uint32_t *data) {
     std::size_t bit_pos = 0;
     auto read_element = [&]() -> std::uint32_t {
         const std::size_t word = bit_pos / 32, shift = bit_pos % 32;
-        std::uint32_t raw = data[word] >> shift;
+        std::uint32_t raw = word < avail ? data[word] >> shift : 0u;
         if (bits < 32) raw &= (1u << bits) - 1u;
         bit_pos += bits;
         if (bits == 16) return usn ? raw : static_cast<std::uint32_t>(static_cast<std::int32_t>(static_cast<std::int16_t>(raw)));
@@ -158,7 +169,7 @@ void unpack(int unit, std::uint32_t cmd, const std::uint32_t *data) {
     std::uint8_t *mem = dry ? g_dry_run : vu_data(unit);
     const std::uint32_t wrap = vu_qwords(unit);
     const bool reach_kicks = unit == 1 && !dry && vu::kicks_pending();
-    if (!masked && u.mode == 0 && !(wl > cl) && !(vn == 3 && vl == 3)) {
+    if (!masked && u.mode == 0 && !(wl > cl) && !(vn == 3 && vl == 3) && vn != 2) {
         kFastUnpack[vl][vn][usn ? 1 : 0](mem, wrap - 1, addr, wl, cl - wl, reinterpret_cast<const std::uint8_t *>(data), num);
         for (std::uint32_t n = 0, cycle = 0; reach_kicks && n < num; ++n) {
             vu::vif_wrote(addr, 0xFu);
@@ -171,6 +182,7 @@ void unpack(int unit, std::uint32_t cmd, const std::uint32_t *data) {
         u.num = 0;
         return;
     }
+    std::uint32_t consumed = 0;
     for (std::uint32_t n = 0; n < num; ++n) {
         const bool fill = wl > cl && cycle >= cl;
         std::uint32_t value[4] = {0, 0, 0, 0};
@@ -185,7 +197,13 @@ void unpack(int unit, std::uint32_t cmd, const std::uint32_t *data) {
                 for (std::uint32_t j = 0; j < components; ++j) value[j] = read_element();
                 if (components == 1) value[1] = value[2] = value[3] = value[0];
                 else if (components == 2) { value[2] = value[0]; value[3] = value[1]; }
+                else if (components == 3 && v3_keeps_w(vl, consumed, align)) {
+                    const std::size_t at = bit_pos;
+                    value[3] = read_element();
+                    bit_pos = at;
+                }
             }
+            ++consumed;
         }
         std::uint8_t *q = mem + (addr % wrap) * 16;
         const std::uint32_t mrow = std::min<std::uint32_t>(cycle, 3u);
@@ -233,7 +251,7 @@ std::uint32_t data_words(int unit, std::uint32_t cmd) {
     }
 }
 
-void execute(int unit, std::uint32_t cmd, const std::uint32_t *data) {
+void execute(int unit, std::uint32_t cmd, const std::uint32_t *data, std::uint32_t align, std::size_t avail) {
     Unit &u = state(unit);
     const std::uint32_t op = (cmd >> 24) & 0x7Fu, imm = cmd & 0xFFFFu, num = (cmd >> 16) & 0xFFu;
     u.code = cmd;
@@ -287,7 +305,7 @@ void execute(int unit, std::uint32_t cmd, const std::uint32_t *data) {
         else gif::transfer(2, reinterpret_cast<const std::uint8_t *>(data), imm ? imm : 0x10000u);
         break;
     default:
-        if ((op & 0x60u) == 0x60u) unpack(unit, cmd, data);
+        if ((op & 0x60u) == 0x60u) unpack(unit, cmd, data, align, avail);
         else std::fprintf(stderr, "[vif%d] unknown command 0x%08X\n", unit, cmd);
         break;
     }
@@ -298,7 +316,7 @@ void execute(int unit, std::uint32_t cmd, const std::uint32_t *data) {
     }
 }
 
-std::size_t run(int unit, const std::uint32_t *words, std::size_t count) {
+std::size_t run(int unit, const std::uint32_t *words, std::size_t count, std::uint32_t phase) {
     Unit &u = state(unit);
     std::size_t pos = 0;
     while (pos < count && !u.stalled) {
@@ -306,7 +324,7 @@ std::size_t run(int unit, const std::uint32_t *words, std::size_t count) {
         const std::size_t start = pos + 1;
         const std::uint32_t need = data_words(unit, cmd);
         if (start + need > count) break;
-        execute(unit, cmd, words + start);
+        execute(unit, cmd, words + start, static_cast<std::uint32_t>(phase + start) & 3u, count - start);
         pos = start + need;
     }
     return pos;
@@ -314,8 +332,9 @@ std::size_t run(int unit, const std::uint32_t *words, std::size_t count) {
 
 void process(int unit) {
     Unit &u = state(unit);
-    const std::size_t pos = run(unit, u.pending.data(), u.pending.size());
+    const std::size_t pos = run(unit, u.pending.data(), u.pending.size(), u.phase);
     u.pending.erase(u.pending.begin(), u.pending.begin() + static_cast<std::ptrdiff_t>(pos));
+    u.phase = static_cast<std::uint32_t>(u.phase + pos) & 3u;
 }
 
 }
@@ -341,8 +360,9 @@ void transfer(int unit, const std::uint8_t *data, std::uint32_t qwc) {
     if (u.pending.empty() && !u.stalled) {
         const auto *words = reinterpret_cast<const std::uint32_t *>(data);
         const std::size_t count = static_cast<std::size_t>(qwc) * 4;
-        const std::size_t pos = run(unit, words, count);
+        const std::size_t pos = run(unit, words, count, 0);
         if (pos < count) u.pending.assign(words + pos, words + count);
+        u.phase = static_cast<std::uint32_t>(pos) & 3u;
         return;
     }
     const std::size_t old = u.pending.size();
