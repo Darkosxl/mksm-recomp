@@ -76,6 +76,11 @@ void sync_iop();
 
 bool load_elf(const std::string &path, std::uint32_t &entry);
 void boot(std::uint32_t entry, const std::vector<std::string> &args);
+// LoadExecPS2 on a console wipes memory and starts another program. Only the loaded ELF exists here, so the
+// run loop restarts it from its entry point with fresh hardware and args[0] = its own cdrom0: path.
+void request_reboot(const std::vector<std::string> &args);
+// the program path and arguments the running ELF was last booted with
+const std::vector<std::string> &boot_args();
 int run();
 void halt(const std::string &reason);
 bool save_state(const std::string &path);

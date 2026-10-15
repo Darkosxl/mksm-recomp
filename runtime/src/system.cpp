@@ -56,6 +56,11 @@ std::uint64_t g_frames = 0;
 std::uint64_t g_iop_synced = 0;
 bool g_state_request = false;
 bool g_resumed = false;
+std::string g_elf_path;
+std::vector<std::string> g_boot_args;
+bool g_disc_open = false;
+bool g_reboot_request = false;
+std::vector<std::string> g_reboot_args;
 
 std::uint64_t next_event_time() {
     std::uint64_t t = UINT64_MAX;
@@ -219,7 +224,7 @@ std::uint64_t scheduled_at(int event) {
 bool preempt(Cpu &c) {
     run_due_events();
     refill(c);
-    return g_halted || g_state_request || kernel::must_unwind();
+    return g_halted || g_state_request || g_reboot_request || kernel::must_unwind();
 }
 
 void halt(const std::string &reason) {
@@ -346,6 +351,7 @@ bool load_elf(const std::string &path, std::uint32_t &entry) {
         std::memcpy(g_ram + vaddr, data.data() + offset, filesz);
         std::memset(g_ram + vaddr + filesz, 0, memsz - filesz);
     }
+    g_elf_path = path;
     return true;
 }
 
@@ -365,7 +371,7 @@ void request_iop_sync() {
 void boot(std::uint32_t entry, const std::vector<std::string> &args) {
     hw::reset();
     kernel::reset();
-    if (!g_options.disc_path.empty() && !disc::open(g_options.disc_path))
+    if (!g_options.disc_path.empty() && !g_disc_open && !(g_disc_open = disc::open(g_options.disc_path)))
         std::fprintf(stderr, "[ee] cannot open disc image %s\n", g_options.disc_path.c_str());
     iop::set_trace(g_options.trace_iop_modules, g_options.trace_iop_hle);
     iop::reset();
@@ -382,14 +388,51 @@ void boot(std::uint32_t entry, const std::vector<std::string> &args) {
         payload += static_cast<std::uint32_t>(guest_args[i].size() + 1);
     }
     store<std::uint32_t>(g_ram + argv + 4 * guest_args.size(), 0);
+    g_boot_args = guest_args;
     kernel::start_main_thread(entry, 0, static_cast<std::uint32_t>(guest_args.size()), argv);
-    schedule(hw::kEventVblank, frame_cycles(), vblank);
+    schedule(hw::kEventVblank, now() + frame_cycles(), vblank);
+}
+
+void request_reboot(const std::vector<std::string> &args) {
+    g_reboot_request = true;
+    g_reboot_args = args;
+}
+
+const std::vector<std::string> &boot_args() { return g_boot_args; }
+
+namespace {
+
+// Runs at the top of the run loop once the guest has unwound: memory and every device start over, the frame
+// counter and the memory card carry on.
+void reboot(Cpu &c) {
+    g_reboot_request = false;
+    sync_vu_thread();
+    gs::flush_and_wait();
+    std::memset(g_ram, 0, kRamSize);
+    std::memset(g_spr, 0, kScratchpadSize);
+    g_events.clear();
+    std::uint32_t entry = 0;
+    if (g_elf_path.empty() || !load_elf(g_elf_path, entry)) {
+        halt("cannot reload " + g_elf_path + " to reboot");
+        return;
+    }
+    std::string line;
+    for (const std::string &a : g_reboot_args) line += " " + a;
+    std::fprintf(stderr, "[ee] reboot at frame %llu:%s\n", static_cast<unsigned long long>(g_frames), line.c_str());
+    boot(entry, g_reboot_args);
+    set_budget(c, kMaxSlice);
+}
+
 }
 
 int run() {
     Cpu &c = g_cpu;
     if (!g_resumed) set_budget(c, kMaxSlice);
     while (!g_halted) {
+        if (g_reboot_request) {
+            reboot(c);
+            continue;
+        }
         if (g_state_request) {
             g_state_request = false;
             save_state(g_options.save_state_path);
