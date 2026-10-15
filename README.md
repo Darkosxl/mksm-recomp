@@ -79,7 +79,7 @@ The native runner, `build/native-mygame/ps2run`, plays the game in a window when
 build/native-mygame/ps2run games/mygame/disc/SLUS_123.45 --disc games/mygame/disc.iso --window --memcard mygame.ps2
 ```
 
-`--fullscreen` starts in fullscreen and F11 switches back and forth. `PS2_SCALE=2` or `3` raises the internal resolution. As in the browser, the emulation, vector unit 1 and the GS each run on their own thread, which takes God of War II from 43 to 60 frames per second at the native resolution on the test laptop; `PS2_ONE_THREAD=1` puts everything back on one thread. The memory card file uses the same layout as the page's exported cards. On a Steam Deck the runner can be added to Steam as a non-Steam game, though nobody has tried it on one yet.
+`--fullscreen` starts in fullscreen and F11 switches back and forth. `PS2_SCALE=2` or `3` raises the internal resolution. As in the browser, the emulation, vector unit 1 and the GS each run on their own thread, which takes God of War II from 43 to 60 frames per second at the native resolution on the test laptop; `PS2_ONE_THREAD=1` puts everything back on one thread. Disc reads, module loads and the IOP reboot take as long as on the console's DVD drive, with its seeks and its constant-angular-velocity transfer rate, because some games time their boot against them; `PS2_FAST_DISC=1` makes them near-instant instead, which shortens loading screens but can trip such games. The memory card file uses the same layout as the page's exported cards. On a Steam Deck the runner can be added to Steam as a non-Steam game, though nobody has tried it on one yet.
 
 ## Saves
 

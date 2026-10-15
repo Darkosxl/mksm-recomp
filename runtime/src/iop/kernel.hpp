@@ -18,6 +18,7 @@ void state(ps2::state::Stream &s);
 void libs_state(ps2::state::Stream &s);
 void cdvd_state(ps2::state::Stream &s);
 void cdvdfsv_state(ps2::state::Stream &s);
+void drive_state(ps2::state::Stream &s);
 
 enum Status { kRun = 1, kReady = 2, kWait = 4, kSuspend = 8, kWaitSuspend = 12, kDormant = 16 };
 enum WaitKind { kWaitNone, kWaitSleep, kWaitDelay, kWaitSema, kWaitEvent, kWaitMbx, kWaitFpl, kWaitVblank, kWaitRpc, kWaitHle };
@@ -64,6 +65,9 @@ enum JobKind : std::uint32_t {
     kJobFsvComplete,
     kJobFsvIopRead,
     kJobSifDmaCallback,
+    kJobRpcComplete,
+    kJobFileioNotify,
+    kJobLoadModule,
     kJobCount
 };
 struct Job {
@@ -120,6 +124,25 @@ void install_sif();
 void install_cdvdfsv();
 void install_cdvd();
 void install_io();
+
+// Timing of the one DVD drive, shared by every path that reads the disc (cdvdman, the CDVDFSV
+// servers, FILEIO, LOADFILE and the IOP reboot). Each call queues the drive work behind what
+// is already queued and returns the IOP cycle at which the data is in memory.
+// PS2_FAST_DISC=1 keeps the old near-instant timing instead.
+bool fast_disc();
+std::uint64_t disc_read(std::uint32_t lsn, std::uint32_t sectors);
+// A sceCdSt* stream is read ahead into a ring buffer, so it only costs the media transfer time.
+std::uint64_t disc_stream(std::uint32_t lsn, std::uint32_t sectors);
+void disc_seek(std::uint32_t lsn);
+// Directory search through cdvdman's file system: volume descriptor and path table once, then
+// each directory not already in its one-directory cache.
+std::uint64_t disc_lookup(const std::string &path);
+// Search plus a read of the whole file, as LOADFILE does for a module.
+std::uint64_t disc_load_file(const std::string &path);
+// IOP reboot through UDNL, optionally with a replacement image read from the disc. Returns
+// when the new IOP kernel reports BOOTEND; iop_booting() is true until then.
+std::uint64_t disc_reboot(const std::string &image);
+bool iop_booting();
 
 void trace_hle(const char *library, const char *function, const Cpu &c);
 extern bool g_trace_hle;

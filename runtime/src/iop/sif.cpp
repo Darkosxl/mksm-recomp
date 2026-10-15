@@ -195,7 +195,7 @@ void command(std::uint32_t src, std::uint32_t size) {
         if (h->cid == 0x8000000Au) {
             std::fprintf(stderr, "[sif] call server 0x%08X fn %u send %u recv %u mode %u args", words[13] ^ kServerXor, words[8], words[9], words[11], words[12]);
             for (int i = 0; i < 8; ++i) std::fprintf(stderr, " %08X", ee_read<std::uint32_t>(g_data_addr + i * 4));
-            std::fprintf(stderr, "\n");
+            std::fprintf(stderr, " @%llu\n", static_cast<unsigned long long>(frame_count()));
         }
         else if (h->cid == 0x80000009u) std::fprintf(stderr, "[sif] bind 0x%08X\n", words[8]);
         else {
@@ -264,6 +264,14 @@ bool g_fileio_async = false;
 std::uint32_t g_fileio_result = 0;
 char g_loadfile_version[4] = {'3', '0', '0', '0'};
 
+// A LoadModule from the disc waits for the drive to read the file before the module is linked
+// and started, as on hardware.
+struct PendingLoad {
+    bool active = false;
+    std::string path, args;
+    std::uint32_t ret = 0;
+} g_pending_load;
+
 void read_reboot_image(const std::string &image_path) {
     const auto entry = disc::find(image_path);
     if (!entry || entry->directory) return;
@@ -283,9 +291,11 @@ void reboot(std::uint32_t src) {
     std::uint32_t args_size;
     std::memcpy(&args_size, packet + 16, 4);
     const std::string path(reinterpret_cast<const char *>(packet + 24), strnlen(reinterpret_cast<const char *>(packet + 24), std::min<std::uint32_t>(args_size, 80)));
-    std::fprintf(stderr, "[sif] IOP reboot requested with \"%s\"\n", path.c_str());
+    std::fprintf(stderr, "[sif] IOP reboot requested with \"%s\" @%llu\n", path.c_str(), static_cast<unsigned long long>(frame_count()));
     if (path.find("IOPRP") != std::string::npos) g_fileio_async = true;
-    if (const auto space = path.find(' '); space != std::string::npos) read_reboot_image(path.substr(space + 1));
+    const auto space = path.find(' ');
+    if (space != std::string::npos) read_reboot_image(path.substr(space + 1));
+    if (!iop::kernel::fast_disc()) iop::kernel::disc_reboot(space == std::string::npos ? std::string() : path.substr(space + 1));
 }
 
 std::uint32_t arg(const iop::Cpu &c, int i) { return i < 4 ? c.r[4 + i] : iop::read32(c.r[29] + 16u + static_cast<std::uint32_t>(i - 4) * 4u); }
@@ -340,6 +350,27 @@ void rpc_finish(iop::Cpu &c) {
 
 void install_iop_side() {
     iop::kernel::register_job(iop::kernel::kJobSifDmaCallback, [](const iop::kernel::Job &j) { iop::kernel::call_guest(j.a, j.b); });
+    iop::kernel::register_job(iop::kernel::kJobRpcComplete, [](const iop::kernel::Job &j) { complete_call(j.a); });
+    iop::kernel::register_job(iop::kernel::kJobFileioNotify, [](const iop::kernel::Job &) {
+        const std::uint32_t packet[4] = {16, 0, 0x80000011u, 0};
+        send(packet, 16);
+    });
+    iop::kernel::register_job(iop::kernel::kJobLoadModule, [](const iop::kernel::Job &) {
+        const PendingLoad load = std::move(g_pending_load);
+        g_pending_load = PendingLoad{};
+        if (!load.active) return;
+        const std::uint32_t ret = load.ret;
+        const std::int32_t id = iop::load_module(load.path, load.args, [ret](int module, int result) {
+            store<std::int32_t>(g_ram + ret, module);
+            store<std::int32_t>(g_ram + ret + 4, result);
+            complete_call(0x80000006u);
+        });
+        if (id < 0) {
+            store<std::int32_t>(g_ram + ret, id);
+            store<std::int32_t>(g_ram + ret + 4, 0);
+            complete_call(0x80000006u);
+        }
+    });
     g_loop_stub = iop::kernel::hle_stub(rpc_loop);
     g_finish_stub = iop::kernel::hle_stub(rpc_finish);
 
@@ -469,14 +500,33 @@ void install_iop_side() {
     def("sifcmd", 28, "sceSifSendCmdIntr", send_cmd);
 }
 
-void fileio_reply(std::uint32_t args, std::uint32_t command, const std::vector<std::uint32_t> &body) {
+bool on_disc(const std::string &path) {
+    return !iop::kernel::fast_disc() && path.size() >= 5 && std::equal(path.begin(), path.begin() + 5, "cdrom", [](char a, char b) {
+        return std::tolower(static_cast<unsigned char>(a)) == b;
+    });
+}
+
+// The result goes into the EE buffer at once; the completion command, which is all the EE
+// waits on, is sent when the drive is done (IOP cycle `done`, 0 = now).
+void fileio_reply(std::uint32_t args, std::uint32_t command, const std::vector<std::uint32_t> &body, std::uint64_t done = 0) {
     if (g_fileio_result) {
         const std::uint32_t header[4] = {ee_read<std::uint32_t>(args), command, ee_read<std::uint32_t>(args + 4), ee_read<std::uint32_t>(args + 8)};
         std::memcpy(g_ram + (g_fileio_result & (kRamSize - 1)), header, 16);
         std::memcpy(g_ram + (g_fileio_result & (kRamSize - 1)) + 16, body.data(), body.size() * 4);
     }
+    if (done > iop::kernel::now()) {
+        iop::kernel::schedule(done, iop::kernel::Job{iop::kernel::kJobFileioNotify});
+        return;
+    }
     const std::uint32_t packet[4] = {16, 0, 0x80000011u, 0};
     send(packet, 16);
+}
+
+// IOP cycle at which a FILEIO read of `size` bytes at the file's position has its data.
+std::uint64_t fileio_read_done(int fd, std::uint32_t size) {
+    std::uint32_t lsn = 0, count = 0;
+    if (iop::kernel::fast_disc() || !iop::io::disc_span(fd, size, lsn, count)) return 0;
+    return iop::kernel::disc_read(lsn, count);
 }
 
 bool fileio_async(std::uint32_t method, std::uint32_t args, std::uint32_t, std::uint32_t ret, std::uint32_t) {
@@ -491,7 +541,7 @@ bool fileio_async(std::uint32_t method, std::uint32_t args, std::uint32_t, std::
     case 0: {
         const std::int32_t fd = iop::io::open(text(20), word(12));
         std::fprintf(stderr, "[fileio] open %s -> %d\n", text(20).c_str(), fd);
-        fileio_reply(args, 0, {static_cast<std::uint32_t>(fd), 0, 0, 0});
+        fileio_reply(args, 0, {static_cast<std::uint32_t>(fd), 0, 0, 0}, on_disc(text(20)) ? iop::kernel::disc_lookup(text(20)) : 0);
         return true;
     }
     case 1:
@@ -500,9 +550,10 @@ bool fileio_async(std::uint32_t method, std::uint32_t args, std::uint32_t, std::
     case 2: {
         const std::uint32_t size = word(20);
         std::vector<std::uint8_t> buffer(size);
+        const std::uint64_t done = fileio_read_done(static_cast<int>(word(12)), size);
         const int n = iop::io::read(static_cast<int>(word(12)), buffer.data(), size);
         if (n > 0) std::memcpy(g_ram + (word(16) & (kRamSize - 1)), buffer.data(), static_cast<std::size_t>(n));
-        fileio_reply(args, 2, {static_cast<std::uint32_t>(n), 0, 0, 0});
+        fileio_reply(args, 2, {static_cast<std::uint32_t>(n), 0, 0, 0}, done);
         return true;
     }
     case 3:
@@ -521,7 +572,7 @@ bool fileio_async(std::uint32_t method, std::uint32_t args, std::uint32_t, std::
         body[1] = word(12);
         body[2] = mode;
         body[4] = fsize;
-        fileio_reply(args, 12, body);
+        fileio_reply(args, 12, body, on_disc(text(16)) ? iop::kernel::disc_lookup(text(16)) : 0);
         return true;
     }
     case 23: {
@@ -548,7 +599,12 @@ void install_servers() {
             const std::string path(reinterpret_cast<const char *>(g_ram + args + 8));
             const std::uint32_t arg_len = ee_read<std::uint32_t>(args);
             const std::string margs(reinterpret_cast<const char *>(g_ram + args + 8 + 252), std::min<std::uint32_t>(arg_len, 252));
-            std::fprintf(stderr, "[loadfile] %s\n", path.c_str());
+            std::fprintf(stderr, "[loadfile] %s @%llu\n", path.c_str(), static_cast<unsigned long long>(frame_count()));
+            if (on_disc(path)) {
+                g_pending_load = PendingLoad{true, path, margs, ret};
+                iop::kernel::schedule(iop::kernel::disc_load_file(path), iop::kernel::Job{iop::kernel::kJobLoadModule});
+                return false;
+            }
             const std::int32_t id = iop::load_module(path, margs, [ret](int module, int result) {
                 store<std::int32_t>(g_ram + ret, module);
                 store<std::int32_t>(g_ram + ret + 4, result);
@@ -611,14 +667,17 @@ void install_servers() {
         const auto word = [args](int i) { return ee_read<std::uint32_t>(args + 4u * static_cast<std::uint32_t>(i)); };
         const auto text = [args](int i) { return std::string(reinterpret_cast<const char *>(g_ram + args + 4u * static_cast<std::uint32_t>(i))); };
         std::int32_t result = 0;
+        std::uint64_t done = 0;
         switch (method) {
         case 0:
             result = iop::io::open(text(1), word(0));
             std::fprintf(stderr, "[fileio] open %s -> %d\n", text(1).c_str(), result);
+            if (on_disc(text(1))) done = iop::kernel::disc_lookup(text(1));
             break;
         case 1: result = iop::io::close(static_cast<int>(word(0))); break;
         case 2: {
             std::vector<std::uint8_t> buffer(word(2));
+            done = fileio_read_done(static_cast<int>(word(0)), word(2));
             result = iop::io::read(static_cast<int>(word(0)), buffer.data(), word(2));
             if (result > 0) std::memcpy(g_ram + (word(1) & (kRamSize - 1)), buffer.data(), static_cast<std::size_t>(result));
             break;
@@ -627,6 +686,7 @@ void install_servers() {
         case 4: result = static_cast<std::int32_t>(iop::io::seek(static_cast<int>(word(0)), static_cast<std::int32_t>(word(1)), static_cast<int>(word(2)))); break;
         case 12: {
             std::uint32_t mode = 0, size = 0;
+            if (on_disc(text(1))) done = iop::kernel::disc_lookup(text(1));
             if (iop::io::stat(text(1), mode, size)) {
                 const std::uint32_t p = word(0) & (kRamSize - 1);
                 std::memset(g_ram + p, 0, 40);
@@ -644,7 +704,9 @@ void install_servers() {
             break;
         }
         store<std::int32_t>(g_ram + ret, result);
-        return true;
+        if (done <= iop::kernel::now()) return true;
+        iop::kernel::schedule(done, iop::kernel::Job{iop::kernel::kJobRpcComplete, 0x80000001u});
+        return false;
     });
     register_hle_server(0x80000003u, [](std::uint32_t method, std::uint32_t args, std::uint32_t, std::uint32_t ret, std::uint32_t) {
         switch (method) {
@@ -686,6 +748,7 @@ void reset() {
     g_iop_rpc_id = 1;
     g_fileio_async = false;
     g_fileio_result = 0;
+    g_pending_load = PendingLoad{};
 }
 
 std::uint32_t get_reg(std::uint32_t reg) {
@@ -693,7 +756,8 @@ std::uint32_t get_reg(std::uint32_t reg) {
     case 1: return g_mainaddr;
     case 2: return kCmdBuffer;
     case 3: return g_msflag;
-    case 4: return g_smflag;
+    // BOOTEND stays clear while the IOP reboots.
+    case 4: return iop::kernel::iop_booting() ? g_smflag & ~0x40000u : g_smflag;
     case 0x80000000u: return 0;
     case 0x80000002u: return 1;
     default: return 0;
@@ -805,6 +869,14 @@ void install_sif() {
 }
 
 namespace ps2::sif {
+
+void timing_state(ps2::state::Stream &s) {
+    iop::kernel::drive_state(s);
+    s.pod(g_pending_load.active);
+    s.str(g_pending_load.path);
+    s.str(g_pending_load.args);
+    s.pod(g_pending_load.ret);
+}
 
 void state(ps2::state::Stream &s) {
     s.tag("sif");

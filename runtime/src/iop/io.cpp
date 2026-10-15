@@ -96,6 +96,17 @@ int read(int fd, std::uint8_t *out, std::uint32_t size) {
     return static_cast<int>(n);
 }
 
+bool disc_span(int fd, std::uint32_t size, std::uint32_t &lsn, std::uint32_t &count) {
+    auto it = g_files.find(fd);
+    if (it == g_files.end() || it->second.in_memory || it->second.position >= it->second.size || !size) return false;
+    const File &f = it->second;
+    const std::uint64_t end = std::min<std::uint64_t>(f.position + size, f.size);
+    const std::uint32_t first = static_cast<std::uint32_t>(f.position / disc::kSector);
+    lsn = f.sector + first;
+    count = static_cast<std::uint32_t>((end + disc::kSector - 1) / disc::kSector) - first;
+    return true;
+}
+
 int write(int fd, const std::uint8_t *, std::uint32_t size) {
     if (fd == 1 || fd == 2) return static_cast<int>(size);
     return g_files.count(fd) ? static_cast<int>(size) : kBadFd;

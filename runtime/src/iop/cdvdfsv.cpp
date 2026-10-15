@@ -24,6 +24,8 @@ std::uint32_t g_stream_pos = 0;
 
 std::uint64_t delay(std::uint32_t sectors) { return usec_to_cycles(400) + static_cast<std::uint64_t>(sectors) * usec_to_cycles(200); }
 
+std::uint64_t read_done(std::uint32_t sector, std::uint32_t count) { return fast_disc() ? now() + delay(count) : disc_read(sector, count); }
+
 void read_to_ee(std::uint32_t sector, std::uint32_t count, std::uint32_t dst) {
     std::vector<std::uint8_t> data(static_cast<std::size_t>(count) * disc::kSector);
     disc::read(sector, count, data.data());
@@ -106,10 +108,12 @@ void install_cdvdfsv() {
         case 0x01:
             if (ret_size >= 4) set_ee32(ret, 0);
             disc::ready(sector, count);
-            schedule(now() + delay(count), Job{kJobFsvRead, sector, count, dst});
+            schedule(read_done(sector, count), Job{kJobFsvRead, sector, count, dst});
             return false;
         case 0x04: set_ee32(ret, 1); return true;
-        case 0x05: return true;
+        case 0x05:
+            if (!fast_disc()) disc_seek(sector);
+            return true;
         case 0x08:
             schedule(now() + delay(0), Job{kJobFsvComplete});
             return false;
@@ -122,7 +126,7 @@ void install_cdvdfsv() {
                 g_stream_pos += count;
                 set_ee32(ret, count);
                 disc::ready(pos, count);
-                schedule(now() + delay(count), Job{kJobFsvRead, pos, count, dst});
+                schedule(fast_disc() ? now() + delay(count) : disc_stream(pos, count), Job{kJobFsvRead, pos, count, dst});
                 return false;
             }
             case 3: g_streaming = false; set_ee32(ret, 1); return true;
@@ -135,7 +139,7 @@ void install_cdvdfsv() {
         case 0x0D:
             if (ret_size >= 4) set_ee32(ret, 0);
             disc::ready(sector, count);
-            schedule(now() + delay(count), Job{kJobFsvIopRead, sector, count, dst});
+            schedule(read_done(sector, count), Job{kJobFsvIopRead, sector, count, dst});
             return false;
         case 0x0E: set_ee32(ret, 2); return true;
         default:
@@ -157,7 +161,9 @@ void install_cdvdfsv() {
         }
         std::fprintf(stderr, "[cdvdfsv] search %s -> %s\n", path.c_str(), entry ? "found" : "missing");
         set_ee32(ret, entry ? 1u : 0u);
-        return true;
+        if (fast_disc()) return true;
+        schedule(disc_lookup(path), Job{kJobRpcComplete, 0x80000597u});
+        return false;
     });
     const auto ready = [](std::uint32_t, std::uint32_t, std::uint32_t, std::uint32_t ret, std::uint32_t) {
         set_ee32(ret, 2);

@@ -3,9 +3,12 @@
 #include "ps2/disc.hpp"
 
 #include "ps2/state.hpp"
+#include "ps2/system.hpp"
 
 #include <algorithm>
+#include <cmath>
 #include <cstdio>
+#include <cstdlib>
 #include <ctime>
 #include <map>
 #include <memory>
@@ -47,6 +50,65 @@ std::uint64_t read_cycles(std::uint32_t sectors) {
     return usec_to_cycles(400) + static_cast<std::uint64_t>(sectors) * usec_to_cycles(250);
 }
 
+// The drive spins a DVD at constant angular velocity, 4x at the outer edge of the data zone, so
+// the transfer rate grows with the radius of the sector (about 1.7x at the inner edge). A seek
+// costs 30 ms for a short hop and grows with the square root of the sled travel to 100 ms for a
+// full stroke; a read up to 16 sectors ahead of the pickup reads through instead. The short and
+// full seek times are PCSX2's, and its boot log fits them: each IRX load from \IOP takes about
+// 30 ms plus 0.9 ms per sector there.
+constexpr double kIopHz = 36864000.0;
+constexpr double kInnerMm = 24.0, kOuterMm = 58.0;
+constexpr double kLayerSectors = 2295104.0;
+constexpr double kOuterBytesPerSecond = 4.0 * 1385000.0;
+constexpr double kShortSeekSeconds = 0.030, kFullSeekSeconds = 0.100;
+constexpr std::uint32_t kReadThrough = 16;
+// IOP reboot, from PCSX2's log of the IOPRP300 reboot: the ROM kernel is up 15 ms after the
+// request, and the replacement kernel reports BOOTEND 116 ms after the image is in memory.
+constexpr double kRomBootSeconds = 0.015, kImageBootSeconds = 0.116;
+
+struct Drive {
+    std::uint32_t head = 0;
+    std::uint64_t free_at = 0;
+    std::uint32_t directory = 0;
+    std::uint64_t boot_done = 0;
+} g_drive;
+
+std::uint64_t seconds_to_cycles(double s) { return static_cast<std::uint64_t>(s * kIopHz + 0.5); }
+
+double radius_mm(std::uint32_t lsn) {
+    double s = lsn;
+    // Dual-layer PS2 discs use opposite track paths: layer 1 runs from where layer 0 ended back
+    // toward the centre.
+    if (const std::uint32_t layer1 = disc::layer1_start(); layer1 && lsn >= layer1)
+        s = lsn - layer1 < layer1 ? static_cast<double>(layer1 - (lsn - layer1)) : 0.0;
+    const double f = std::min(1.0, s / kLayerSectors);
+    return std::sqrt(kInnerMm * kInnerMm + f * (kOuterMm * kOuterMm - kInnerMm * kInnerMm));
+}
+
+std::uint64_t transfer_cycles(std::uint32_t lsn, std::uint32_t sectors) {
+    const double bytes_per_second = kOuterBytesPerSecond * radius_mm(lsn + sectors / 2) / kOuterMm;
+    return seconds_to_cycles(static_cast<double>(sectors) * disc::kSector / bytes_per_second);
+}
+
+std::uint64_t seek_cycles(std::uint32_t from, std::uint32_t to) {
+    if (to >= from && to - from < kReadThrough) return transfer_cycles(from, to - from);
+    const double travel = std::abs(radius_mm(to) - radius_mm(from)) / (kOuterMm - kInnerMm);
+    return seconds_to_cycles(kShortSeekSeconds + (kFullSeekSeconds - kShortSeekSeconds) * std::sqrt(travel));
+}
+
+std::uint64_t access(std::uint32_t lsn, std::uint32_t sectors) {
+    const std::uint64_t start = std::max(now(), g_drive.free_at);
+    g_drive.free_at = start + seek_cycles(g_drive.head, lsn) + transfer_cycles(lsn, sectors);
+    g_drive.head = lsn + sectors;
+    if (g_trace_modules)
+        std::fprintf(stderr, "[drive] lsn %u count %u: %.1f ms\n", lsn, sectors, static_cast<double>(g_drive.free_at - now()) * 1000.0 / kIopHz);
+    return g_drive.free_at;
+}
+
+std::uint32_t sectors_of(std::uint32_t bytes) { return (bytes + disc::kSector - 1) / disc::kSector; }
+
+std::uint32_t le32(const std::uint8_t *p) { return static_cast<std::uint32_t>(p[0] | (p[1] << 8) | (p[2] << 16) | (p[3] << 24)); }
+
 bool start_read(std::uint32_t lsn, std::uint32_t sectors, std::uint32_t buffer, std::uint32_t mode, bool ee_memory);
 
 }
@@ -60,6 +122,65 @@ std::vector<std::uint8_t> read_disc_file(const std::string &path) {
     return data;
 }
 
+bool fast_disc() {
+    static const bool fast = [] {
+        const char *env = std::getenv("PS2_FAST_DISC");
+        return env && *env && *env != '0';
+    }();
+    return fast;
+}
+
+std::uint64_t disc_read(std::uint32_t lsn, std::uint32_t sectors) { return access(lsn, sectors); }
+
+std::uint64_t disc_stream(std::uint32_t lsn, std::uint32_t sectors) {
+    g_drive.head = lsn + sectors;
+    return now() + transfer_cycles(lsn, sectors);
+}
+
+void disc_seek(std::uint32_t lsn) { access(lsn, 0); }
+
+std::uint64_t disc_lookup(const std::string &raw) {
+    std::string path = raw.substr(raw.find(':') == std::string::npos ? 0 : raw.find(':') + 1);
+    std::replace(path.begin(), path.end(), '\\', '/');
+    const auto slash = path.find_last_of('/');
+    const std::string parent = slash == std::string::npos ? std::string() : path.substr(0, slash);
+    std::uint8_t pvd[disc::kSector];
+    if (!disc::read(16, 1, pvd)) return now();
+    std::uint32_t directory = le32(pvd + 158), size = le32(pvd + 166);
+    if (parent.find_first_not_of('/') != std::string::npos) {
+        const auto entry = disc::find(parent);
+        if (!entry || !entry->directory) return now();
+        directory = entry->sector;
+        size = entry->size;
+    }
+    std::uint64_t done = now();
+    if (!g_drive.directory) {
+        access(16, 1);
+        done = access(le32(pvd + 140), sectors_of(le32(pvd + 132)));
+    }
+    if (g_drive.directory != directory) {
+        done = access(directory, sectors_of(size));
+        g_drive.directory = directory;
+    }
+    return done;
+}
+
+std::uint64_t disc_load_file(const std::string &path) {
+    std::uint64_t done = disc_lookup(path);
+    if (const auto entry = disc::find(path); entry && !entry->directory) done = access(entry->sector, sectors_of(entry->size));
+    return done;
+}
+
+std::uint64_t disc_reboot(const std::string &image) {
+    g_drive.directory = 0;
+    g_drive.free_at = std::max(now(), g_drive.free_at) + seconds_to_cycles(kRomBootSeconds);
+    g_drive.boot_done = g_drive.free_at;
+    if (!image.empty() && disc::find(image)) g_drive.boot_done = disc_load_file(image) + seconds_to_cycles(kImageBootSeconds);
+    return g_drive.boot_done;
+}
+
+bool iop_booting() { return ps2::now() / kClockDivider < g_drive.boot_done; }
+
 namespace {
 
 bool start_read(std::uint32_t lsn, std::uint32_t sectors, std::uint32_t buffer, std::uint32_t, bool) {
@@ -67,7 +188,7 @@ bool start_read(std::uint32_t lsn, std::uint32_t sectors, std::uint32_t buffer, 
     g_cd.busy = true;
     g_cd.error = 0;
     disc::ready(lsn, sectors);
-    schedule(now() + read_cycles(sectors), Job{kJobCdRead, lsn, sectors, buffer});
+    schedule(fast_disc() ? now() + read_cycles(sectors) : disc_read(lsn, sectors), Job{kJobCdRead, lsn, sectors, buffer});
     return true;
 }
 
@@ -75,6 +196,7 @@ bool start_read(std::uint32_t lsn, std::uint32_t sectors, std::uint32_t buffer, 
 
 void install_cdvd() {
     g_cd = CdState{};
+    g_drive = Drive{};
     register_job(kJobCdRead, [](const Job &j) {
         if (!disc::ready(j.a, j.b)) {
             schedule(now() + usec_to_cycles(1000), j);
@@ -92,7 +214,10 @@ void install_cdvd() {
         if (g_trace_hle) std::fprintf(stderr, "[cdvd] read lsn %u count %u to 0x%08X\n", arg(c, 0), arg(c, 1), arg(c, 2));
         c.r[2] = start_read(arg(c, 0), arg(c, 1), arg(c, 2), arg(c, 3), false) ? 1u : 0u;
     });
-    def("cdvdman", 7, "sceCdSeek", [](Cpu &c) { c.r[2] = 1; });
+    def("cdvdman", 7, "sceCdSeek", [](Cpu &c) {
+        if (!fast_disc()) disc_seek(arg(c, 0));
+        c.r[2] = 1;
+    });
     def("cdvdman", 8, "sceCdGetError", [](Cpu &c) { c.r[2] = g_cd.error; });
     def("cdvdman", 10, "sceCdSearchFile", [](Cpu &c) {
         const std::string name = ram_string(arg(c, 1), 256);
@@ -175,6 +300,11 @@ std::int32_t load_module(const std::string &path, const std::string &args, std::
 }
 
 namespace ps2::iop::kernel {
+
+void drive_state(ps2::state::Stream &s) {
+    s.tag("drive");
+    s.pod(g_drive);
+}
 
 void cdvd_state(ps2::state::Stream &s) {
     s.tag("cdvd");

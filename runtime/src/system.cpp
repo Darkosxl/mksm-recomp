@@ -216,7 +216,8 @@ bool halted() { return g_halted; }
 namespace {
 
 constexpr char kStateMagic[8] = {'P', 'S', '2', 'S', 'T', 'A', 'T', 'E'};
-constexpr std::uint32_t kStateVersion = 2;
+// Version 3 adds the disc drive timing; version 2 files still load, with an idle drive.
+constexpr std::uint32_t kStateVersion = 3;
 
 std::function<void()> event_action(int id, std::uint64_t at) {
     if (id == hw::kEventVblank) return vblank;
@@ -241,7 +242,7 @@ void machine_state(state::Stream &s) {
     std::uint32_t version = kStateVersion;
     s.pod(version);
     if (std::memcmp(magic, kStateMagic, sizeof magic) != 0) throw std::runtime_error("not a state file");
-    if (version != kStateVersion) throw std::runtime_error("state file from another version");
+    if (version != kStateVersion && version != 2) throw std::runtime_error("state file from another version");
     s.tag("ee");
     s.pod(g_cpu);
     s.bytes(g_ram, kRamSize);
@@ -267,6 +268,7 @@ void machine_state(state::Stream &s) {
     gif::state(s);
     iop::state(s);
     sif::state(s);
+    if (version >= 3) sif::timing_state(s);
     s.tag("end");
 }
 
