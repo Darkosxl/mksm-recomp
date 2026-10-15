@@ -352,9 +352,13 @@ int main(int argc, char **argv) {
         const std::string a = argv[i];
         if (a == "--arg" && i + 1 < argc) launch.args.push_back(argv[++i]);
         else if (a == "--frames" && i + 1 < argc) ps2::g_options.max_frames = std::strtoull(argv[++i], nullptr, 10);
-        else if (a == "--press" && i + 1 < argc) {
+        else if ((a == "--press" || a == "--press2" || a == "--stick" || a == "--stick2") && i + 1 < argc) {
             ps2::Press press;
-            if (ps2::parse_press(argv[++i], press)) ps2::g_options.presses.push_back(press);
+            const bool stick = a.compare(0, 7, "--stick") == 0;
+            if (!(stick ? ps2::parse_stick(argv[++i], press) : ps2::parse_press(argv[++i], press))) continue;
+            if (a.back() == '2') press.pad = 1;
+            if (press.pad == 1) ps2::set_pad_connected(1, true);
+            ps2::g_options.presses.push_back(press);
         }
     }
     if (launch.args.empty()) {

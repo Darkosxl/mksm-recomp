@@ -102,10 +102,27 @@ void dump_frame() {
 
 void apply_presses() {
     if (g_options.presses.empty()) return;
-    std::uint16_t mask = 0;
-    for (const Press &p : g_options.presses)
-        if (g_frames >= p.frame && g_frames < p.frame + p.frames) mask |= p.buttons;
-    iop::sio2::set_buttons(0, mask);
+    std::uint16_t mask[2] = {};
+    std::uint8_t lx[2] = {0x80, 0x80}, ly[2] = {0x80, 0x80};
+    bool drives_buttons[2] = {}, drives_stick[2] = {};
+    for (const Press &p : g_options.presses) {
+        const int pad = p.pad & 1;
+        (p.stick ? drives_stick : drives_buttons)[pad] = true;
+        if (g_frames < p.frame || g_frames >= p.frame + p.frames) continue;
+        if (p.stick) {
+            lx[pad] = p.lx;
+            ly[pad] = p.ly;
+        } else {
+            mask[pad] |= p.buttons;
+        }
+    }
+    for (int pad = 0; pad < 2; ++pad) {
+        if (drives_buttons[pad]) iop::sio2::set_buttons(pad, mask[pad]);
+        if (drives_stick[pad]) {
+            iop::sio2::set_axis(pad, 2, lx[pad]);
+            iop::sio2::set_axis(pad, 3, ly[pad]);
+        }
+    }
 }
 
 void time_frames() {
@@ -486,19 +503,39 @@ void wait_render_work(int timeout_ms) { gs::queue::render().wait_for_work(timeou
 void wake_render_thread() { gs::queue::render().wake(); }
 bool copy_frame(std::vector<std::uint32_t> &rgba, std::uint32_t &width, std::uint32_t &height) { return gs::copy_frame(rgba, width, height); }
 
-bool parse_press(const std::string &spec, Press &press) {
-    static const char *const kNames[16] = {"select", "l3", "r3", "start", "up", "right", "down", "left",
-                                           "l2", "r2", "l1", "r1", "triangle", "circle", "cross", "square"};
+namespace {
+
+// splits "frame:[p1:|p2:]body[:frames]" into its parts; body is left for the caller to parse
+bool parse_input_spec(const std::string &spec, Press &press, std::string &body) {
     const auto colon = spec.find(':');
-    if (colon == std::string::npos) return false;
-    press.frame = std::strtoull(spec.c_str(), nullptr, 10);
+    if (colon == std::string::npos || colon == 0) return false;
+    char *end = nullptr;
+    press.frame = std::strtoull(spec.c_str(), &end, 10);
+    if (end != spec.c_str() + colon) return false;
     std::string rest = spec.substr(colon + 1);
+    press.pad = 0;
+    if (rest.size() > 3 && (rest[0] == 'p' || rest[0] == 'P') && (rest[1] == '1' || rest[1] == '2') && rest[2] == ':') {
+        press.pad = rest[1] - '1';
+        rest = rest.substr(3);
+    }
     press.frames = 6;
     const auto second = rest.find(':');
     if (second != std::string::npos) {
         press.frames = static_cast<std::uint32_t>(std::strtoul(rest.c_str() + second + 1, nullptr, 10));
         rest = rest.substr(0, second);
     }
+    body = rest;
+    return !body.empty();
+}
+
+}
+
+bool parse_press(const std::string &spec, Press &press) {
+    static const char *const kNames[16] = {"select", "l3", "r3", "start", "up", "right", "down", "left",
+                                           "l2", "r2", "l1", "r1", "triangle", "circle", "cross", "square"};
+    std::string rest;
+    if (!parse_input_spec(spec, press, rest)) return false;
+    press.stick = false;
     press.buttons = 0;
     std::size_t start = 0;
     while (start <= rest.size()) {
@@ -512,6 +549,23 @@ bool parse_press(const std::string &spec, Press &press) {
         if (plus == std::string::npos) break;
         start = plus + 1;
     }
+    return true;
+}
+
+bool parse_stick(const std::string &spec, Press &press) {
+    std::string rest;
+    if (!parse_input_spec(spec, press, rest)) return false;
+    const auto comma = rest.find(',');
+    if (comma == std::string::npos) return false;
+    char *end = nullptr;
+    const long x = std::strtol(rest.c_str(), &end, 0);
+    if (end != rest.c_str() + comma) return false;
+    const long y = std::strtol(rest.c_str() + comma + 1, &end, 0);
+    if (*end != '\0' || x < 0 || x > 255 || y < 0 || y > 255) return false;
+    press.stick = true;
+    press.buttons = 0;
+    press.lx = static_cast<std::uint8_t>(x);
+    press.ly = static_cast<std::uint8_t>(y);
     return true;
 }
 
