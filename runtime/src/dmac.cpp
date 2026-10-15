@@ -56,6 +56,15 @@ std::uint8_t *target(std::uint32_t address) {
     return g_ram + (address & (kRamSize - 16));
 }
 
+// fromSPR and toSPR always move data between the scratchpad and main memory, so their
+// memory-side addresses (MADR, and TADR in chain mode) do not honour the SPR bit the other
+// channels use: games hand them KSEG0 pointers such as 0x80E7DCC0. Only a scratchpad
+// virtual address (0x7xxxxxxx) reaches the scratchpad itself.
+std::uint8_t *spr_peer(std::uint32_t address) {
+    if ((address & 0x70000000u) == 0x70000000u) return g_spr + (address & (kScratchpadSize - 16));
+    return g_ram + (address & (kRamSize - 16));
+}
+
 void deliver(int ch, std::uint32_t address, std::uint32_t qwc) {
     if (!qwc) return;
     static std::vector<std::uint8_t> buffer;
@@ -64,7 +73,8 @@ void deliver(int ch, std::uint32_t address, std::uint32_t qwc) {
     const std::uint8_t *data = source(address);
     if (bytes > room || ch == 9) {
         buffer.resize(bytes);
-        for (std::uint32_t i = 0; i < qwc; ++i) std::memcpy(buffer.data() + i * 16, source(address + i * 16), 16);
+        for (std::uint32_t i = 0; i < qwc; ++i)
+            std::memcpy(buffer.data() + i * 16, ch == 9 ? spr_peer(address + i * 16) : source(address + i * 16), 16);
         data = buffer.data();
     }
     switch (ch) {
@@ -117,7 +127,7 @@ void spr_to_ram(Channel &c, std::uint32_t qwc) {
     const bool wrap = mfifo_vif1();
     for (std::uint32_t i = 0; i < qwc; ++i) {
         const std::uint32_t at = wrap ? ring(c.madr + i * 16) : c.madr + i * 16;
-        std::memcpy(target(at), g_spr + ((c.sadr + i * 16) & (kScratchpadSize - 1)), 16);
+        std::memmove(spr_peer(at), g_spr + ((c.sadr + i * 16) & (kScratchpadSize - 1)), 16);
     }
     c.sadr = (c.sadr + qwc * 16) & (kScratchpadSize - 1);
 }
@@ -210,7 +220,7 @@ void run_chain(int ch) {
             g_mfifo_waiting = true;
             return;
         }
-        const std::uint8_t *tagp = source(c.tadr);
+        const std::uint8_t *tagp = ch == 9 ? spr_peer(c.tadr) : source(c.tadr);
         std::uint64_t tag;
         std::memcpy(&tag, tagp, 8);
         c.chcr = (c.chcr & 0xFFFFu) | (static_cast<std::uint32_t>(tag >> 16) << 16);
@@ -288,6 +298,11 @@ void start(int ch) {
     static const bool trace = std::getenv("PS2_TRACE_DMA") != nullptr;
     if (trace) std::fprintf(stderr, "[dma] ch%d chcr 0x%08X madr 0x%08X qwc %u tadr 0x%08X thread %d%s\n", ch, c.chcr, c.madr, c.qwc, c.tadr,
                             kernel::current_thread(), kernel::in_handler() ? " (handler)" : "");
+    static const char *trace_spr = std::getenv("PS2_TRACE_SPR");
+    static const std::uint64_t trace_spr_from = trace_spr ? std::strtoull(trace_spr, nullptr, 10) : 0;
+    if (trace_spr && (ch == 8 || ch == 9) && frame_count() >= trace_spr_from)
+        std::fprintf(stderr, "[spr] f%llu ch%d chcr 0x%08X madr 0x%08X qwc %u tadr 0x%08X sadr 0x%04X sqwc 0x%08X pc 0x%08X ra 0x%08X\n",
+                     static_cast<unsigned long long>(frame_count()), ch, c.chcr, c.madr, c.qwc, c.tadr, c.sadr, g_sqwc, g_cpu.pc, g_cpu.r[31].w[0]);
     if (ch == 5 || ch == 6 || ch == 7) {
         finish(ch);
         return;
