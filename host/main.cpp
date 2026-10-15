@@ -6,7 +6,11 @@
 #ifdef PS2_PROFILE
 #include "profile.hpp"
 #endif
+#ifdef PS2_NETPLAY
+#include "netplay.hpp"
+#endif
 
+#include <cctype>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
@@ -26,6 +30,7 @@ int usage() {
                  "              [--press frame:[p2:]button[+button][:frames]]... [--press2 frame:button[+button][:frames]]...\n"
                  "              [--stick frame:[p2:]lx,ly[:frames]]... [--stick2 frame:lx,ly[:frames]]... [--pad2]\n"
                  "              [--window] [--fullscreen]\n"
+                 "              [--host [port]] [--stun stun:host:port] [--bitrate kbit/s] [--encoder h264_nvenc|libx264]\n"
                  "              [--save-state frame:file] [--load-state file]\n");
     return 2;
 }
@@ -39,6 +44,10 @@ int main(int argc, char **argv) {
     std::string load_path;
     // a second controller is plugged into port 2 when asked for, or when the input script drives it
     bool pad2 = false;
+    [[maybe_unused]] bool host = false;
+#ifdef PS2_NETPLAY
+    NetplayOptions net;
+#endif
     for (int i = 2; i < argc; ++i) {
         const std::string a = argv[i];
         if (a == "--arg" && i + 1 < argc) args.push_back(argv[++i]);
@@ -65,6 +74,15 @@ int main(int argc, char **argv) {
             ps2::g_options.presses.push_back(press);
         }
         else if (a == "--pad2") pad2 = true;
+#ifdef PS2_NETPLAY
+        else if (a == "--host") {
+            host = true;
+            if (i + 1 < argc && std::isdigit(static_cast<unsigned char>(argv[i + 1][0]))) net.port = static_cast<std::uint16_t>(std::strtoul(argv[++i], nullptr, 10));
+        }
+        else if (a == "--stun" && i + 1 < argc) net.stun = argv[++i];
+        else if (a == "--bitrate" && i + 1 < argc) net.bitrate_kbps = static_cast<unsigned>(std::strtoul(argv[++i], nullptr, 10));
+        else if (a == "--encoder" && i + 1 < argc) net.encoder = argv[++i];
+#endif
 #ifdef PS2_WINDOW
         else if (a == "--window") window = true;
         else if (a == "--fullscreen") window = fullscreen = true;
@@ -81,9 +99,25 @@ int main(int argc, char **argv) {
         else return usage();
     }
 
-    if (pad2) ps2::set_pad_connected(1, true);
+    // a network player owns controller 2, which stays plugged in from boot so the game always sees it
+    if (pad2 || host) ps2::set_pad_connected(1, true);
 #ifdef PS2_WINDOW
-    if (window && !open_window(fullscreen, pad2)) return 1;
+    if (window && !open_window(fullscreen, pad2 && !host, host)) return 1;
+#endif
+#ifdef PS2_NETPLAY
+    if (host) {
+        if (!netplay_start(net)) return 1;
+        ps2::set_frame_tap(netplay_frame, !std::getenv("PS2_NETPLAY_ASYNC"));
+        ps2::set_audio_sink([](const std::int16_t *samples, std::size_t frames) {
+            netplay_audio(samples, frames);
+#ifdef PS2_WINDOW
+            window_queue_audio(samples, frames);
+#endif
+        });
+#ifdef PS2_WINDOW
+        set_window_status(netplay_status);
+#endif
+    }
 #endif
     register_generated_code();
     register_generated_vu();
@@ -108,6 +142,9 @@ int main(int argc, char **argv) {
     };
 #ifdef PS2_WINDOW
     if (window) return run_window(emulate);
+#endif
+#ifdef PS2_NETPLAY
+    if (host) return run_netplay_headless(emulate);
 #endif
     return emulate();
 }

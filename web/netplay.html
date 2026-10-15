@@ -1,0 +1,408 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>PS2 Netplay</title>
+<style>
+  :root {
+    color-scheme: dark;
+    --bg: #0c0c0d;
+    --panel: #17171a;
+    --line: #2a2a30;
+    --fg: #ecebe8;
+    --dim: #9b9891;
+    --accent: #e0a63c;
+    --bad: #e2654f;
+    --good: #6cc48a;
+  }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; height: 100%; background: var(--bg); color: var(--fg); font: 15px/1.45 system-ui, -apple-system, "Segoe UI", sans-serif; }
+  #stage { position: fixed; inset: 0; display: flex; align-items: center; justify-content: center; background: #000; }
+  /* the console draws 4:3 whatever its framebuffer size, so the picture is stretched to 4:3 */
+  #screen { position: relative; width: min(100vw, calc(100vh * 4 / 3)); aspect-ratio: 4 / 3; }
+  video { width: 100%; height: 100%; object-fit: fill; display: block; background: #000; }
+  #hud { position: fixed; top: 10px; left: 10px; padding: 4px 9px; border-radius: 6px; background: rgba(0, 0, 0, .62); font: 12px/1.5 ui-monospace, "SF Mono", Menlo, monospace; color: var(--dim); pointer-events: none; white-space: pre; }
+  #hud b { color: var(--fg); font-weight: 600; }
+  #tools { position: fixed; top: 10px; right: 10px; display: flex; gap: 6px; }
+  #tools button { font: 13px system-ui, sans-serif; padding: 5px 10px; border-radius: 6px; border: 1px solid #ffffff22; background: rgba(0, 0, 0, .62); color: var(--fg); cursor: pointer; }
+  #tools button:hover { border-color: #ffffff55; }
+  #panel { position: fixed; inset: 0; display: flex; align-items: center; justify-content: center; padding: 16px; background: radial-gradient(ellipse at top, #1c1a16 0%, var(--bg) 60%); }
+  #card { width: 100%; max-width: 420px; background: var(--panel); border: 1px solid var(--line); border-radius: 14px; padding: 26px 24px 20px; }
+  h1 { margin: 0 0 4px; font-size: 21px; font-weight: 650; letter-spacing: -.01em; }
+  .sub { margin: 0 0 20px; color: var(--dim); }
+  label { display: block; font-size: 13px; color: var(--dim); margin-bottom: 6px; }
+  .row { display: flex; gap: 8px; }
+  input { flex: 1; min-width: 0; font: 600 22px/1 ui-monospace, Menlo, monospace; letter-spacing: .28em; padding: 11px 12px; border-radius: 9px; border: 1px solid var(--line); background: #0f0f11; color: var(--fg); }
+  input:focus { outline: 2px solid var(--accent); outline-offset: 1px; }
+  #join { font: 600 15px system-ui, sans-serif; padding: 0 20px; border-radius: 9px; border: 0; background: var(--accent); color: #1b1407; cursor: pointer; }
+  #join:disabled { opacity: .5; cursor: default; }
+  #status { min-height: 1.45em; margin: 12px 0 0; color: var(--dim); }
+  #status.bad { color: var(--bad); }
+  details { margin-top: 18px; border-top: 1px solid var(--line); padding-top: 12px; color: var(--dim); font-size: 13px; }
+  summary { cursor: pointer; color: var(--fg); }
+  kbd { font: 12px ui-monospace, Menlo, monospace; padding: 1px 5px; border: 1px solid var(--line); border-radius: 4px; background: #0f0f11; color: var(--fg); }
+  #unmute { position: fixed; left: 50%; bottom: 24px; transform: translateX(-50%); padding: 8px 14px; border-radius: 8px; border: 1px solid #ffffff33; background: rgba(0, 0, 0, .72); color: var(--fg); font: 14px system-ui, sans-serif; cursor: pointer; }
+  [hidden] { display: none !important; }
+</style>
+</head>
+<body>
+<div id="stage" hidden>
+  <div id="screen"><video id="video" autoplay playsinline muted></video></div>
+  <div id="hud"></div>
+  <div id="tools"><button id="sound" type="button">Sound on</button><button id="full" type="button">Fullscreen</button></div>
+  <button id="unmute" type="button" hidden>Click to turn the sound on</button>
+</div>
+<div id="panel">
+  <form id="card" autocomplete="off">
+    <h1>Join as player 2</h1>
+    <p class="sub">The game runs on the host's PC. You see and hear it here, and your controller plays player 2.</p>
+    <label for="code">Session code from the host</label>
+    <div class="row">
+      <input id="code" inputmode="numeric" pattern="[0-9]{6}" maxlength="6" placeholder="000000" required>
+      <button id="join" type="submit">Join</button>
+    </div>
+    <p id="status" role="status"></p>
+    <details>
+      <summary>Controls</summary>
+      <p>Gamepad: plug it in and press any button on it. Standard layout: A/✕, B/○, X/□, Y/△, bumpers L1/R1, triggers L2/R2, sticks, Start, Select/Back.</p>
+      <p>Keyboard: <kbd>←↑→↓</kbd> d-pad and left stick, <kbd>Z</kbd> ✕, <kbd>X</kbd> ○, <kbd>A</kbd> □, <kbd>S</kbd> △, <kbd>Q</kbd> L1, <kbd>W</kbd> R1, <kbd>1</kbd> L2, <kbd>2</kbd> R2, <kbd>Enter</kbd> Start, <kbd>Backspace</kbd> Select. Double-click the picture for fullscreen.</p>
+    </details>
+  </form>
+</div>
+<script>
+'use strict';
+// Protocol: docs/netplay.md. Signalling is two POSTs to the host; media arrive over WebRTC, input leaves on a data channel.
+const B = { SELECT: 1, L3: 2, R3: 4, START: 8, UP: 16, RIGHT: 32, DOWN: 64, LEFT: 128, L2: 256, R2: 512, L1: 1024, R1: 2048,
+            TRIANGLE: 4096, CIRCLE: 8192, CROSS: 16384, SQUARE: 32768 };
+// W3C "standard" gamepad button order
+const PAD = [B.CROSS, B.CIRCLE, B.SQUARE, B.TRIANGLE, B.L1, B.R1, B.L2, B.R2, B.SELECT, B.START, B.L3, B.R3, B.UP, B.DOWN, B.LEFT, B.RIGHT];
+const KEYS = { ArrowUp: B.UP, ArrowDown: B.DOWN, ArrowLeft: B.LEFT, ArrowRight: B.RIGHT, KeyZ: B.CROSS, KeyX: B.CIRCLE, KeyA: B.SQUARE,
+               KeyS: B.TRIANGLE, KeyQ: B.L1, KeyW: B.R1, Digit1: B.L2, Digit2: B.R2, Enter: B.START, Backspace: B.SELECT };
+const MSG_INPUT = 1, MSG_PING = 2, MSG_PONG = 3;
+
+const $ = (id) => document.getElementById(id);
+const params = new URLSearchParams(location.hash.slice(1) || location.search.slice(1));
+const testSeconds = Number(params.get('test') || 0);
+const video = $('video');
+const keys = new Set();
+let pc = null, dc = null, seq = 0, probe = 0, joined = false;
+let ping = NaN, hostStatus = null, presented = 0, fps = 0, videoKbps = 0, audioKbps = 0, jitterMs = NaN, lastStats = null;
+
+if (params.get('code')) $('code').value = params.get('code').replace(/\D/g, '').slice(0, 6);
+
+function setStatus(text, bad) {
+  $('status').textContent = text;
+  $('status').className = bad ? 'bad' : '';
+}
+
+async function post(path, body) {
+  const r = await fetch(path, { method: 'POST', body, headers: { 'Content-Type': 'text/plain' } });
+  const text = await r.text();
+  if (!r.ok) throw new Error(text.trim() || r.statusText);
+  return text;
+}
+
+function gatheringDone(conn, ms) {
+  if (conn.iceGatheringState === 'complete') return Promise.resolve();
+  return new Promise((resolve) => {
+    const t = setTimeout(resolve, ms);
+    conn.addEventListener('icegatheringstatechange', () => {
+      if (conn.iceGatheringState === 'complete') { clearTimeout(t); resolve(); }
+    });
+  });
+}
+
+async function join() {
+  const code = $('code').value.trim();
+  if (!/^\d{6}$/.test(code)) { setStatus('The code has 6 digits.', true); return; }
+  $('join').disabled = true;
+  setStatus('Contacting the host…');
+  try {
+    const reply = await post('/offer', code);
+    const nl = reply.indexOf('\n');
+    const session = reply.slice(0, nl), offer = reply.slice(nl + 1);
+    const stun = params.get('stun');
+    pc = new RTCPeerConnection({ iceServers: stun ? [{ urls: stun }] : [] });
+    const stream = new MediaStream();
+    pc.ontrack = (e) => {
+      // ask for the smallest jitter buffer: this is a game, not a film
+      try { e.receiver.jitterBufferTarget = 0; } catch (_) {}
+      try { e.receiver.playoutDelayHint = 0; } catch (_) {}
+      stream.addTrack(e.track);
+      video.srcObject = stream;
+    };
+    pc.ondatachannel = (e) => openChannel(e.channel);
+    pc.onconnectionstatechange = () => {
+      const s = pc.connectionState;
+      if (s === 'connected') started();
+      if (s === 'failed' || s === 'closed' || s === 'disconnected') lost(s);
+    };
+    await pc.setRemoteDescription({ type: 'offer', sdp: offer });
+    const answer = await pc.createAnswer();
+    if (!/^a=rtpmap:\d+ H264\//m.test(answer.sdp)) throw new Error('this browser cannot play H.264 video; try Chrome, Edge or Firefox');
+    await pc.setLocalDescription(answer);
+    await gatheringDone(pc, 1500);
+    setStatus('Connecting…');
+    await post('/answer', code + '\n' + session + '\n' + pc.localDescription.sdp);
+  } catch (err) {
+    setStatus('Could not join: ' + err.message, true);
+    $('join').disabled = false;
+    if (pc) pc.close();
+    pc = null;
+  }
+}
+
+function started() {
+  if (joined) return;
+  joined = true;
+  $('panel').hidden = true;
+  $('stage').hidden = false;
+  // the Join click counts as the user gesture that allows sound
+  video.muted = false;
+  video.play().catch(() => { video.muted = true; video.play().catch(() => {}); $('unmute').hidden = false; });
+  updateSoundButton();
+  if (testSeconds) runTest();
+}
+
+function lost(state) {
+  if (!joined) { setStatus('Connection ' + state + '.', true); $('join').disabled = false; return; }
+  joined = false;
+  $('stage').hidden = true;
+  $('panel').hidden = false;
+  $('join').disabled = false;
+  setStatus('Connection to the host was ' + (state === 'closed' ? 'closed' : 'lost') + '. Join again to continue.', true);
+}
+
+function openChannel(channel) {
+  dc = channel;
+  dc.binaryType = 'arraybuffer';
+  dc.onmessage = (e) => {
+    if (typeof e.data === 'string') { try { hostStatus = JSON.parse(e.data); } catch (_) {} return; }
+    const v = new DataView(e.data);
+    if (v.byteLength !== 9) return;
+    const type = v.getUint8(0);
+    if (type === MSG_PING) {
+      const reply = new Uint8Array(e.data.slice(0));
+      reply[0] = MSG_PONG;
+      if (dc.readyState === 'open') dc.send(reply.buffer);
+    } else if (type === MSG_PONG) {
+      const rtt = performance.now() - v.getFloat64(1, true);
+      ping = isNaN(ping) ? rtt : ping * 0.7 + rtt * 0.3;
+      pings.push(rtt);
+    }
+  };
+}
+
+// ---- input
+
+const axis = (v) => (Math.abs(v) < 0.08 ? 128 : Math.max(0, Math.min(255, Math.round((v + 1) * 127.5))));
+
+function firstPad() {
+  const pads = navigator.getGamepads ? navigator.getGamepads() : [];
+  for (const p of pads) if (p && p.connected) return p;
+  return null;
+}
+
+let scripted = null;
+function readInput() {
+  const s = { buttons: 0, lx: 128, ly: 128, rx: 128, ry: 128, l2: 255, r2: 255 };
+  for (const k of keys) s.buttons |= KEYS[k] || 0;
+  if (keys.has('ArrowLeft')) s.lx = 0;
+  if (keys.has('ArrowRight')) s.lx = 255;
+  if (keys.has('ArrowUp')) s.ly = 0;
+  if (keys.has('ArrowDown')) s.ly = 255;
+  const gp = firstPad();
+  if (gp) {
+    gp.buttons.forEach((b, i) => { if (i < PAD.length && b.pressed) s.buttons |= PAD[i]; });
+    const trigger = (i, field) => {
+      const b = gp.buttons[i];
+      if (b && b.value > 0.06 && b.value < 1) s[field] = Math.max(1, Math.round(b.value * 255));
+    };
+    trigger(6, 'l2');
+    trigger(7, 'r2');
+    if (gp.axes.length >= 2 && s.lx === 128 && s.ly === 128) { s.lx = axis(gp.axes[0]); s.ly = axis(gp.axes[1]); }
+    if (gp.axes.length >= 4) { s.rx = axis(gp.axes[2]); s.ry = axis(gp.axes[3]); }
+  }
+  if (scripted) scripted(s);
+  return s;
+}
+
+function sendInput() {
+  if (!dc || dc.readyState !== 'open' || dc.bufferedAmount > 16384) return;
+  const s = readInput();
+  const v = new DataView(new ArrayBuffer(14));
+  seq = (seq + 1) >>> 0;
+  v.setUint8(0, MSG_INPUT);
+  v.setUint8(1, probe);
+  v.setUint16(2, s.buttons, true);
+  v.setUint32(4, seq, true);
+  v.setUint8(8, s.lx); v.setUint8(9, s.ly); v.setUint8(10, s.rx); v.setUint8(11, s.ry);
+  v.setUint8(12, s.l2); v.setUint8(13, s.r2);
+  dc.send(v.buffer);
+}
+// every packet carries the whole pad, ~125 times a second; a lost one is replaced 8 ms later
+setInterval(sendInput, 8);
+
+const pings = [];
+setInterval(() => {
+  if (!dc || dc.readyState !== 'open') return;
+  const v = new DataView(new ArrayBuffer(9));
+  v.setUint8(0, MSG_PING);
+  v.setFloat64(1, performance.now(), true);
+  dc.send(v.buffer);
+}, 500);
+
+addEventListener('keydown', (e) => {
+  if (!joined || !(e.code in KEYS)) return;
+  e.preventDefault();
+  keys.add(e.code);
+  sendInput();
+});
+addEventListener('keyup', (e) => {
+  if (!(e.code in KEYS)) return;
+  keys.delete(e.code);
+  if (joined) { e.preventDefault(); sendInput(); }
+});
+addEventListener('blur', () => keys.clear());
+
+// ---- picture, sound, stats
+
+function updateSoundButton() { $('sound').textContent = video.muted ? 'Sound on' : 'Mute'; }
+$('sound').onclick = () => { video.muted = !video.muted; if (!video.muted) video.play().catch(() => {}); $('unmute').hidden = true; updateSoundButton(); };
+$('unmute').onclick = () => { video.muted = false; video.play().catch(() => {}); $('unmute').hidden = true; updateSoundButton(); };
+const toggleFull = () => (document.fullscreenElement ? document.exitFullscreen() : $('stage').requestFullscreen()).catch(() => {});
+$('full').onclick = toggleFull;
+video.ondblclick = toggleFull;
+$('card').onsubmit = (e) => { e.preventDefault(); join(); };
+
+const frameTimes = [];
+function onFrame(now, meta) {
+  presented++;
+  frameTimes.push(now);
+  while (frameTimes.length && now - frameTimes[0] > 1000) frameTimes.shift();
+  fps = frameTimes.length;
+  if (probe) checkProbe(now, meta);
+  video.requestVideoFrameCallback(onFrame);
+}
+if ('requestVideoFrameCallback' in HTMLVideoElement.prototype) video.requestVideoFrameCallback(onFrame);
+
+setInterval(async () => {
+  if (!pc || !joined) return;
+  const report = await pc.getStats();
+  const now = performance.now();
+  const cur = {};
+  report.forEach((r) => {
+    if (r.type === 'inbound-rtp') cur[r.kind] = r;
+  });
+  if (lastStats && cur.video && lastStats.video) {
+    const dt = (now - lastStats.t) / 1000;
+    videoKbps = (cur.video.bytesReceived - lastStats.video.bytesReceived) * 8 / 1000 / dt;
+    if (cur.audio && lastStats.audio) audioKbps = (cur.audio.bytesReceived - lastStats.audio.bytesReceived) * 8 / 1000 / dt;
+    const n = cur.video.jitterBufferEmittedCount - lastStats.video.jitterBufferEmittedCount;
+    if (n > 0) jitterMs = (cur.video.jitterBufferDelay - lastStats.video.jitterBufferDelay) / n * 1000;
+  }
+  lastStats = { t: now, video: cur.video, audio: cur.audio };
+  if (cur.video) videoTotals = cur.video;
+  if (cur.audio) audioTotals = cur.audio;
+  const pad = firstPad();
+  $('hud').innerHTML = `<b>P2</b>  ping ${isNaN(ping) ? '–' : ping.toFixed(0)} ms  ·  ${fps} fps  ·  ${(videoKbps / 1000).toFixed(1)} Mbit/s` +
+    `  ·  buffer ${isNaN(jitterMs) ? '–' : jitterMs.toFixed(0)} ms\n${pad ? 'pad: ' + pad.id.slice(0, 40) : 'keyboard (press a gamepad button to use one)'}` +
+    (hostStatus ? `  ·  host ${hostStatus.fps} fps ${hostStatus.encoder}` : '');
+}, 1000);
+let videoTotals = null, audioTotals = null;
+
+// ---- automated test (#code=…&test=SECONDS[&script=ms:button:ms,…]): measures input -> picture latency.
+// The host paints the probe id it last received into the frame corner; we time how long until it shows.
+
+const marker = document.createElement('canvas');
+marker.width = 64; marker.height = 24;
+const mctx = marker.getContext('2d', { willReadFrequently: true });
+let probeId = 0, probeSent = 0, probeTimeouts = 0;
+const latencies = [], netLatencies = [];
+
+function readMarker() {
+  mctx.drawImage(video, 0, 0, 64, 24, 0, 0, 64, 24);
+  const d = mctx.getImageData(0, 0, 64, 24).data;
+  let id = 0;
+  for (let bar = 0; bar < 8; bar++) {
+    let sum = 0;
+    for (const y of [6, 12, 18]) { const o = (y * 64 + bar * 8 + 4) * 4; sum += (d[o] + d[o + 1] + d[o + 2]) / 3; }
+    const lum = sum / 3;
+    if (lum > 190) id |= 1 << bar;
+    else if (lum > 60) return -1;
+  }
+  return id;
+}
+
+function nextProbe() {
+  probeId = probeId % 255 + 1;
+  probe = probeId;
+  probeSent = performance.now();
+  sendInput();
+}
+
+function checkProbe(now, meta) {
+  if (readMarker() === probe) {
+    latencies.push(performance.now() - probeSent);
+    if (meta && meta.receiveTime) netLatencies.push(meta.receiveTime - probeSent);
+    probe = 0;
+    setTimeout(nextProbe, 120 + Math.random() * 120);
+  } else if (performance.now() - probeSent > 1500) {
+    probeTimeouts++;
+    probe = 0;
+    setTimeout(nextProbe, 120);
+  }
+}
+
+function parseScript(text) {
+  return text.split(',').filter(Boolean).map((part) => {
+    const [at, what, ms] = part.split(':');
+    return { at: Number(at), what: what.toUpperCase(), ms: Number(ms || 200) };
+  });
+}
+
+const pct = (a, p) => { if (!a.length) return null; const s = [...a].sort((x, y) => x - y); return +s[Math.min(s.length - 1, Math.floor(p * s.length))].toFixed(1); };
+
+function runTest() {
+  const t0 = performance.now();
+  const steps = parseScript(params.get('script') || '');
+  scripted = (s) => {
+    const t = performance.now() - t0;
+    for (const st of steps) {
+      if (t < st.at || t >= st.at + st.ms) continue;
+      if (st.what === 'STICKL') s.lx = 0; else if (st.what === 'STICKR') s.lx = 255;
+      else if (st.what === 'STICKU') s.ly = 0; else if (st.what === 'STICKD') s.ly = 255;
+      else s.buttons |= B[st.what] || 0;
+    }
+  };
+  const presented0 = presented;
+  setTimeout(nextProbe, 1500);
+  setTimeout(() => {
+    probe = 0;
+    const seconds = (performance.now() - t0) / 1000;
+    const result = {
+      seconds: +seconds.toFixed(1),
+      fps: +((presented - presented0) / seconds).toFixed(1),
+      size: video.videoWidth + 'x' + video.videoHeight,
+      videoKbps: videoTotals ? +(videoTotals.bytesReceived * 8 / 1000 / seconds).toFixed(0) : null,
+      audioKbps: audioTotals ? +(audioTotals.bytesReceived * 8 / 1000 / seconds).toFixed(0) : null,
+      framesDecoded: videoTotals && videoTotals.framesDecoded, framesDropped: videoTotals && videoTotals.framesDropped,
+      keyFrames: videoTotals && videoTotals.keyFramesDecoded, pliSent: videoTotals && videoTotals.pliCount,
+      audioPackets: audioTotals && audioTotals.packetsReceived, audioSamples: audioTotals && audioTotals.totalSamplesReceived,
+      audioConcealed: audioTotals && audioTotals.concealedSamples, audioEnergy: audioTotals && audioTotals.totalAudioEnergy,
+      jitterBufferMs: isNaN(jitterMs) ? null : +jitterMs.toFixed(1),
+      pingMs: { median: pct(pings, 0.5), p95: pct(pings, 0.95) },
+      inputToFrameMs: { n: latencies.length, min: pct(latencies, 0), median: pct(latencies, 0.5), p95: pct(latencies, 0.95), max: pct(latencies, 1), timeouts: probeTimeouts },
+      inputToReceiveMs: { n: netLatencies.length, median: pct(netLatencies, 0.5), p95: pct(netLatencies, 0.95) },
+      host: hostStatus,
+    };
+    window.netplayResult = result;
+    console.log('NETPLAY_RESULT ' + JSON.stringify(result));
+  }, testSeconds * 1000);
+}
+
+if (testSeconds && $('code').value) join();
+</script>
+</body>
+</html>
