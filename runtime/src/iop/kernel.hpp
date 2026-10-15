@@ -103,7 +103,8 @@ struct Module {
     std::uint32_t base, size, entry, gp;
 };
 const std::map<int, Module> &modules();
-using HleModuleStart = std::function<void()>;
+// Runs instead of a module's _start; returns its start result (0 resident, 1 no-resident, 2 removable).
+using HleModuleStart = std::function<int()>;
 void register_hle_module(const std::string &name, HleModuleStart start);
 
 void register_interrupt(unsigned line, std::uint32_t handler, std::uint32_t arg, std::uint32_t mode);

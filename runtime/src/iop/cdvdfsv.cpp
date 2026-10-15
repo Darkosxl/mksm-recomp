@@ -36,6 +36,11 @@ void read_to_ee(std::uint32_t sector, std::uint32_t count, std::uint32_t dst) {
 void install_cdvdfsv() {
     g_streaming = false;
     g_stream_pos = 0;
+    // CDVDSTM.IRX only provides the "cdrom_stm" ioman device through which the real CDVDFSV
+    // runs sceCdSt* streams (devctl). This server streams natively (0x80000595 method 9), so
+    // the module has nothing to do here; it starts resident (REMOVABLE_RESIDENT_END) as on
+    // hardware instead of running LLE against device and cdvdman calls the HLE lacks.
+    register_hle_module("CDVDSTM", [] { return 2; });
     register_job(kJobFsvRead, [](const Job &j) {
         if (!disc::ready(j.a, j.b)) {
             schedule(now() + usec_to_cycles(1000), j);
