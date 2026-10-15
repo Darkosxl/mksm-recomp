@@ -9,6 +9,7 @@
 #include <deque>
 #include <map>
 #include <set>
+#include <utility>
 #include <vector>
 
 namespace ps2::iop::kernel {
@@ -121,7 +122,7 @@ std::uint64_t g_next_alarm = 1;
 int g_next_object = 1;
 std::uint64_t g_rotate_order = 1ull << 40;
 std::uint32_t g_strtok_next = 0;
-std::uint32_t g_next_hard_timer = 1;
+std::uint32_t g_next_hard_timer = 1;  // unused since timer ids name root counters; kept in the state layout
 
 void signal_sema(Cpu &c, int id, bool from_interrupt) {
     auto it = g_semas.find(id);
@@ -185,6 +186,29 @@ void send_mbx(Cpu &c, int id, std::uint32_t message, bool from_interrupt) {
     }
 }
 
+// timrman hands out the IOP's six root counters (ps2sdk timrman, PCSX2 psxcounters): 0-2 are
+// 16-bit at 0x1F801100, 3-5 are 32-bit at 0x1F801480. A timer id is the counter index + 1.
+constexpr std::uint32_t kClockSys = 1, kClockPixel = 2, kClockHline = 4, kClockHold = 8;
+struct RootCounter {
+    std::uint32_t sources, bits, max_prescale, line;
+};
+constexpr RootCounter kRootCounters[6] = {
+    {kClockSys | kClockPixel | kClockHold, 16, 1, 4},
+    {kClockSys | kClockHline | kClockHold, 16, 1, 5},
+    {kClockSys, 16, 8, 6},
+    {kClockSys | kClockHline | kClockHold, 32, 1, 14},
+    {kClockSys, 32, 256, 15},
+    {kClockSys, 32, 256, 16},
+};
+constexpr std::uint32_t kModeResetOnTarget = 0x08, kModeIrqOnTarget = 0x10, kModeIrqRepeat = 0x40, kModeAltClock = 0x100, kModeDiv8 = 0x200;
+constexpr int kErrorNoTimer = -150, kErrorIllegalTimer = -151;
+
+const RootCounter *root_counter(std::uint32_t id) { return id >= 1 && id <= 6 ? &kRootCounters[id - 1] : nullptr; }
+
+// A timer armed through SetTimerHandler calls handler(common) itself. One without a handler runs
+// like the bare counter, programmed with SetTimerMode/SetTimerCompare: common then holds its mode
+// register, and reaching compare raises the counter's interrupt line for an intrman handler.
+// source 0 marks a counter that FreeHardTimer released.
 struct HardTimer {
     std::uint32_t compare = 0, handler = 0, common = 0, source = 1, prescale = 1;
     bool running = false;
@@ -193,23 +217,65 @@ struct HardTimer {
 std::map<std::uint32_t, HardTimer> g_hard_timers;
 std::map<std::uint32_t, std::uint64_t> g_hard_timer_start;
 
-std::uint64_t timer_cycles(const HardTimer &t, std::uint32_t ticks) {
-    const std::uint64_t per_tick = (t.source & 4u) ? 2343u : std::max<std::uint32_t>(t.prescale, 1u);
-    return std::max<std::uint64_t>(static_cast<std::uint64_t>(ticks) * per_tick, 1u);
+// IOP cycles per counter tick, as a fraction.
+std::pair<std::uint64_t, std::uint64_t> tick_rate(const HardTimer &t) {
+    if (t.source & kClockHline) return {2343u, 1u};
+    if (t.source & kClockPixel) return {36864u, 13500u};
+    return {std::max<std::uint32_t>(t.prescale, 1u), 1u};
 }
+
+std::uint64_t timer_cycles(const HardTimer &t, std::uint64_t ticks) {
+    const auto [num, den] = tick_rate(t);
+    return std::max<std::uint64_t>((ticks * num + den - 1) / den, 1u);
+}
+
+std::uint64_t timer_ticks(const HardTimer &t, std::uint64_t cycles) {
+    const auto [num, den] = tick_rate(t);
+    return cycles * den / num;
+}
+
+bool counter_driven(std::uint32_t id, const HardTimer &t) { return !t.handler && root_counter(id); }
 
 void arm_hard_timer(std::uint32_t id);
 
 std::uint32_t hard_timer_counter(std::uint32_t id) {
     const auto it = g_hard_timers.find(id);
     if (it == g_hard_timers.end()) return 0;
+    const HardTimer &t = it->second;
     const std::uint64_t start = g_hard_timer_start.try_emplace(id, now()).first->second;
-    return static_cast<std::uint32_t>((now() - start) / timer_cycles(it->second, 1));
+    std::uint64_t ticks = timer_ticks(t, now() - start);
+    if (counter_driven(id, t)) {
+        if ((t.common & kModeResetOnTarget) && t.compare) ticks %= t.compare;
+        ticks &= (1ull << root_counter(id)->bits) - 1u;
+    }
+    return static_cast<std::uint32_t>(ticks);
+}
+
+// Schedules the next time a counter-driven timer reaches its target: every compare ticks when it
+// resets there, otherwise once per wrap of the counter.
+void arm_counter(std::uint32_t id, HardTimer &t) {
+    const std::uint64_t generation = ++t.generation;
+    if (!t.running || !counter_driven(id, t)) return;
+    const std::uint64_t start = g_hard_timer_start.try_emplace(id, now()).first->second;
+    const std::uint64_t wrap = 1ull << root_counter(id)->bits;
+    const std::uint64_t target = t.compare ? t.compare : wrap;
+    const std::uint64_t elapsed = timer_ticks(t, now() - start);
+    const std::uint64_t next = (t.common & kModeResetOnTarget) ? (elapsed / target + 1u) * target
+                               : elapsed < target                ? target
+                                                                 : target + ((elapsed - target) / wrap + 1u) * wrap;
+    schedule(start + timer_cycles(t, next), Job{kJobHardTimer, id, static_cast<std::uint32_t>(generation), static_cast<std::uint32_t>(generation >> 32)});
 }
 
 void fire_hard_timer(std::uint32_t id, std::uint64_t generation) {
     auto it = g_hard_timers.find(id);
-    if (it == g_hard_timers.end() || !it->second.running || it->second.generation != generation || !it->second.handler) return;
+    if (it == g_hard_timers.end() || !it->second.running || it->second.generation != generation) return;
+    if (counter_driven(id, it->second)) {
+        hw::raise_interrupt(root_counter(id)->line);
+        if (it->second.common & kModeIrqRepeat) arm_counter(id, it->second);
+        else it->second.running = false;
+        return;
+    }
+    if (!it->second.handler) return;
     const std::uint32_t next = call_guest(it->second.handler, it->second.common);
     it = g_hard_timers.find(id);
     if (it == g_hard_timers.end() || !it->second.running || it->second.generation != generation) return;
@@ -966,18 +1032,73 @@ void install_vblank() {
 
 void install_timrman() {
     register_hle_library("timrman", 0x0101);
-    def("timrman", 4, "AllocHardTimer", [](Cpu &c) { c.r[2] = g_next_hard_timer++; });
+    def("timrman", 4, "AllocHardTimer", [](Cpu &c) {
+        const std::uint32_t source = arg(c, 0), size = arg(c, 1), prescale = arg(c, 2);
+        c.r[2] = static_cast<std::uint32_t>(kErrorNoTimer);
+        for (std::uint32_t id = 1; id <= 6; ++id) {
+            const RootCounter &rc = *root_counter(id);
+            const auto it = g_hard_timers.find(id);
+            if ((it != g_hard_timers.end() && it->second.source) || !(rc.sources & source) || rc.bits != size || prescale > rc.max_prescale) continue;
+            HardTimer &t = g_hard_timers[id];
+            const std::uint64_t generation = t.generation + 1u;
+            t = HardTimer{};
+            t.generation = generation;
+            t.source = source;
+            t.prescale = std::max<std::uint32_t>(prescale, 1u);
+            g_hard_timer_start[id] = now();
+            c.r[2] = id;
+            return;
+        }
+    });
     def("timrman", 5, "ReferHardTimer", [](Cpu &c) { c.r[2] = 1; });
-    def("timrman", 6, "FreeHardTimer", [](Cpu &c) { c.r[2] = 0; });
-    def("timrman", 7, "SetTimerMode", [](Cpu &c) { c.r[2] = 0; });
+    def("timrman", 6, "FreeHardTimer", [](Cpu &c) {
+        const auto it = g_hard_timers.find(arg(c, 0));
+        if (it == g_hard_timers.end() || !it->second.source) { c.r[2] = static_cast<std::uint32_t>(kErrorIllegalTimer); return; }
+        const std::uint64_t generation = it->second.generation + 1u;
+        it->second = HardTimer{};
+        it->second.generation = generation;
+        it->second.source = 0;
+        c.r[2] = 0;
+    });
+    def("timrman", 7, "SetTimerMode", [](Cpu &c) {
+        const std::uint32_t id = arg(c, 0), mode = arg(c, 1) & 0xFFFFu;
+        c.r[2] = 0;
+        const auto it = g_hard_timers.find(id);
+        if (it == g_hard_timers.end() || !it->second.source) return;
+        g_hard_timer_start[id] = now();
+        HardTimer &t = it->second;
+        if (!counter_driven(id, t)) return;
+        const std::uint32_t index = id - 1;
+        static constexpr std::uint32_t kPrescale[4] = {1, 8, 16, 256};
+        t.common = mode;
+        t.source = (mode & kModeAltClock) ? (root_counter(id)->sources & (kClockPixel | kClockHline)) : 0;
+        if (!t.source) t.source = kClockSys;
+        t.prescale = index == 2 ? ((mode & kModeDiv8) ? 8u : 1u) : index >= 4 ? kPrescale[(mode >> 13) & 3u] : 1u;
+        t.running = (mode & kModeIrqOnTarget) != 0;
+        arm_counter(id, t);
+    });
     def("timrman", 9, "SetTimerCounter", [](Cpu &c) {
         const auto it = g_hard_timers.find(arg(c, 0));
-        if (it != g_hard_timers.end()) g_hard_timer_start[arg(c, 0)] = now() - std::min<std::uint64_t>(now(), static_cast<std::uint64_t>(arg(c, 1)) * timer_cycles(it->second, 1));
+        if (it != g_hard_timers.end()) {
+            const auto [num, den] = tick_rate(it->second);
+            g_hard_timer_start[arg(c, 0)] = now() - std::min<std::uint64_t>(now(), static_cast<std::uint64_t>(arg(c, 1)) * num / den);
+            if (counter_driven(arg(c, 0), it->second)) arm_counter(arg(c, 0), it->second);
+        }
         c.r[2] = 0;
     });
     def("timrman", 10, "GetTimerCounter", [](Cpu &c) { c.r[2] = hard_timer_counter(arg(c, 0)); });
-    def("timrman", 11, "SetTimerCompare", [](Cpu &c) { c.r[2] = 0; });
-    def("timrman", 16, "GetHardTimerIntrCode", [](Cpu &c) { c.r[2] = 14; });
+    def("timrman", 11, "SetTimerCompare", [](Cpu &c) {
+        const auto it = g_hard_timers.find(arg(c, 0));
+        if (it != g_hard_timers.end()) {
+            it->second.compare = arg(c, 1);
+            if (counter_driven(arg(c, 0), it->second)) arm_counter(arg(c, 0), it->second);
+        }
+        c.r[2] = 0;
+    });
+    def("timrman", 16, "GetHardTimerIntrCode", [](Cpu &c) {
+        const RootCounter *rc = root_counter(arg(c, 0));
+        c.r[2] = rc ? rc->line : static_cast<std::uint32_t>(kErrorIllegalTimer);
+    });
     def("timrman", 20, "SetTimerHandler", [](Cpu &c) {
         HardTimer &t = g_hard_timers[arg(c, 0)];
         t.compare = arg(c, 1);
