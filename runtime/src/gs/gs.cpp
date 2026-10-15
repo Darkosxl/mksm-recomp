@@ -4,6 +4,7 @@
 #include "queue.hpp"
 #include "raster.hpp"
 #include "../hw.hpp"
+#include "../vu_micro.hpp"
 #ifdef PS2_GPU
 #include "gpu/gpu.hpp"
 #endif
@@ -808,6 +809,7 @@ void write_privileged(std::uint32_t address, std::uint64_t value) {
 
 void vblank(bool start) {
     if (start) {
+        vu::flush_kicks();
         g_odd_field = !g_odd_field;
         raise(8);
         if (queue::active()) queue::post(queue::kVblank, 0, 0, nullptr, 0);

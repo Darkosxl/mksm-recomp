@@ -448,10 +448,14 @@ void run_vu_thread() {
                 vu::reset();
                 break;
             case gs::queue::kVuFence:
+                vu::flush_kicks();
                 g_vu_fence.fetch_add(1);
                 gs::queue::notify(g_vu_fence);
                 break;
-            default: gs::queue::render().post(static_cast<gs::queue::Type>(h.type), h.arg0, h.arg1, payload, h.bytes); break;
+            default:
+                vu::flush_kicks();
+                gs::queue::render().post(static_cast<gs::queue::Type>(h.type), h.arg0, h.arg1, payload, h.bytes);
+                break;
             }
             in.pop(h);
         }

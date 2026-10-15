@@ -2,6 +2,7 @@
 
 #include "gs.hpp"
 #include "queue.hpp"
+#include "../vu_micro.hpp"
 
 #include "ps2/state.hpp"
 
@@ -166,6 +167,7 @@ void render(int path, const std::uint8_t *data, std::uint32_t qwc) {
 }
 
 void transfer(int path, const std::uint8_t *data, std::uint32_t qwc) {
+    if (path != 1) vu::flush_kicks();
     if (!gs::queue::active()) {
         render(path, data, qwc);
         return;
