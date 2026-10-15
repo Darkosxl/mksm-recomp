@@ -46,6 +46,7 @@ add_library(ps2runtime STATIC
     runtime/src/gs/gif.cpp
     runtime/src/gs/queue.cpp
     runtime/src/gs/raster.cpp
+    runtime/src/gs/texcache.cpp
     runtime/src/iop/cpu.cpp
     runtime/src/iop/kernel.cpp
     runtime/src/iop/libs.cpp

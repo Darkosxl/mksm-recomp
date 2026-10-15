@@ -3,6 +3,7 @@
 #include "gif.hpp"
 #include "queue.hpp"
 #include "raster.hpp"
+#include "texcache.hpp"
 #include "../hw.hpp"
 #include "../vu_micro.hpp"
 #ifdef PS2_GPU
@@ -389,6 +390,33 @@ std::uint32_t address32(std::uint32_t bp, std::uint32_t bw, std::uint32_t x, std
     return wrap(page_address(bp, bw, x, y, 64, 32) + g_off32[y & 31][x & 63]);
 }
 
+std::uint32_t pixel_address(std::uint32_t psm, std::uint32_t bp, std::uint32_t bw, std::uint32_t x, std::uint32_t y) {
+    switch (psm) {
+    case PSMZ32: case PSMZ24: return wrap(page_address(bp, bw, x, y, 64, 32) + g_offz32[y & 31][x & 63]);
+    case PSMCT16: return wrap(page_address(bp, bw, x, y, 64, 64) + g_off16[y & 63][x & 63]);
+    case PSMCT16S: return wrap(page_address(bp, bw, x, y, 64, 64) + g_off16s[y & 63][x & 63]);
+    case PSMZ16: return wrap(page_address(bp, bw, x, y, 64, 64) + g_offz16[y & 63][x & 63]);
+    case PSMZ16S: return wrap(page_address(bp, bw, x, y, 64, 64) + g_offz16s[y & 63][x & 63]);
+    case PSMT8: return wrap(page_address(bp, bw, x, y, 128, 64) + g_off8[y & 63][x & 127]);
+    case PSMT4: return wrap(page_address(bp, bw, x, y, 128, 128) + g_off4[y & 127][x & 127] / 2);
+    default: return wrap(page_address(bp, bw, x, y, 64, 32) + g_off32[y & 31][x & 63]);
+    }
+}
+
+std::uint32_t read_pixel_in(const std::uint8_t *memory, std::uint32_t psm, std::uint32_t bp, std::uint32_t bw, std::uint32_t x, std::uint32_t y) {
+    const std::uint32_t a = pixel_address(psm, bp, bw, x, y);
+    std::uint32_t w = 0;
+    std::memcpy(&w, memory + a, psm == PSMT8 || psm == PSMT4 ? 1 : psm == PSMCT16 || psm == PSMCT16S || psm == PSMZ16 || psm == PSMZ16S ? 2 : 4);
+    switch (psm) {
+    case PSMCT24: case PSMZ24: return w & 0xFFFFFFu;
+    case PSMT4: return (g_off4[y & 127][x & 127] & 1u) ? (w >> 4) & 15u : w & 15u;
+    case PSMT8H: return w >> 24;
+    case PSMT4HL: return (w >> 24) & 15u;
+    case PSMT4HH: return w >> 28;
+    default: return w;
+    }
+}
+
 std::uint32_t read_pixel(std::uint32_t psm, std::uint32_t bp, std::uint32_t bw, std::uint32_t x, std::uint32_t y) {
     switch (psm) {
     case PSMCT32: return get<std::uint32_t>(page_address(bp, bw, x, y, 64, 32) + g_off32[y & 31][x & 63]);
@@ -481,6 +509,7 @@ void render_reset() {
     ++g_setup_generation;
     g_transfer = Transfer{};
     g_primitives = 0;
+    texcache::reset();
     raster::reset();
 }
 
@@ -502,9 +531,10 @@ void kick(bool draw) {
     const int needed = prim == 0 ? 1 : (prim == 1 || prim == 2 || prim == 6) ? 2 : prim == 7 ? 1 : 3;
     if (s.count < needed) return;
     if (draw) {
-        if (cpu_raster()) raster::draw(s, s.queue, needed);
+        const texcache::Run run = texcache::next(s, s.queue, needed);
+        if (cpu_raster()) raster::draw(s, s.queue, needed, run);
 #ifdef PS2_GPU
-        if (gpu_on()) gpu::draw(s, s.queue, needed);
+        if (gpu_on()) gpu::draw(s, s.queue, needed, run);
 #endif
         ++g_primitives;
     }
@@ -602,11 +632,7 @@ void write(std::uint32_t reg, std::uint64_t value) {
     case 0x36: case 0x37: s.ctx[reg - 0x36].miptbp2 = value; break;
     case 0x3B: s.texa = value; break;
     case 0x3D: s.fogcol = value; break;
-    case 0x3F:
-#ifdef PS2_GPU
-        if (gpu_on()) gpu::texflush();
-#endif
-        break;
+    case 0x3F: texcache::texflush(); break;
     case 0x40: case 0x41: s.ctx[reg - 0x40].scissor = value; break;
     case 0x42: case 0x43: s.ctx[reg - 0x42].alpha = value; break;
     case 0x44: s.dimx = value; break;
@@ -626,6 +652,7 @@ void write(std::uint32_t reg, std::uint64_t value) {
                          static_cast<unsigned long long>(s.bitbltbuf), static_cast<unsigned long long>(s.trxpos), static_cast<unsigned long long>(s.trxreg));
         }
         s.trxdir = value;
+        texcache::reset();
         g_transfer = Transfer{};
         g_carried = 0;
 #ifdef PS2_GPU

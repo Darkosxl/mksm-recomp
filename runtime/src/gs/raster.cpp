@@ -67,6 +67,32 @@ struct Trace {
 
 bool tracing() { return g_trace.on && ps2::frame_count() == g_trace.frame; }
 
+// Texture reads of a draw that renders into its own texture see memory as it was when the run began
+// (texcache::next() decides where runs begin): every 8 KB page is copied aside before the run first writes to it.
+struct Snapshot {
+    bool active = false;
+    std::uint64_t saved[kMemorySize / 8192 / 64] = {};
+    std::uint8_t old[kMemorySize];
+    bool has(std::uint32_t a) const { return (saved[a >> 19] >> ((a >> 13) & 63u)) & 1u; }
+    void save(std::uint32_t a) {
+        if (has(a)) return;
+        saved[a >> 19] |= 1ull << ((a >> 13) & 63u);
+        const std::uint32_t page = a & ~8191u;
+        std::memcpy(old + page, memory() + page, 8192);
+    }
+    void clear() { std::memset(saved, 0, sizeof saved); }
+};
+Snapshot g_snapshot;
+
+std::uint32_t read_texel(std::uint32_t psm, std::uint32_t bp, std::uint32_t bw, std::uint32_t x, std::uint32_t y) {
+    if (g_snapshot.active && g_snapshot.has(pixel_address(psm, bp, bw, x, y))) return read_pixel_in(g_snapshot.old, psm, bp, bw, x, y);
+    return read_pixel(psm, bp, bw, x, y);
+}
+
+void before_write(std::uint32_t psm, std::uint32_t bp, std::uint32_t bw, int x, int y) {
+    if (g_snapshot.active) g_snapshot.save(pixel_address(psm, bp, bw, static_cast<std::uint32_t>(x), static_cast<std::uint32_t>(y)));
+}
+
 std::uint32_t expand16(std::uint32_t c, const Setup &s) {
     const std::uint32_t r = (c & 0x1Fu) << 3, g = ((c >> 5) & 0x1Fu) << 3, b = ((c >> 10) & 0x1Fu) << 3;
     std::uint32_t a;
@@ -97,7 +123,7 @@ std::uint32_t fetch(const Setup &s, const Level &l, int x, int y) {
     };
     x = wrap(x, 1 << l.tw, s.wms, l.minu, l.maxu);
     y = wrap(y, 1 << l.th, s.wmt, l.minv, l.maxv);
-    const std::uint32_t raw = read_pixel(s.tpsm, l.tbp, l.tbw, static_cast<std::uint32_t>(x), static_cast<std::uint32_t>(y));
+    const std::uint32_t raw = read_texel(s.tpsm, l.tbp, l.tbw, static_cast<std::uint32_t>(x), static_cast<std::uint32_t>(y));
     switch (s.tpsm) {
     case PSMCT32: case PSMZ32: return raw;
     case PSMCT24: case PSMZ24: return (raw & 0xFFFFFFu) | (((s.aem && !(raw & 0xFFFFFFu)) ? 0u : s.ta0) << 24);
@@ -342,9 +368,11 @@ void plot(const Setup &s, int x, int y, const Attr &at) {
             std::fprintf(stderr, "[px] prim %llu fbp %x dst %08x -> %08x (a %d mask %08x)\n", static_cast<unsigned long long>(g_trace.prim), s.fbp, before,
                          static_cast<std::uint32_t>(r) | (static_cast<std::uint32_t>(g) << 8) | (static_cast<std::uint32_t>(b) << 16) | (out_a << 24), a, mask);
         }
+        before_write(s.fpsm, s.fbp, s.fbw, x, y);
         write_frame(s, x, y, static_cast<std::uint32_t>(r) | (static_cast<std::uint32_t>(g) << 8) | (static_cast<std::uint32_t>(b) << 16) | (out_a << 24), mask);
     }
     if (write_z && s.zte) {
+        before_write(s.zpsm, s.zbp, s.fbw, x, y);
         if (s.zpsm == PSMZ24) {
             write_pixel(PSMZ24, s.zbp, s.fbw, static_cast<std::uint32_t>(x), static_cast<std::uint32_t>(y), z);
         } else {
@@ -427,6 +455,32 @@ Setup make_setup(const State &st) {
     s.scanmsk = static_cast<int>(st.scanmsk) & 3;
     s.clut = st.clut;
     return s;
+}
+
+// Pages [first, last] a w x h rectangle at the origin of a buffer spans.
+void page_span(std::uint32_t psm, std::uint32_t bp, std::uint32_t bw, std::uint32_t w, std::uint32_t h, std::uint32_t &first, std::uint32_t &last) {
+    std::uint32_t pw = 64, ph = 32;
+    if (psm == PSMCT16 || psm == PSMCT16S || psm == PSMZ16 || psm == PSMZ16S) ph = 64;
+    else if (psm == PSMT8) pw = 128, ph = 64;
+    else if (psm == PSMT4) pw = 128, ph = 128;
+    const std::uint32_t per_row = std::max<std::uint32_t>(1, bw * 64 / pw);
+    first = bp / 32;
+    last = first + ((std::max(w, 1u) - 1) / pw) + ((std::max(h, 1u) - 1) / ph) * per_row;
+}
+
+// Whether the texture (any mipmap level) shares a page with the frame or written Z buffer, so the draw may read its own output.
+bool reads_target(const Setup &s) {
+    std::uint32_t f0, f1, z0 = 1, z1 = 0;
+    page_span(s.fpsm, s.fbp, s.fbw, static_cast<std::uint32_t>(s.scax1) + 1, static_cast<std::uint32_t>(s.scay1) + 1, f0, f1);
+    if (s.zte && !s.zmsk) page_span(s.zpsm, s.zbp, s.fbw, static_cast<std::uint32_t>(s.scax1) + 1, static_cast<std::uint32_t>(s.scay1) + 1, z0, z1);
+    const int levels = s.mmin >= 2 && s.mmin <= 5 ? s.mxl : 0;
+    for (int n = 0; n <= levels; ++n) {
+        const Level l = level(s, n);
+        std::uint32_t t0, t1;
+        page_span(s.tpsm, l.tbp, l.tbw, std::max(1u << l.tw, (s.wms == 2 ? l.maxu : 0u) + 1), std::max(1u << l.th, (s.wmt == 2 ? l.maxv : 0u) + 1), t0, t1);
+        if ((t0 <= f1 && f0 <= t1) || (t0 <= z1 && z0 <= t1)) return true;
+    }
+    return false;
 }
 
 Attr attr_of(const Setup &s, const Vertex &v) {
@@ -544,8 +598,12 @@ void line(const Setup &s, const Vertex *v) {
 
 void reset() {}
 
-void draw(const State &st, const Vertex *v, int count) {
+void draw(const State &st, const Vertex *v, int count, texcache::Run run) {
     const Setup s = make_setup(st);
+    if (run != texcache::Run::same) {
+        g_snapshot.clear();
+        g_snapshot.active = s.tme && reads_target(s);
+    }
     static const long skip_tbp = std::getenv("PS2_RSKIP_TBP") ? std::strtol(std::getenv("PS2_RSKIP_TBP"), nullptr, 16) : -1;
     if (s.tme && static_cast<long>(s.tbp) == skip_tbp) return;
     if (tracing()) {
@@ -581,6 +639,8 @@ void draw(const State &st, const Vertex *v, int count) {
                      static_cast<unsigned long long>(st.ctx[0].alpha), static_cast<unsigned long long>(st.ctx[1].alpha), static_cast<unsigned long long>(st.ctx[0].test),
                      static_cast<unsigned long long>(st.ctx[1].test), static_cast<unsigned long long>(st.ctx[0].tex0), static_cast<unsigned long long>(st.ctx[1].tex0),
                      static_cast<unsigned long long>(st.ctx[0].frame), static_cast<unsigned long long>(st.ctx[1].frame), static_cast<unsigned long long>(st.texa));
+        std::fprintf(stderr, "[rt]   texcache run %s, snapshot %s\n", run == texcache::Run::same ? "same" : run == texcache::Run::new_draw ? "new-draw" : "reload",
+                     g_snapshot.active ? "on" : "off");
         const int n = (st.prim & 7u) == 6 ? 2 : (st.prim & 7u) >= 3 ? 3 : (st.prim & 7u) == 0 ? 1 : 2;
         for (int i = 0; i < n; ++i)
             std::fprintf(stderr, "[rt]   v%d xy %.2f,%.2f z %u rgba %02x%02x%02x%02x stq %g,%g,%g uv %u,%u f %u\n", i, (static_cast<float>(v[i].x) - s.ofx) / 16.0f,

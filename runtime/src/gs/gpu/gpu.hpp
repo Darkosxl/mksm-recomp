@@ -1,6 +1,7 @@
 #pragma once
 
 #include "../gs.hpp"
+#include "../texcache.hpp"
 
 #include <cstdint>
 #include <vector>
@@ -25,13 +26,12 @@ struct SurfaceTarget {
 
 Mode mode();
 bool init(Mode m);
-void draw(const State &s, const Vertex *v, int count);
+void draw(const State &s, const Vertex *v, int count, texcache::Run run);
 void image_begin(const State &s);
 void image_data(const std::uint8_t *data, std::size_t bytes);
 void local_copy(const State &s);
 void load_clut(std::uint64_t tex0, std::uint64_t texclut);
 void flush();
-void texflush();
 void wait_idle();
 void download(std::uint8_t *memory, std::uint32_t offset = 0, std::uint32_t bytes = kMemorySize);
 bool download_async(std::uint8_t *memory, std::uint32_t offset, std::uint32_t bytes, std::uint32_t serial);

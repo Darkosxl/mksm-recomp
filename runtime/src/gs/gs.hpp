@@ -67,6 +67,9 @@ bool interlaced_odd_field();
 std::uint32_t address32(std::uint32_t bp, std::uint32_t bw, std::uint32_t x, std::uint32_t y);
 std::uint32_t read_pixel(std::uint32_t psm, std::uint32_t bp, std::uint32_t bw, std::uint32_t x, std::uint32_t y);
 void write_pixel(std::uint32_t psm, std::uint32_t bp, std::uint32_t bw, std::uint32_t x, std::uint32_t y, std::uint32_t value);
+// Byte address of a pixel in GS memory (the byte holding it for PSMT4), and read_pixel() against another copy of GS memory.
+std::uint32_t pixel_address(std::uint32_t psm, std::uint32_t bp, std::uint32_t bw, std::uint32_t x, std::uint32_t y);
+std::uint32_t read_pixel_in(const std::uint8_t *memory, std::uint32_t psm, std::uint32_t bp, std::uint32_t bw, std::uint32_t x, std::uint32_t y);
 
 struct DisplayRegs {
     std::uint64_t pmode, smode2, dispfb[2], display[2];

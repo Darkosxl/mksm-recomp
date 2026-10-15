@@ -115,7 +115,7 @@ struct Arena {
     std::uint32_t *data() { return words.get(); }
     std::uint32_t &operator[](std::size_t i) { return words[i]; }
 } g_arena;
-std::uint32_t g_clut_slot = 0, g_clut_loads = 0, g_texflushes = 0;
+std::uint32_t g_clut_slot = 0, g_clut_loads = 0;
 
 struct Image {
     bool active = false;
@@ -141,7 +141,7 @@ struct Batch {
     int minx = 1 << 30, miny = 1 << 30, maxx = -1, maxy = -1;
     std::uint32_t fbp = 0, fbw = 0, fpsm = 0, zbp = 0, zpsm = 0;
     bool zte = false, zwrite = false;
-    std::uint32_t texflushes = 0;
+    std::size_t run_start = 0;
     int rx0 = 0, ry0 = 0, rx1 = -2, ry1 = -2;
     Range fb_range, z_range;
 } g_batch;
@@ -1102,9 +1102,11 @@ bool shares_frame(const std::uint32_t *setup, const Batch &b) {
     return setup[12] == b.fbp && setup[13] == b.fbw && (setup[14] == b.fpsm || (wide(setup[14]) && wide(b.fpsm)));
 }
 
-bool drawn_under(const Batch &b, const int rect[4]) {
+// Whether any of the batch's first `limit` primitives drew over the texel rectangle.
+bool drawn_under(const Batch &b, const int rect[4], std::size_t limit = ~std::size_t{0}) {
     const auto hits = [&](int x0, int y0, int x1, int y1) { return rect[0] <= x1 && x0 <= rect[2] && rect[1] <= y1 && y0 <= rect[3]; };
-    const std::size_t prims = b.boxes.size() / 2;
+    const std::size_t prims = std::min(limit, b.boxes.size() / 2);
+    if (!prims) return false;
     if (prims > 64) return hits(b.minx, b.miny, b.maxx, b.maxy);
     for (std::size_t i = 0; i < prims; ++i) {
         const std::uint32_t lo = b.boxes[i * 2], hi = b.boxes[i * 2 + 1];
@@ -1274,7 +1276,7 @@ bool init(Mode m) {
     return true;
 }
 
-void draw(const State &st, const Vertex *v, int count) {
+void draw(const State &st, const Vertex *v, int count, texcache::Run run) {
     if (g_image.active && !g_image.pending.empty()) flush_image();
     std::uint64_t attr = st.prim;
     if (!(st.prmodecont & 1u)) attr = (st.prim & 7u) | (st.prmode & ~7ull);
@@ -1405,10 +1407,12 @@ void draw(const State &st, const Vertex *v, int count) {
                 if (!texel_rect(setup, v, count, prim, fst, rect)) {
                     emit_all();
                 } else {
+                    // Within a texcache run the texture reads the run's starting state: only primitives batched before
+                    // the run began must have landed first.
                     const Range used = region(setup[12], setup[13], setup[14], rect[0], rect[1], rect[2], rect[3]);
-                    const bool small = rect[2] - rect[0] < 64 && rect[3] - rect[1] < 64;
-                    const bool cached = b.texflushes == g_texflushes && small && shares_frame(setup, b);
-                    const bool frame = !cached && (shares_frame(setup, b) ? drawn_under(b, rect) : used.overlaps(b.fb_range.lo, b.fb_range.hi));
+                    const bool cached = run == texcache::Run::same;
+                    const bool frame = shares_frame(setup, b) ? drawn_under(b, rect, cached ? b.run_start : ~std::size_t{0})
+                                                              : !cached && used.overlaps(b.fb_range.lo, b.fb_range.hi);
                     if (frame || (b.zwrite && used.overlaps(b.z_range.lo, b.z_range.hi))) emit_all();
                 }
             }
@@ -1417,7 +1421,7 @@ void draw(const State &st, const Vertex *v, int count) {
         }
     }
     if (b.prims.empty()) {
-        b.texflushes = g_texflushes;
+        b.run_start = 0;
         b.key = key;
         b.fbp = setup[1];
         b.fbw = setup[2];
@@ -1447,6 +1451,7 @@ void draw(const State &st, const Vertex *v, int count) {
             if (!known) g_batch_reads.push_back(t);
         }
     }
+    if (run != texcache::Run::same) b.run_start = b.boxes.size() / 2;
     rec[0] = setup_index;
     rec[2] = static_cast<std::uint32_t>(minx) | (static_cast<std::uint32_t>(miny) << 16);
     rec[3] = static_cast<std::uint32_t>(maxx) | (static_cast<std::uint32_t>(maxy) << 16);
@@ -1531,8 +1536,6 @@ void load_clut(std::uint64_t tex0, std::uint64_t texclut) {
     ++g_clut_loads;
 }
 
-
-void texflush() { ++g_texflushes; }
 
 void flush() {
     if (g_mode == Mode::off) return;
