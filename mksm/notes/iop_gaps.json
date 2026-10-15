@@ -1,0 +1,3542 @@
+{
+ "hle_libs": {
+  "cdvdman": 257,
+  "ioman": 260,
+  "sysmem": 257,
+  "loadcore": 257,
+  "intrman": 258,
+  "thbase": 257,
+  "thsemap": 257,
+  "thevent": 257,
+  "thmsgbx": 257,
+  "thfpool": 257,
+  "sysclib": 259,
+  "stdio": 258,
+  "modload": 258,
+  "vblank": 257,
+  "timrman": 257,
+  "dmacman": 257,
+  "heaplib": 257,
+  "secrman": 257,
+  "sifman": 257,
+  "sifcmd": 257
+ },
+ "report": [
+  {
+   "module": "SIO2MAN",
+   "iopmod": "sio2man",
+   "version": "3.1",
+   "in_boot_order": true,
+   "exports": {
+    "sio2man": 64
+   },
+   "rows": [
+    {
+     "lib": "dmacman",
+     "ord": 28,
+     "name": "sceSetSliceDMA",
+     "status": "hle",
+     "ret": null,
+     "where": "libs.cpp:1019",
+     "hle_name": "sceSetSliceDMA"
+    },
+    {
+     "lib": "dmacman",
+     "ord": 32,
+     "name": "sceStartDMA",
+     "status": "hle",
+     "ret": null,
+     "where": "libs.cpp:1026",
+     "hle_name": "sceStartDMA"
+    },
+    {
+     "lib": "dmacman",
+     "ord": 33,
+     "name": "sceSetDMAPriority",
+     "status": "hle-const",
+     "ret": "1",
+     "where": "libs.cpp:1031",
+     "hle_name": "sceSetDMAPriority"
+    },
+    {
+     "lib": "dmacman",
+     "ord": 34,
+     "name": "sceEnableDMAChannel",
+     "status": "hle-const",
+     "ret": "1",
+     "where": "libs.cpp:1032",
+     "hle_name": "sceEnableDMAChannel"
+    },
+    {
+     "lib": "dmacman",
+     "ord": 35,
+     "name": "sceDisableDMAChannel",
+     "status": "hle-const",
+     "ret": "1",
+     "where": "libs.cpp:1033",
+     "hle_name": "sceDisableDMAChannel"
+    },
+    {
+     "lib": "intrman",
+     "ord": 4,
+     "name": "RegisterIntrHandler",
+     "status": "hle",
+     "ret": null,
+     "where": "libs.cpp:283",
+     "hle_name": "RegisterIntrHandler"
+    },
+    {
+     "lib": "intrman",
+     "ord": 5,
+     "name": "ReleaseIntrHandler",
+     "status": "hle",
+     "ret": null,
+     "where": "libs.cpp:287",
+     "hle_name": "ReleaseIntrHandler"
+    },
+    {
+     "lib": "intrman",
+     "ord": 6,
+     "name": "EnableIntr",
+     "status": "hle",
+     "ret": null,
+     "where": "libs.cpp:288",
+     "hle_name": "EnableIntr"
+    },
+    {
+     "lib": "intrman",
+     "ord": 7,
+     "name": "DisableIntr",
+     "status": "hle",
+     "ret": null,
+     "where": "libs.cpp:289",
+     "hle_name": "DisableIntr"
+    },
+    {
+     "lib": "intrman",
+     "ord": 17,
+     "name": "CpuSuspendIntr",
+     "status": "hle",
+     "ret": null,
+     "where": "libs.cpp:296",
+     "hle_name": "CpuSuspendIntr"
+    },
+    {
+     "lib": "intrman",
+     "ord": 18,
+     "name": "CpuResumeIntr",
+     "status": "hle",
+     "ret": null,
+     "where": "libs.cpp:302",
+     "hle_name": "CpuResumeIntr"
+    },
+    {
+     "lib": "loadcore",
+     "ord": 6,
+     "name": "RegisterLibraryEntries",
+     "status": "hle",
+     "ret": null,
+     "where": "libs.cpp:269",
+     "hle_name": "RegisterLibraryEntries"
+    },
+    {
+     "lib": "stdio",
+     "ord": 4,
+     "name": "printf",
+     "status": "hle",
+     "ret": null,
+     "where": "libs.cpp:869",
+     "hle_name": "printf"
+    },
+    {
+     "lib": "sysclib",
+     "ord": 8,
+     "name": "look_ctype_table",
+     "status": "hle",
+     "ret": null,
+     "where": "libs.cpp:703",
+     "hle_name": "look_ctype_table"
+    },
+    {
+     "lib": "sysclib",
+     "ord": 29,
+     "name": "strncmp",
+     "status": "hle",
+     "ret": null,
+     "where": "libs.cpp:781",
+     "hle_name": "strncmp"
+    },
+    {
+     "lib": "sysclib",
+     "ord": 36,
+     "name": "strtol",
+     "status": "hle",
+     "ret": null,
+     "where": "libs.cpp:820",
+     "hle_name": "strtol"
+    },
+    {
+     "lib": "thbase",
+     "ord": 4,
+     "name": "CreateThread",
+     "status": "hle",
+     "ret": null,
+     "where": "libs.cpp:311",
+     "hle_name": "CreateThread"
+    },
+    {
+     "lib": "thbase",
+     "ord": 6,
+     "name": "StartThread",
+     "status": "hle",
+     "ret": null,
+     "where": "libs.cpp:320",
+     "hle_name": "StartThread"
+    },
+    {
+     "lib": "thbase",
+     "ord": 20,
+     "name": "GetThreadId",
+     "status": "hle",
+     "ret": null,
+     "where": "libs.cpp:394",
+     "hle_name": "GetThreadId"
+    },
+    {
+     "lib": "thevent",
+     "ord": 4,
+     "name": "CreateEventFlag",
+     "status": "hle",
+     "ret": null,
+     "where": "libs.cpp:533",
+     "hle_name": "CreateEventFlag"
+    },
+    {
+     "lib": "thevent",
+     "ord": 6,
+     "name": "SetEventFlag",
+     "status": "hle",
+     "ret": null,
+     "where": "libs.cpp:547",
+     "hle_name": "SetEventFlag"
+    },
+    {
+     "lib": "thevent",
+     "ord": 7,
+     "name": "iSetEventFlag",
+     "status": "hle",
+     "ret": null,
+     "where": "libs.cpp:548",
+     "hle_name": "iSetEventFlag"
+    },
+    {
+     "lib": "thevent",
+     "ord": 8,
+     "name": "ClearEventFlag",
+     "status": "hle",
+     "ret": null,
+     "where": "libs.cpp:555",
+     "hle_name": "ClearEventFlag"
+    },
+    {
+     "lib": "thevent",
+     "ord": 10,
+     "name": "WaitEventFlag",
+     "status": "hle",
+     "ret": null,
+     "where": "libs.cpp:557",
+     "hle_name": "WaitEventFlag"
+    },
+    {
+     "lib": "thsemap",
+     "ord": 4,
+     "name": "CreateSema",
+     "status": "hle",
+     "ret": null,
+     "where": "libs.cpp:484",
+     "hle_name": "CreateSema"
+    },
+    {
+     "lib": "thsemap",
+     "ord": 6,
+     "name": "SignalSema",
+     "status": "hle",
+     "ret": null,
+     "where": "libs.cpp:499",
+     "hle_name": "SignalSema"
+    },
+    {
+     "lib": "thsemap",
+     "ord": 8,
+     "name": "WaitSema",
+     "status": "hle",
+     "ret": null,
+     "where": "libs.cpp:501",
+     "hle_name": "WaitSema"
+    },
+    {
+     "lib": "thsemap",
+     "ord": 11,
+     "name": "ReferSemaStatus",
+     "status": "hle",
+     "ret": null,
+     "where": "libs.cpp:527",
+     "hle_name": "ReferSemaStatus"
+    }
+   ]
+  },
+  {
+   "module": "PADMAN",
+   "iopmod": "padman",
+   "version": "4.33",
+   "in_boot_order": true,
+   "exports": {
+    "padman": 18
+   },
+   "rows": [
+    {
+     "lib": "intrman",
+     "ord": 4,
+     "name": "RegisterIntrHandler",
+     "status": "hle",
+     "ret": null,
+     "where": "libs.cpp:283",
+     "hle_name": "RegisterIntrHandler"
+    },
+    {
+     "lib": "intrman",
+     "ord": 5,
+     "name": "ReleaseIntrHandler",
+     "status": "hle",
+     "ret": null,
+     "where": "libs.cpp:287",
+     "hle_name": "ReleaseIntrHandler"
+    },
+    {
+     "lib": "intrman",
+     "ord": 6,
+     "name": "EnableIntr",
+     "status": "hle",
+     "ret": null,
+     "where": "libs.cpp:288",
+     "hle_name": "EnableIntr"
+    },
+    {
+     "lib": "intrman",
+     "ord": 17,
+     "name": "CpuSuspendIntr",
+     "status": "hle",
+     "ret": null,
+     "where": "libs.cpp:296",
+     "hle_name": "CpuSuspendIntr"
+    },
+    {
+     "lib": "intrman",
+     "ord": 18,
+     "name": "CpuResumeIntr",
+     "status": "hle",
+     "ret": null,
+     "where": "libs.cpp:302",
+     "hle_name": "CpuResumeIntr"
+    },
+    {
+     "lib": "loadcore",
+     "ord": 6,
+     "name": "RegisterLibraryEntries",
+     "status": "hle",
+     "ret": null,
+     "where": "libs.cpp:269",
+     "hle_name": "RegisterLibraryEntries"
+    },
+    {
+     "lib": "loadcore",
+     "ord": 27,
+     "name": "SetRebootTimeLibraryHandlingMode",
+     "status": "hle-const",
+     "ret": "0",
+     "where": "libs.cpp:278",
+     "hle_name": "SetRebootTimeLibraryHandlingMode"
+    },
+    {
+     "lib": "sifcmd",
+     "ord": 14,
+     "name": "sceSifInitRpc",
+     "status": "hle-const",
+     "ret": "0",
+     "where": "sif.cpp:396",
+     "hle_name": "sceSifInitRpc"
+    },
+    {
+     "lib": "sifcmd",
+     "ord": 17,
+     "name": "sceSifRegisterRpc",
+     "status": "hle",
+     "ret": null,
+     "where": "sif.cpp:430",
+     "hle_name": "sceSifRegisterRpc"
+    },
+    {
+     "lib": "sifcmd",
+     "ord": 19,
+     "name": "sceSifSetRpcQueue",
+     "status": "hle",
+     "ret": null,
+     "where": "sif.cpp:449",
+     "hle_name": "sceSifSetRpcQueue"
+    },
+    {
+     "lib": "sifcmd",
+     "ord": 22,
+     "name": "sceSifRpcLoop",
+     "status": "hle",
+     "ret": null,
+     "where": "sif.cpp:453",
+     "hle_name": "sceSifRpcLoop"
+    },
+    {
+     "lib": "sifcmd",
+     "ord": 28,
+     "name": "sceSifSendCmdIntr",
+     "status": "hle",
+     "ret": null,
+     "where": "sif.cpp:469",
+     "hle_name": "sceSifSendCmdIntr"
+    },
+    {
+     "lib": "sifman",
+     "ord": 5,
+     "name": "sceSifInit",
+     "status": "hle-const",
+     "ret": "0",
+     "where": "sif.cpp:348",
+     "hle_name": "sceSifInit"
+    },
+    {
+     "lib": "sifman",
+     "ord": 7,
+     "name": "sceSifSetDma",
+     "status": "hle",
+     "ret": null,
+     "where": "sif.cpp:365",
+     "hle_name": "sceSifSetDma"
+    },
+    {
+     "lib": "sifman",
+     "ord": 8,
+     "name": "sceSifDmaStat",
+     "status": "hle-const",
+     "ret": "-1",
+     "where": "sif.cpp:366",
+     "hle_name": "sceSifDmaStat"
+    },
+    {
+     "lib": "sifman",
+     "ord": 29,
+     "name": "sceSifCheckInit",
+     "status": "hle-const",
+     "ret": "1",
+     "where": "sif.cpp:367",
+     "hle_name": "sceSifCheckInit"
+    },
+    {
+     "lib": "sifman",
+     "ord": 32,
+     "name": "sceSifSetDmaIntr",
+     "status": "hle",
+     "ret": null,
+     "where": "sif.cpp:368",
+     "hle_name": "sceSifSetDmaIntr"
+    },
+    {
+     "lib": "sio2man",
+     "ord": 11,
+     "name": "sio2_stat70_get",
+     "status": "lle",
+     "via": "SIO2MAN"
+    },
+    {
+     "lib": "sio2man",
+     "ord": 46,
+     "name": "sio2_pad_transfer_init2",
+     "status": "lle",
+     "via": "SIO2MAN"
+    },
+    {
+     "lib": "sio2man",
+     "ord": 51,
+     "name": "sio2_transfer2",
+     "status": "lle",
+     "via": "SIO2MAN"
+    },
+    {
+     "lib": "sio2man",
+     "ord": 52,
+     "name": "sio2_transfer_reset2",
+     "status": "lle",
+     "via": "SIO2MAN"
+    },
+    {
+     "lib": "sio2man",
+     "ord": 57,
+     "name": "sio2_mtap_change_slot",
+     "status": "lle",
+     "via": "SIO2MAN"
+    },
+    {
+     "lib": "sio2man",
+     "ord": 58,
+     "name": "sio2_mtap_get_slot_max",
+     "status": "lle",
+     "via": "SIO2MAN"
+    },
+    {
+     "lib": "sio2man",
+     "ord": 60,
+     "name": "sio2_mtap_update_slots",
+     "status": "lle",
+     "via": "SIO2MAN"
+    },
+    {
+     "lib": "stdio",
+     "ord": 4,
+     "name": "printf",
+     "status": "hle",
+     "ret": null,
+     "where": "libs.cpp:869",
+     "hle_name": "printf"
+    },
+    {
+     "lib": "sysclib",
+     "ord": 8,
+     "name": "look_ctype_table",
+     "status": "hle",
+     "ret": null,
+     "where": "libs.cpp:703",
+     "hle_name": "look_ctype_table"
+    },
+    {
+     "lib": "sysclib",
+     "ord": 12,
+     "name": "memcpy",
+     "status": "hle",
+     "ret": null,
+     "where": "libs.cpp:732",
+     "hle_name": "memcpy"
+    },
+    {
+     "lib": "sysclib",
+     "ord": 29,
+     "name": "strncmp",
+     "status": "hle",
+     "ret": null,
+     "where": "libs.cpp:781",
+     "hle_name": "strncmp"
+    },
+    {
+     "lib": "sysclib",
+     "ord": 36,
+     "name": "strtol",
+     "status": "hle",
+     "ret": null,
+     "where": "libs.cpp:820",
+     "hle_name": "strtol"
+    },
+    {
+     "lib": "sysmem",
+     "ord": 14,
+     "name": "Kprintf",
+     "status": "hle",
+     "ret": null,
+     "where": "libs.cpp:262",
+     "hle_name": "Kprintf"
+    },
+    {
+     "lib": "thbase",
+     "ord": 4,
+     "name": "CreateThread",
+     "status": "hle",
+     "ret": null,
+     "where": "libs.cpp:311",
+     "hle_name": "CreateThread"
+    },
+    {
+     "lib": "thbase",
+     "ord": 5,
+     "name": "DeleteThread",
+     "status": "hle",
+     "ret": null,
+     "where": "libs.cpp:315",
+     "hle_name": "DeleteThread"
+    },
+    {
+     "lib": "thbase",
+     "ord": 6,
+     "name": "StartThread",
+     "status": "hle",
+     "ret": null,
+     "where": "libs.cpp:320",
+     "hle_name": "StartThread"
+    },
+    {
+     "lib": "thbase",
+     "ord": 8,
+     "name": "ExitThread",
+     "status": "hle",
+     "ret": null,
+     "where": "libs.cpp:342",
+     "hle_name": "ExitThread"
+    },
+    {
+     "lib": "thbase",
+     "ord": 20,
+     "name": "GetThreadId",
+     "status": "hle",
+     "ret": null,
+     "where": "libs.cpp:394",
+     "hle_name": "GetThreadId"
+    },
+    {
+     "lib": "thbase",
+     "ord": 22,
+     "name": "ReferThreadStatus",
+     "status": "hle",
+     "ret": null,
+     "where": "libs.cpp:416",
+     "hle_name": "ReferThreadStatus"
+    },
+    {
+     "lib": "thbase",
+     "ord": 23,
+     "name": "iReferThreadStatus",
+     "status": "hle",
+     "ret": null,
+     "where": "libs.cpp:417",
+     "hle_name": "iReferThreadStatus"
+    },
+    {
+     "lib": "thevent",
+     "ord": 4,
+     "name": "CreateEventFlag",
+     "status": "hle",
+     "ret": null,
+     "where": "libs.cpp:533",
+     "hle_name": "CreateEventFlag"
+    },
+    {
+     "lib": "thevent",
+     "ord": 5,
+     "name": "DeleteEventFlag",
+     "status": "hle",
+     "ret": null,
+     "where": "libs.cpp:539",
+     "hle_name": "DeleteEventFlag"
+    },
+    {
+     "lib": "thevent",
+     "ord": 6,
+     "name": "SetEventFlag",
+     "status": "hle",
+     "ret": null,
+     "where": "libs.cpp:547",
+     "hle_name": "SetEventFlag"
+    },
+    {
+     "lib": "thevent",
+     "ord": 7,
+     "name": "iSetEventFlag",
+     "status": "hle",
+     "ret": null,
+     "where": "libs.cpp:548",
+     "hle_name": "iSetEventFlag"
+    },
+    {
+     "lib": "thevent",
+     "ord": 8,
+     "name": "ClearEventFlag",
+     "status": "hle",
+     "ret": null,
+     "where": "libs.cpp:555",
+     "hle_name": "ClearEventFlag"
+    },
+    {
+     "lib": "thevent",
+     "ord": 10,
+     "name": "WaitEventFlag",
+     "status": "hle",
+     "ret": null,
+     "where": "libs.cpp:557",
+     "hle_name": "WaitEventFlag"
+    },
+    {
+     "lib": "thsemap",
+     "ord": 4,
+     "name": "CreateSema",
+     "status": "hle",
+     "ret": null,
+     "where": "libs.cpp:484",
+     "hle_name": "CreateSema"
+    },
+    {
+     "lib": "thsemap",
+     "ord": 5,
+     "name": "DeleteSema",
+     "status": "hle",
+     "ret": null,
+     "where": "libs.cpp:490",
+     "hle_name": "DeleteSema"
+    },
+    {
+     "lib": "thsemap",
+     "ord": 7,
+     "name": "iSignalSema",
+     "status": "hle",
+     "ret": null,
+     "where": "libs.cpp:500",
+     "hle_name": "iSignalSema"
+    },
+    {
+     "lib": "thsemap",
+     "ord": 8,
+     "name": "WaitSema",
+     "status": "hle",
+     "ret": null,
+     "where": "libs.cpp:501",
+     "hle_name": "WaitSema"
+    },
+    {
+     "lib": "timrman",
+     "ord": 4,
+     "name": "AllocHardTimer",
+     "status": "hle",
+     "ret": null,
+     "where": "libs.cpp:969",
+     "hle_name": "AllocHardTimer"
+    },
+    {
+     "lib": "timrman",
+     "ord": 6,
+     "name": "FreeHardTimer",
+     "status": "hle-const",
+     "ret": "0",
+     "where": "libs.cpp:971",
+     "hle_name": "FreeHardTimer"
+    },
+    {
+     "lib": "timrman",
+     "ord": 7,
+     "name": "SetTimerMode",
+     "status": "hle-const",
+     "ret": "0",
+     "where": "libs.cpp:972",
+     "hle_name": "SetTimerMode"
+    },
+    {
+     "lib": "timrman",
+     "ord": 9,
+     "name": "SetTimerCounter",
+     "status": "hle",
+     "ret": null,
+     "where": "libs.cpp:973",
+     "hle_name": "SetTimerCounter"
+    },
+    {
+     "lib": "timrman",
+     "ord": 11,
+     "name": "SetTimerCompare",
+     "status": "hle-const",
+     "ret": "0",
+     "where": "libs.cpp:979",
+     "hle_name": "SetTimerCompare"
+    },
+    {
+     "lib": "timrman",
+     "ord": 16,
+     "name": "GetHardTimerIntrCode",
+     "status": "hle-const",
+     "ret": "14",
+     "where": "libs.cpp:980",
+     "hle_name": "GetHardTimerIntrCode"
+    },
+    {
+     "lib": "vblank",
+     "ord": 8,
+     "name": "RegisterVblankHandler",
+     "status": "hle",
+     "ret": null,
+     "where": "libs.cpp:955",
+     "hle_name": "RegisterVblankHandler"
+    },
+    {
+     "lib": "vblank",
+     "ord": 9,
+     "name": "ReleaseVblankHandler",
+     "status": "hle",
+     "ret": null,
+     "where": "libs.cpp:959",
+     "hle_name": "ReleaseVblankHandler"
+    }
+   ]
+  },
+  {
+   "module": "LIBSD",
+   "iopmod": "Sound_Device_Library",
+   "version": "3.3",
+   "in_boot_order": true,
+   "exports": {
+    "libsd": 34
+   },
+   "rows": [
+    {
+     "lib": "intrman",
+     "ord": 4,
+     "name": "RegisterIntrHandler",
+     "status": "hle",
+     "ret": null,
+     "where": "libs.cpp:283",
+     "hle_name": "RegisterIntrHandler"
+    },
+    {
+     "lib": "intrman",
+     "ord": 5,
+     "name": "ReleaseIntrHandler",
+     "status": "hle",
+     "ret": null,
+     "where": "libs.cpp:287",
+     "hle_name": "ReleaseIntrHandler"
+    },
+    {
+     "lib": "intrman",
+     "ord": 6,
+     "name": "EnableIntr",
+     "status": "hle",
+     "ret": null,
+     "where": "libs.cpp:288",
+     "hle_name": "EnableIntr"
+    },
+    {
+     "lib": "intrman",
+     "ord": 7,
+     "name": "DisableIntr",
+     "status": "hle",
+     "ret": null,
+     "where": "libs.cpp:289",
+     "hle_name": "DisableIntr"
+    },
+    {
+     "lib": "intrman",
+     "ord": 17,
+     "name": "CpuSuspendIntr",
+     "status": "hle",
+     "ret": null,
+     "where": "libs.cpp:296",
+     "hle_name": "CpuSuspendIntr"
+    },
+    {
+     "lib": "intrman",
+     "ord": 18,
+     "name": "CpuResumeIntr",
+     "status": "hle",
+     "ret": null,
+     "where": "libs.cpp:302",
+     "hle_name": "CpuResumeIntr"
+    },
+    {
+     "lib": "intrman",
+     "ord": 23,
+     "name": "QueryIntrContext",
+     "status": "hle",
+     "ret": null,
+     "where": "libs.cpp:306",
+     "hle_name": "QueryIntrContext"
+    },
+    {
+     "lib": "loadcore",
+     "ord": 5,
+     "name": "FlushDcache",
+     "status": "hle-const",
+     "ret": "0",
+     "where": "libs.cpp:268",
+     "hle_name": "FlushDcache"
+    },
+    {
+     "lib": "loadcore",
+     "ord": 6,
+     "name": "RegisterLibraryEntries",
+     "status": "hle",
+     "ret": null,
+     "where": "libs.cpp:269",
+     "hle_name": "RegisterLibraryEntries"
+    },
+    {
+     "lib": "sifman",
+     "ord": 7,
+     "name": "sceSifSetDma",
+     "status": "hle",
+     "ret": null,
+     "where": "sif.cpp:365",
+     "hle_name": "sceSifSetDma"
+    },
+    {
+     "lib": "sifman",
+     "ord": 8,
+     "name": "sceSifDmaStat",
+     "status": "hle-const",
+     "ret": "-1",
+     "where": "sif.cpp:366",
+     "hle_name": "sceSifDmaStat"
+    },
+    {
+     "lib": "sysclib",
+     "ord": 17,
+     "name": "bzero",
+     "status": "hle",
+     "ret": null,
+     "where": "libs.cpp:743",
+     "hle_name": "bzero"
+    },
+    {
+     "lib": "thevent",
+     "ord": 4,
+     "name": "CreateEventFlag",
+     "status": "hle",
+     "ret": null,
+     "where": "libs.cpp:533",
+     "hle_name": "CreateEventFlag"
+    },
+    {
+     "lib": "thevent",
+     "ord": 5,
+     "name": "DeleteEventFlag",
+     "status": "hle",
+     "ret": null,
+     "where": "libs.cpp:539",
+     "hle_name": "DeleteEventFlag"
+    },
+    {
+     "lib": "thevent",
+     "ord": 6,
+     "name": "SetEventFlag",
+     "status": "hle",
+     "ret": null,
+     "where": "libs.cpp:547",
+     "hle_name": "SetEventFlag"
+    },
+    {
+     "lib": "thevent",
+     "ord": 7,
+     "name": "iSetEventFlag",
+     "status": "hle",
+     "ret": null,
+     "where": "libs.cpp:548",
+     "hle_name": "iSetEventFlag"
+    },
+    {
+     "lib": "thevent",
+     "ord": 8,
+     "name": "ClearEventFlag",
+     "status": "hle",
+     "ret": null,
+     "where": "libs.cpp:555",
+     "hle_name": "ClearEventFlag"
+    },
+    {
+     "lib": "thevent",
+     "ord": 9,
+     "name": "iClearEventFlag",
+     "status": "hle",
+     "ret": null,
+     "where": "libs.cpp:556",
+     "hle_name": "iClearEventFlag"
+    },
+    {
+     "lib": "thevent",
+     "ord": 10,
+     "name": "WaitEventFlag",
+     "status": "hle",
+     "ret": null,
+     "where": "libs.cpp:557",
+     "hle_name": "WaitEventFlag"
+    }
+   ]
+  },
+  {
+   "module": "SDRDRV",
+   "iopmod": "sdr_driver",
+   "version": "4.1",
+   "in_boot_order": true,
+   "exports": {
+    "sdrdrv": 6
+   },
+   "rows": [
+    {
+     "lib": "intrman",
+     "ord": 17,
+     "name": "CpuSuspendIntr",
+     "status": "hle",
+     "ret": null,
+     "where": "libs.cpp:296",
+     "hle_name": "CpuSuspendIntr"
+    },
+    {
+     "lib": "intrman",
+     "ord": 18,
+     "name": "CpuResumeIntr",
+     "status": "hle",
+     "ret": null,
+     "where": "libs.cpp:302",
+     "hle_name": "CpuResumeIntr"
+    },
+    {
+     "lib": "libsd",
+     "ord": 4,
+     "name": "sceSdInit",
+     "status": "lle",
+     "via": "LIBSD"
+    },
+    {
+     "lib": "libsd",
+     "ord": 5,
+     "name": "sceSdSetParam",
+     "status": "lle",
+     "via": "LIBSD"
+    },
+    {
+     "lib": "libsd",
+     "ord": 6,
+     "name": "sceSdGetParam",
+     "status": "lle",
+     "via": "LIBSD"
+    },
+    {
+     "lib": "libsd",
+     "ord": 7,
+     "name": "sceSdSetSwitch",
+     "status": "lle",
+     "via": "LIBSD"
+    },
+    {
+     "lib": "libsd",
+     "ord": 8,
+     "name": "sceSdGetSwitch",
+     "status": "lle",
+     "via": "LIBSD"
+    },
+    {
+     "lib": "libsd",
+     "ord": 9,
+     "name": "sceSdSetAddr",
+     "status": "lle",
+     "via": "LIBSD"
+    },
+    {
+     "lib": "libsd",
+     "ord": 10,
+     "name": "sceSdGetAddr",
+     "status": "lle",
+     "via": "LIBSD"
+    },
+    {
+     "lib": "libsd",
+     "ord": 11,
+     "name": "sceSdSetCoreAttr",
+     "status": "lle",
+     "via": "LIBSD"
+    },
+    {
+     "lib": "libsd",
+     "ord": 12,
+     "name": "sceSdGetCoreAttr",
+     "status": "lle",
+     "via": "LIBSD"
+    },
+    {
+     "lib": "libsd",
+     "ord": 13,
+     "name": "sceSdNote2Pitch",
+     "status": "lle",
+     "via": "LIBSD"
+    },
+    {
+     "lib": "libsd",
+     "ord": 14,
+     "name": "sceSdPitch2Note",
+     "status": "lle",
+     "via": "LIBSD"
+    },
+    {
+     "lib": "libsd",
+     "ord": 15,
+     "name": "sceSdProcBatch",
+     "status": "lle",
+     "via": "LIBSD"
+    },
+    {
+     "lib": "libsd",
+     "ord": 16,
+     "name": "sceSdProcBatchEx",
+     "status": "lle",
+     "via": "LIBSD"
+    },
+    {
+     "lib": "libsd",
+     "ord": 17,
+     "name": "sceSdVoiceTrans",
+     "status": "lle",
+     "via": "LIBSD"
+    },
+    {
+     "lib": "libsd",
+     "ord": 18,
+     "name": "sceSdBlockTrans",
+     "status": "lle",
+     "via": "LIBSD"
+    },
+    {
+     "lib": "libsd",
+     "ord": 19,
+     "name": "sceSdVoiceTransStatus",
+     "status": "lle",
+     "via": "LIBSD"
+    },
+    {
+     "lib": "libsd",
+     "ord": 20,
+     "name": "sceSdBlockTransStatus",
+     "status": "lle",
+     "via": "LIBSD"
+    },
+    {
+     "lib": "libsd",
+     "ord": 23,
+     "name": "sceSdSetEffectAttr",
+     "status": "lle",
+     "via": "LIBSD"
+    },
+    {
+     "lib": "libsd",
+     "ord": 24,
+     "name": "sceSdGetEffectAttr",
+     "status": "lle",
+     "via": "LIBSD"
+    },
+    {
+     "lib": "libsd",
+     "ord": 25,
+     "name": "sceSdClearEffectWorkArea",
+     "status": "lle",
+     "via": "LIBSD"
+    },
+    {
+     "lib": "libsd",
+     "ord": 26,
+     "name": "sceSdSetTransIntrHandler",
+     "status": "lle",
+     "via": "LIBSD"
+    },
+    {
+     "lib": "libsd",
+     "ord": 27,
+     "name": "sceSdSetSpu2IntrHandler",
+     "status": "lle",
+     "via": "LIBSD"
+    },
+    {
+     "lib": "libsd",
+     "ord": 30,
+     "name": "sceSdStopTrans",
+     "status": "lle",
+     "via": "LIBSD"
+    },
+    {
+     "lib": "libsd",
+     "ord": 31,
+     "name": "sceSdCleanEffectWorkArea",
+     "status": "lle",
+     "via": "LIBSD"
+    },
+    {
+     "lib": "libsd",
+     "ord": 32,
+     "name": "sceSdSetEffectMode",
+     "status": "lle",
+     "via": "LIBSD"
+    },
+    {
+     "lib": "libsd",
+     "ord": 33,
+     "name": "sceSdSetEffectModeParams",
+     "status": "lle",
+     "via": "LIBSD"
+    },
+    {
+     "lib": "loadcore",
+     "ord": 6,
+     "name": "RegisterLibraryEntries",
+     "status": "hle",
+     "ret": null,
+     "where": "libs.cpp:269",
+     "hle_name": "RegisterLibraryEntries"
+    },
+    {
+     "lib": "loadcore",
+     "ord": 7,
+     "name": "ReleaseLibraryEntries",
+     "status": "hle-const",
+     "ret": "0",
+     "where": "libs.cpp:276",
+     "hle_name": "ReleaseLibraryEntries"
+    },
+    {
+     "lib": "sifcmd",
+     "ord": 14,
+     "name": "sceSifInitRpc",
+     "status": "hle-const",
+     "ret": "0",
+     "where": "sif.cpp:396",
+     "hle_name": "sceSifInitRpc"
+    },
+    {
+     "lib": "sifcmd",
+     "ord": 15,
+     "name": "sceSifBindRpc",
+     "status": "hle",
+     "ret": null,
+     "where": "sif.cpp:397",
+     "hle_name": "sceSifBindRpc"
+    },
+    {
+     "lib": "sifcmd",
+     "ord": 16,
+     "name": "sceSifCallRpc",
+     "status": "hle",
+     "ret": null,
+     "where": "sif.cpp:410",
+     "hle_name": "sceSifCallRpc"
+    },
+    {
+     "lib": "sifcmd",
+     "ord": 17,
+     "name": "sceSifRegisterRpc",
+     "status": "hle",
+     "ret": null,
+     "where": "sif.cpp:430",
+     "hle_name": "sceSifRegisterRpc"
+    },
+    {
+     "lib": "sifcmd",
+     "ord": 19,
+     "name": "sceSifSetRpcQueue",
+     "status": "hle",
+     "ret": null,
+     "where": "sif.cpp:449",
+     "hle_name": "sceSifSetRpcQueue"
+    },
+    {
+     "lib": "sifcmd",
+     "ord": 22,
+     "name": "sceSifRpcLoop",
+     "status": "hle",
+     "ret": null,
+     "where": "sif.cpp:453",
+     "hle_name": "sceSifRpcLoop"
+    },
+    {
+     "lib": "sifcmd",
+     "ord": 24,
+     "name": "sceSifRemoveRpc",
+     "status": "hle",
+     "ret": null,
+     "where": "sif.cpp:463",
+     "hle_name": "sceSifRemoveRpc"
+    },
+    {
+     "lib": "sifcmd",
+     "ord": 25,
+     "name": "sceSifRemoveRpcQueue",
+     "status": "hle",
+     "ret": null,
+     "where": "sif.cpp:468",
+     "hle_name": "sceSifRemoveRpcQueue"
+    },
+    {
+     "lib": "sysclib",
+     "ord": 8,
+     "name": "look_ctype_table",
+     "status": "hle",
+     "ret": null,
+     "where": "libs.cpp:703",
+     "hle_name": "look_ctype_table"
+    },
+    {
+     "lib": "sysclib",
+     "ord": 29,
+     "name": "strncmp",
+     "status": "hle",
+     "ret": null,
+     "where": "libs.cpp:781",
+     "hle_name": "strncmp"
+    },
+    {
+     "lib": "sysclib",
+     "ord": 36,
+     "name": "strtol",
+     "status": "hle",
+     "ret": null,
+     "where": "libs.cpp:820",
+     "hle_name": "strtol"
+    },
+    {
+     "lib": "sysmem",
+     "ord": 14,
+     "name": "Kprintf",
+     "status": "hle",
+     "ret": null,
+     "where": "libs.cpp:262",
+     "hle_name": "Kprintf"
+    },
+    {
+     "lib": "thbase",
+     "ord": 4,
+     "name": "CreateThread",
+     "status": "hle",
+     "ret": null,
+     "where": "libs.cpp:311",
+     "hle_name": "CreateThread"
+    },
+    {
+     "lib": "thbase",
+     "ord": 5,
+     "name": "DeleteThread",
+     "status": "hle",
+     "ret": null,
+     "where": "libs.cpp:315",
+     "hle_name": "DeleteThread"
+    },
+    {
+     "lib": "thbase",
+     "ord": 6,
+     "name": "StartThread",
+     "status": "hle",
+     "ret": null,
+     "where": "libs.cpp:320",
+     "hle_name": "StartThread"
+    },
+    {
+     "lib": "thbase",
+     "ord": 10,
+     "name": "TerminateThread",
+     "status": "hle",
+     "ret": null,
+     "where": "libs.cpp:357",
+     "hle_name": "TerminateThread"
+    },
+    {
+     "lib": "thbase",
+     "ord": 14,
+     "name": "ChangeThreadPriority",
+     "status": "hle",
+     "ret": null,
+     "where": "libs.cpp:370",
+     "hle_name": "ChangeThreadPriority"
+    },
+    {
+     "lib": "thbase",
+     "ord": 20,
+     "name": "GetThreadId",
+     "status": "hle",
+     "ret": null,
+     "where": "libs.cpp:394",
+     "hle_name": "GetThreadId"
+    },
+    {
+     "lib": "thbase",
+     "ord": 22,
+     "name": "ReferThreadStatus",
+     "status": "hle",
+     "ret": null,
+     "where": "libs.cpp:416",
+     "hle_name": "ReferThreadStatus"
+    },
+    {
+     "lib": "thbase",
+     "ord": 24,
+     "name": "SleepThread",
+     "status": "hle",
+     "ret": null,
+     "where": "libs.cpp:418",
+     "hle_name": "SleepThread"
+    },
+    {
+     "lib": "thbase",
+     "ord": 26,
+     "name": "iWakeupThread",
+     "status": "hle",
+     "ret": null,
+     "where": "libs.cpp:436",
+     "hle_name": "iWakeupThread"
+    },
+    {
+     "lib": "thbase",
+     "ord": 28,
+     "name": "iCancelWakeupThread",
+     "status": "hle",
+     "ret": null,
+     "where": "libs.cpp:443",
+     "hle_name": "iCancelWakeupThread"
+    }
+   ]
+  },
+  {
+   "module": "MCMAN",
+   "iopmod": "mcman",
+   "version": "2.38",
+   "in_boot_order": true,
+   "exports": {
+    "mcman": 62
+   },
+   "rows": [
+    {
+     "lib": "cdvdman",
+     "ord": 24,
+     "name": "sceCdReadClock",
+     "status": "hle",
+     "ret": null,
+     "where": "cdvd.cpp:124",
+     "hle_name": "sceCdReadClock"
+    },
+    {
+     "lib": "intrman",
+     "ord": 17,
+     "name": "CpuSuspendIntr",
+     "status": "hle",
+     "ret": null,
+     "where": "libs.cpp:296",
+     "hle_name": "CpuSuspendIntr"
+    },
+    {
+     "lib": "intrman",
+     "ord": 18,
+     "name": "CpuResumeIntr",
+     "status": "hle",
+     "ret": null,
+     "where": "libs.cpp:302",
+     "hle_name": "CpuResumeIntr"
+    },
+    {
+     "lib": "ioman",
+     "ord": 20,
+     "name": "AddDrv",
+     "status": "hle-const",
+     "ret": "-1",
+     "where": "io.cpp:169",
+     "hle_name": "ioman"
+    },
+    {
+     "lib": "ioman",
+     "ord": 21,
+     "name": "DelDrv",
+     "status": "hle-const",
+     "ret": "-1",
+     "where": "io.cpp:169",
+     "hle_name": "ioman"
+    },
+    {
+     "lib": "loadcore",
+     "ord": 6,
+     "name": "RegisterLibraryEntries",
+     "status": "hle",
+     "ret": null,
+     "where": "libs.cpp:269",
+     "hle_name": "RegisterLibraryEntries"
+    },
+    {
+     "lib": "loadcore",
+     "ord": 7,
+     "name": "ReleaseLibraryEntries",
+     "status": "hle-const",
+     "ret": "0",
+     "where": "libs.cpp:276",
+     "hle_name": "ReleaseLibraryEntries"
+    },
+    {
+     "lib": "modload",
+     "ord": 13,
+     "name": "SetCheckKelfPathCallback",
+     "status": "hle-const",
+     "ret": "0",
+     "where": "libs.cpp:880",
+     "hle_name": "SetCheckKelfPathCallback"
+    },
+    {
+     "lib": "secrman",
+     "ord": 4,
+     "name": "SecrSetMcCommandHandler",
+     "status": "hle-const",
+     "ret": "0",
+     "where": "libs.cpp:1063",
+     "hle_name": "secrman"
+    },
+    {
+     "lib": "secrman",
+     "ord": 5,
+     "name": "SecrSetMcDevIDHandler",
+     "status": "hle-const",
+     "ret": "0",
+     "where": "libs.cpp:1063",
+     "hle_name": "secrman"
+    },
+    {
+     "lib": "secrman",
+     "ord": 6,
+     "name": "SecrAuthCard",
+     "status": "hle-const",
+     "ret": "1",
+     "where": "libs.cpp:1064",
+     "hle_name": "SecrAuthCard"
+    },
+    {
+     "lib": "sio2man",
+     "ord": 24,
+     "name": "sio2_mc_transfer_init",
+     "status": "lle",
+     "via": "SIO2MAN"
+    },
+    {
+     "lib": "sio2man",
+     "ord": 25,
+     "name": "sio2_transfer",
+     "status": "lle",
+     "via": "SIO2MAN"
+    },
+    {
+     "lib": "sio2man",
+     "ord": 26,
+     "name": "sio2_transfer_reset",
+     "status": "lle",
+     "via": "SIO2MAN"
+    },
+    {
+     "lib": "sio2man",
+     "ord": 57,
+     "name": "sio2_mtap_change_slot",
+     "status": "lle",
+     "via": "SIO2MAN"
+    },
+    {
+     "lib": "sio2man",
+     "ord": 59,
+     "name": "sio2_mtap_get_slot_max2",
+     "status": "lle",
+     "via": "SIO2MAN"
+    },
+    {
+     "lib": "stdio",
+     "ord": 4,
+     "name": "printf",
+     "status": "hle",
+     "ret": null,
+     "where": "libs.cpp:869",
+     "hle_name": "printf"
+    },
+    {
+     "lib": "sysclib",
+     "ord": 12,
+     "name": "memcpy",
+     "status": "hle",
+     "ret": null,
+     "where": "libs.cpp:732",
+     "hle_name": "memcpy"
+    },
+    {
+     "lib": "sysclib",
+     "ord": 14,
+     "name": "memset",
+     "status": "hle",
+     "ret": null,
+     "where": "libs.cpp:734",
+     "hle_name": "memset"
+    },
+    {
+     "lib": "sysclib",
+     "ord": 20,
+     "name": "strcat",
+     "status": "hle",
+     "ret": null,
+     "where": "libs.cpp:749",
+     "hle_name": "strcat"
+    },
+    {
+     "lib": "sysclib",
+     "ord": 21,
+     "name": "strchr",
+     "status": "hle",
+     "ret": null,
+     "where": "libs.cpp:754",
+     "hle_name": "strchr"
+    },
+    {
+     "lib": "sysclib",
+     "ord": 22,
+     "name": "strcmp",
+     "status": "hle",
+     "ret": null,
+     "where": "libs.cpp:761",
+     "hle_name": "strcmp"
+    },
+    {
+     "lib": "sysclib",
+     "ord": 23,
+     "name": "strcpy",
+     "status": "hle",
+     "ret": null,
+     "where": "libs.cpp:765",
+     "hle_name": "strcpy"
+    },
+    {
+     "lib": "sysclib",
+     "ord": 27,
+     "name": "strlen",
+     "status": "hle",
+     "ret": null,
+     "where": "libs.cpp:775",
+     "hle_name": "strlen"
+    },
+    {
+     "lib": "sysclib",
+     "ord": 29,
+     "name": "strncmp",
+     "status": "hle",
+     "ret": null,
+     "where": "libs.cpp:781",
+     "hle_name": "strncmp"
+    },
+    {
+     "lib": "sysclib",
+     "ord": 30,
+     "name": "strncpy",
+     "status": "hle",
+     "ret": null,
+     "where": "libs.cpp:785",
+     "hle_name": "strncpy"
+    },
+    {
+     "lib": "sysclib",
+     "ord": 32,
+     "name": "strrchr",
+     "status": "hle",
+     "ret": null,
+     "where": "libs.cpp:790",
+     "hle_name": "strrchr"
+    },
+    {
+     "lib": "thbase",
+     "ord": 33,
+     "name": "DelayThread",
+     "status": "hle",
+     "ret": null,
+     "where": "libs.cpp:446",
+     "hle_name": "DelayThread"
+    },
+    {
+     "lib": "thbase",
+     "ord": 35,
+     "name": "SetAlarm",
+     "status": "hle",
+     "ret": null,
+     "where": "libs.cpp:462",
+     "hle_name": "SetAlarm"
+    },
+    {
+     "lib": "thbase",
+     "ord": 39,
+     "name": "USec2SysClock",
+     "status": "hle",
+     "ret": null,
+     "where": "libs.cpp:471",
+     "hle_name": "USec2SysClock"
+    },
+    {
+     "lib": "thsemap",
+     "ord": 4,
+     "name": "CreateSema",
+     "status": "hle",
+     "ret": null,
+     "where": "libs.cpp:484",
+     "hle_name": "CreateSema"
+    },
+    {
+     "lib": "thsemap",
+     "ord": 5,
+     "name": "DeleteSema",
+     "status": "hle",
+     "ret": null,
+     "where": "libs.cpp:490",
+     "hle_name": "DeleteSema"
+    },
+    {
+     "lib": "thsemap",
+     "ord": 6,
+     "name": "SignalSema",
+     "status": "hle",
+     "ret": null,
+     "where": "libs.cpp:499",
+     "hle_name": "SignalSema"
+    },
+    {
+     "lib": "thsemap",
+     "ord": 7,
+     "name": "iSignalSema",
+     "status": "hle",
+     "ret": null,
+     "where": "libs.cpp:500",
+     "hle_name": "iSignalSema"
+    },
+    {
+     "lib": "thsemap",
+     "ord": 8,
+     "name": "WaitSema",
+     "status": "hle",
+     "ret": null,
+     "where": "libs.cpp:501",
+     "hle_name": "WaitSema"
+    }
+   ]
+  },
+  {
+   "module": "MCSERV",
+   "iopmod": "mcserv",
+   "version": "2.16",
+   "in_boot_order": true,
+   "exports": {
+    "mcserv": 8
+   },
+   "rows": [
+    {
+     "lib": "intrman",
+     "ord": 17,
+     "name": "CpuSuspendIntr",
+     "status": "hle",
+     "ret": null,
+     "where": "libs.cpp:296",
+     "hle_name": "CpuSuspendIntr"
+    },
+    {
+     "lib": "intrman",
+     "ord": 18,
+     "name": "CpuResumeIntr",
+     "status": "hle",
+     "ret": null,
+     "where": "libs.cpp:302",
+     "hle_name": "CpuResumeIntr"
+    },
+    {
+     "lib": "loadcore",
+     "ord": 6,
+     "name": "RegisterLibraryEntries",
+     "status": "hle",
+     "ret": null,
+     "where": "libs.cpp:269",
+     "hle_name": "RegisterLibraryEntries"
+    },
+    {
+     "lib": "loadcore",
+     "ord": 7,
+     "name": "ReleaseLibraryEntries",
+     "status": "hle-const",
+     "ret": "0",
+     "where": "libs.cpp:276",
+     "hle_name": "ReleaseLibraryEntries"
+    },
+    {
+     "lib": "mcman",
+     "ord": 6,
+     "name": "McOpen",
+     "status": "lle",
+     "via": "MCMAN"
+    },
+    {
+     "lib": "mcman",
+     "ord": 7,
+     "name": "McClose",
+     "status": "lle",
+     "via": "MCMAN"
+    },
+    {
+     "lib": "mcman",
+     "ord": 8,
+     "name": "McRead",
+     "status": "lle",
+     "via": "MCMAN"
+    },
+    {
+     "lib": "mcman",
+     "ord": 9,
+     "name": "McWrite",
+     "status": "lle",
+     "via": "MCMAN"
+    },
+    {
+     "lib": "mcman",
+     "ord": 10,
+     "name": "McSeek",
+     "status": "lle",
+     "via": "MCMAN"
+    },
+    {
+     "lib": "mcman",
+     "ord": 11,
+     "name": "McFormat",
+     "status": "lle",
+     "via": "MCMAN"
+    },
+    {
+     "lib": "mcman",
+     "ord": 12,
+     "name": "McGetDir",
+     "status": "lle",
+     "via": "MCMAN"
+    },
+    {
+     "lib": "mcman",
+     "ord": 13,
+     "name": "McDelete",
+     "status": "lle",
+     "via": "MCMAN"
+    },
+    {
+     "lib": "mcman",
+     "ord": 14,
+     "name": "McFlush",
+     "status": "lle",
+     "via": "MCMAN"
+    },
+    {
+     "lib": "mcman",
+     "ord": 15,
+     "name": "McChDir",
+     "status": "lle",
+     "via": "MCMAN"
+    },
+    {
+     "lib": "mcman",
+     "ord": 16,
+     "name": "McSetFileInfo",
+     "status": "lle",
+     "via": "MCMAN"
+    },
+    {
+     "lib": "mcman",
+     "ord": 21,
+     "name": "McDetectCard2",
+     "status": "lle",
+     "via": "MCMAN"
+    },
+    {
+     "lib": "mcman",
+     "ord": 22,
+     "name": "McGetFormat",
+     "status": "lle",
+     "via": "MCMAN"
+    },
+    {
+     "lib": "mcman",
+     "ord": 23,
+     "name": "McGetEntSpace",
+     "status": "lle",
+     "via": "MCMAN"
+    },
+    {
+     "lib": "mcman",
+     "ord": 24,
+     "name": "McReplaceBadBlock",
+     "status": "lle",
+     "via": "MCMAN"
+    },
+    {
+     "lib": "mcman",
+     "ord": 26,
+     "name": "?",
+     "status": "lle",
+     "via": "MCMAN"
+    },
+    {
+     "lib": "mcman",
+     "ord": 36,
+     "name": "McUnformat",
+     "status": "lle",
+     "via": "MCMAN"
+    },
+    {
+     "lib": "mcman",
+     "ord": 37,
+     "name": "McRetOnly",
+     "status": "lle",
+     "via": "MCMAN"
+    },
+    {
+     "lib": "mcman",
+     "ord": 38,
+     "name": "McGetFreeClusters",
+     "status": "lle",
+     "via": "MCMAN"
+    },
+    {
+     "lib": "mcman",
+     "ord": 39,
+     "name": "McGetMcType",
+     "status": "lle",
+     "via": "MCMAN"
+    },
+    {
+     "lib": "mcman",
+     "ord": 42,
+     "name": "McGetModuleInfo",
+     "status": "lle",
+     "via": "MCMAN"
+    },
+    {
+     "lib": "mcman",
+     "ord": 45,
+     "name": "McCheckBlock",
+     "status": "lle",
+     "via": "MCMAN"
+    },
+    {
+     "lib": "mcman",
+     "ord": 53,
+     "name": "?",
+     "status": "lle",
+     "via": "MCMAN"
+    },
+    {
+     "lib": "sifcmd",
+     "ord": 14,
+     "name": "sceSifInitRpc",
+     "status": "hle-const",
+     "ret": "0",
+     "where": "sif.cpp:396",
+     "hle_name": "sceSifInitRpc"
+    },
+    {
+     "lib": "sifcmd",
+     "ord": 17,
+     "name": "sceSifRegisterRpc",
+     "status": "hle",
+     "ret": null,
+     "where": "sif.cpp:430",
+     "hle_name": "sceSifRegisterRpc"
+    },
+    {
+     "lib": "sifcmd",
+     "ord": 19,
+     "name": "sceSifSetRpcQueue",
+     "status": "hle",
+     "ret": null,
+     "where": "sif.cpp:449",
+     "hle_name": "sceSifSetRpcQueue"
+    },
+    {
+     "lib": "sifcmd",
+     "ord": 22,
+     "name": "sceSifRpcLoop",
+     "status": "hle",
+     "ret": null,
+     "where": "sif.cpp:453",
+     "hle_name": "sceSifRpcLoop"
+    },
+    {
+     "lib": "sifcmd",
+     "ord": 23,
+     "name": "sceSifGetOtherData",
+     "status": "hle",
+     "ret": null,
+     "where": "sif.cpp:458",
+     "hle_name": "sceSifGetOtherData"
+    },
+    {
+     "lib": "sifcmd",
+     "ord": 24,
+     "name": "sceSifRemoveRpc",
+     "status": "hle",
+     "ret": null,
+     "where": "sif.cpp:463",
+     "hle_name": "sceSifRemoveRpc"
+    },
+    {
+     "lib": "sifcmd",
+     "ord": 25,
+     "name": "sceSifRemoveRpcQueue",
+     "status": "hle",
+     "ret": null,
+     "where": "sif.cpp:468",
+     "hle_name": "sceSifRemoveRpcQueue"
+    },
+    {
+     "lib": "sifman",
+     "ord": 5,
+     "name": "sceSifInit",
+     "status": "hle-const",
+     "ret": "0",
+     "where": "sif.cpp:348",
+     "hle_name": "sceSifInit"
+    },
+    {
+     "lib": "sifman",
+     "ord": 7,
+     "name": "sceSifSetDma",
+     "status": "hle",
+     "ret": null,
+     "where": "sif.cpp:365",
+     "hle_name": "sceSifSetDma"
+    },
+    {
+     "lib": "sifman",
+     "ord": 8,
+     "name": "sceSifDmaStat",
+     "status": "hle-const",
+     "ret": "-1",
+     "where": "sif.cpp:366",
+     "hle_name": "sceSifDmaStat"
+    },
+    {
+     "lib": "sifman",
+     "ord": 29,
+     "name": "sceSifCheckInit",
+     "status": "hle-const",
+     "ret": "1",
+     "where": "sif.cpp:367",
+     "hle_name": "sceSifCheckInit"
+    },
+    {
+     "lib": "stdio",
+     "ord": 4,
+     "name": "printf",
+     "status": "hle",
+     "ret": null,
+     "where": "libs.cpp:869",
+     "hle_name": "printf"
+    },
+    {
+     "lib": "sysclib",
+     "ord": 12,
+     "name": "memcpy",
+     "status": "hle",
+     "ret": null,
+     "where": "libs.cpp:732",
+     "hle_name": "memcpy"
+    },
+    {
+     "lib": "sysclib",
+     "ord": 14,
+     "name": "memset",
+     "status": "hle",
+     "ret": null,
+     "where": "libs.cpp:734",
+     "hle_name": "memset"
+    },
+    {
+     "lib": "sysclib",
+     "ord": 29,
+     "name": "strncmp",
+     "status": "hle",
+     "ret": null,
+     "where": "libs.cpp:781",
+     "hle_name": "strncmp"
+    },
+    {
+     "lib": "sysclib",
+     "ord": 36,
+     "name": "strtol",
+     "status": "hle",
+     "ret": null,
+     "where": "libs.cpp:820",
+     "hle_name": "strtol"
+    },
+    {
+     "lib": "thbase",
+     "ord": 4,
+     "name": "CreateThread",
+     "status": "hle",
+     "ret": null,
+     "where": "libs.cpp:311",
+     "hle_name": "CreateThread"
+    },
+    {
+     "lib": "thbase",
+     "ord": 5,
+     "name": "DeleteThread",
+     "status": "hle",
+     "ret": null,
+     "where": "libs.cpp:315",
+     "hle_name": "DeleteThread"
+    },
+    {
+     "lib": "thbase",
+     "ord": 6,
+     "name": "StartThread",
+     "status": "hle",
+     "ret": null,
+     "where": "libs.cpp:320",
+     "hle_name": "StartThread"
+    },
+    {
+     "lib": "thbase",
+     "ord": 10,
+     "name": "TerminateThread",
+     "status": "hle",
+     "ret": null,
+     "where": "libs.cpp:357",
+     "hle_name": "TerminateThread"
+    },
+    {
+     "lib": "thbase",
+     "ord": 14,
+     "name": "ChangeThreadPriority",
+     "status": "hle",
+     "ret": null,
+     "where": "libs.cpp:370",
+     "hle_name": "ChangeThreadPriority"
+    },
+    {
+     "lib": "thbase",
+     "ord": 20,
+     "name": "GetThreadId",
+     "status": "hle",
+     "ret": null,
+     "where": "libs.cpp:394",
+     "hle_name": "GetThreadId"
+    },
+    {
+     "lib": "thbase",
+     "ord": 22,
+     "name": "ReferThreadStatus",
+     "status": "hle",
+     "ret": null,
+     "where": "libs.cpp:416",
+     "hle_name": "ReferThreadStatus"
+    },
+    {
+     "lib": "thbase",
+     "ord": 33,
+     "name": "DelayThread",
+     "status": "hle",
+     "ret": null,
+     "where": "libs.cpp:446",
+     "hle_name": "DelayThread"
+    },
+    {
+     "lib": "thsemap",
+     "ord": 6,
+     "name": "SignalSema",
+     "status": "hle",
+     "ret": null,
+     "where": "libs.cpp:499",
+     "hle_name": "SignalSema"
+    },
+    {
+     "lib": "thsemap",
+     "ord": 8,
+     "name": "WaitSema",
+     "status": "hle",
+     "ret": null,
+     "where": "libs.cpp:501",
+     "hle_name": "WaitSema"
+    }
+   ]
+  },
+  {
+   "module": "CDVDSTM",
+   "iopmod": "cdvd_st_driver",
+   "version": "2.2",
+   "in_boot_order": true,
+   "exports": {
+    "cdvdstm": 5
+   },
+   "rows": [
+    {
+     "lib": "cdvdman",
+     "ord": 11,
+     "name": "sceCdSync",
+     "status": "hle",
+     "ret": null,
+     "where": "cdvd.cpp:108",
+     "hle_name": "sceCdSync"
+    },
+    {
+     "lib": "cdvdman",
+     "ord": 12,
+     "name": "sceCdGetDiskType",
+     "status": "hle-const",
+     "ret": "0x14",
+     "where": "cdvd.cpp:115",
+     "hle_name": "sceCdGetDiskType"
+    },
+    {
+     "lib": "cdvdman",
+     "ord": 39,
+     "name": "sceCdBreak",
+     "status": "hle-const",
+     "ret": "1",
+     "where": "cdvd.cpp:141",
+     "hle_name": "sceCdBreak"
+    },
+    {
+     "lib": "cdvdman",
+     "ord": 40,
+     "name": "sceCdReadCDDA",
+     "status": "missing",
+     "lib_hle": true,
+     "lib_file": "cdvd.cpp"
+    },
+    {
+     "lib": "cdvdman",
+     "ord": 46,
+     "name": "sceCdNop",
+     "status": "missing",
+     "lib_hle": true,
+     "lib_file": "cdvd.cpp"
+    },
+    {
+     "lib": "cdvdman",
+     "ord": 48,
+     "name": "sceCdstm0Cb",
+     "status": "missing",
+     "lib_hle": true,
+     "lib_file": "cdvd.cpp"
+    },
+    {
+     "lib": "cdvdman",
+     "ord": 49,
+     "name": "sceCdstm1Cb",
+     "status": "missing",
+     "lib_hle": true,
+     "lib_file": "cdvd.cpp"
+    },
+    {
+     "lib": "cdvdman",
+     "ord": 50,
+     "name": "sceCdSC",
+     "status": "missing",
+     "lib_hle": true,
+     "lib_file": "cdvd.cpp"
+    },
+    {
+     "lib": "cdvdman",
+     "ord": 61,
+     "name": "sceCdStStop",
+     "status": "missing",
+     "lib_hle": true,
+     "lib_file": "cdvd.cpp"
+    },
+    {
+     "lib": "cdvdman",
+     "ord": 114,
+     "name": "sceCdRE",
+     "status": "missing",
+     "lib_hle": true,
+     "lib_file": "cdvd.cpp"
+    },
+    {
+     "lib": "intrman",
+     "ord": 17,
+     "name": "CpuSuspendIntr",
+     "status": "hle",
+     "ret": null,
+     "where": "libs.cpp:296",
+     "hle_name": "CpuSuspendIntr"
+    },
+    {
+     "lib": "intrman",
+     "ord": 18,
+     "name": "CpuResumeIntr",
+     "status": "hle",
+     "ret": null,
+     "where": "libs.cpp:302",
+     "hle_name": "CpuResumeIntr"
+    },
+    {
+     "lib": "intrman",
+     "ord": 23,
+     "name": "QueryIntrContext",
+     "status": "hle",
+     "ret": null,
+     "where": "libs.cpp:306",
+     "hle_name": "QueryIntrContext"
+    },
+    {
+     "lib": "ioman",
+     "ord": 20,
+     "name": "AddDrv",
+     "status": "hle-const",
+     "ret": "-1",
+     "where": "io.cpp:169",
+     "hle_name": "ioman"
+    },
+    {
+     "lib": "ioman",
+     "ord": 21,
+     "name": "DelDrv",
+     "status": "hle-const",
+     "ret": "-1",
+     "where": "io.cpp:169",
+     "hle_name": "ioman"
+    },
+    {
+     "lib": "loadcore",
+     "ord": 6,
+     "name": "RegisterLibraryEntries",
+     "status": "hle",
+     "ret": null,
+     "where": "libs.cpp:269",
+     "hle_name": "RegisterLibraryEntries"
+    },
+    {
+     "lib": "loadcore",
+     "ord": 7,
+     "name": "ReleaseLibraryEntries",
+     "status": "hle-const",
+     "ret": "0",
+     "where": "libs.cpp:276",
+     "hle_name": "ReleaseLibraryEntries"
+    },
+    {
+     "lib": "sifman",
+     "ord": 7,
+     "name": "sceSifSetDma",
+     "status": "hle",
+     "ret": null,
+     "where": "sif.cpp:365",
+     "hle_name": "sceSifSetDma"
+    },
+    {
+     "lib": "sifman",
+     "ord": 8,
+     "name": "sceSifDmaStat",
+     "status": "hle-const",
+     "ret": "-1",
+     "where": "sif.cpp:366",
+     "hle_name": "sceSifDmaStat"
+    },
+    {
+     "lib": "stdio",
+     "ord": 4,
+     "name": "printf",
+     "status": "hle",
+     "ret": null,
+     "where": "libs.cpp:869",
+     "hle_name": "printf"
+    },
+    {
+     "lib": "sysmem",
+     "ord": 14,
+     "name": "Kprintf",
+     "status": "hle",
+     "ret": null,
+     "where": "libs.cpp:262",
+     "hle_name": "Kprintf"
+    },
+    {
+     "lib": "thbase",
+     "ord": 33,
+     "name": "DelayThread",
+     "status": "hle",
+     "ret": null,
+     "where": "libs.cpp:446",
+     "hle_name": "DelayThread"
+    },
+    {
+     "lib": "thbase",
+     "ord": 36,
+     "name": "iSetAlarm",
+     "status": "hle",
+     "ret": null,
+     "where": "libs.cpp:463",
+     "hle_name": "iSetAlarm"
+    },
+    {
+     "lib": "thbase",
+     "ord": 37,
+     "name": "CancelAlarm",
+     "status": "hle",
+     "ret": null,
+     "where": "libs.cpp:469",
+     "hle_name": "CancelAlarm"
+    },
+    {
+     "lib": "thbase",
+     "ord": 38,
+     "name": "iCancelAlarm",
+     "status": "hle",
+     "ret": null,
+     "where": "libs.cpp:470",
+     "hle_name": "iCancelAlarm"
+    },
+    {
+     "lib": "thevent",
+     "ord": 6,
+     "name": "SetEventFlag",
+     "status": "hle",
+     "ret": null,
+     "where": "libs.cpp:547",
+     "hle_name": "SetEventFlag"
+    },
+    {
+     "lib": "thevent",
+     "ord": 7,
+     "name": "iSetEventFlag",
+     "status": "hle",
+     "ret": null,
+     "where": "libs.cpp:548",
+     "hle_name": "iSetEventFlag"
+    },
+    {
+     "lib": "thevent",
+     "ord": 8,
+     "name": "ClearEventFlag",
+     "status": "hle",
+     "ret": null,
+     "where": "libs.cpp:555",
+     "hle_name": "ClearEventFlag"
+    },
+    {
+     "lib": "thevent",
+     "ord": 9,
+     "name": "iClearEventFlag",
+     "status": "hle",
+     "ret": null,
+     "where": "libs.cpp:556",
+     "hle_name": "iClearEventFlag"
+    },
+    {
+     "lib": "thevent",
+     "ord": 10,
+     "name": "WaitEventFlag",
+     "status": "hle",
+     "ret": null,
+     "where": "libs.cpp:557",
+     "hle_name": "WaitEventFlag"
+    },
+    {
+     "lib": "thsemap",
+     "ord": 4,
+     "name": "CreateSema",
+     "status": "hle",
+     "ret": null,
+     "where": "libs.cpp:484",
+     "hle_name": "CreateSema"
+    },
+    {
+     "lib": "thsemap",
+     "ord": 5,
+     "name": "DeleteSema",
+     "status": "hle",
+     "ret": null,
+     "where": "libs.cpp:490",
+     "hle_name": "DeleteSema"
+    },
+    {
+     "lib": "thsemap",
+     "ord": 6,
+     "name": "SignalSema",
+     "status": "hle",
+     "ret": null,
+     "where": "libs.cpp:499",
+     "hle_name": "SignalSema"
+    },
+    {
+     "lib": "thsemap",
+     "ord": 8,
+     "name": "WaitSema",
+     "status": "hle",
+     "ret": null,
+     "where": "libs.cpp:501",
+     "hle_name": "WaitSema"
+    }
+   ]
+  },
+  {
+   "module": "CRI_ADXI",
+   "iopmod": "CRI_ADX_Driver",
+   "version": "9.52",
+   "in_boot_order": true,
+   "exports": {},
+   "rows": [
+    {
+     "lib": "intrman",
+     "ord": 17,
+     "name": "CpuSuspendIntr",
+     "status": "hle",
+     "ret": null,
+     "where": "libs.cpp:296",
+     "hle_name": "CpuSuspendIntr"
+    },
+    {
+     "lib": "intrman",
+     "ord": 18,
+     "name": "CpuResumeIntr",
+     "status": "hle",
+     "ret": null,
+     "where": "libs.cpp:302",
+     "hle_name": "CpuResumeIntr"
+    },
+    {
+     "lib": "libsd",
+     "ord": 4,
+     "name": "sceSdInit",
+     "status": "lle",
+     "via": "LIBSD"
+    },
+    {
+     "lib": "libsd",
+     "ord": 5,
+     "name": "sceSdSetParam",
+     "status": "lle",
+     "via": "LIBSD"
+    },
+    {
+     "lib": "libsd",
+     "ord": 6,
+     "name": "sceSdGetParam",
+     "status": "lle",
+     "via": "LIBSD"
+    },
+    {
+     "lib": "libsd",
+     "ord": 11,
+     "name": "sceSdSetCoreAttr",
+     "status": "lle",
+     "via": "LIBSD"
+    },
+    {
+     "lib": "libsd",
+     "ord": 17,
+     "name": "sceSdVoiceTrans",
+     "status": "lle",
+     "via": "LIBSD"
+    },
+    {
+     "lib": "libsd",
+     "ord": 18,
+     "name": "sceSdBlockTrans",
+     "status": "lle",
+     "via": "LIBSD"
+    },
+    {
+     "lib": "libsd",
+     "ord": 19,
+     "name": "sceSdVoiceTransStatus",
+     "status": "lle",
+     "via": "LIBSD"
+    },
+    {
+     "lib": "libsd",
+     "ord": 20,
+     "name": "sceSdBlockTransStatus",
+     "status": "lle",
+     "via": "LIBSD"
+    },
+    {
+     "lib": "libsd",
+     "ord": 26,
+     "name": "sceSdSetTransIntrHandler",
+     "status": "lle",
+     "via": "LIBSD"
+    },
+    {
+     "lib": "libsd",
+     "ord": 28,
+     "name": "sceSdGetTransIntrHandlerArgument",
+     "status": "lle",
+     "via": "LIBSD"
+    },
+    {
+     "lib": "loadcore",
+     "ord": 5,
+     "name": "FlushDcache",
+     "status": "hle-const",
+     "ret": "0",
+     "where": "libs.cpp:268",
+     "hle_name": "FlushDcache"
+    },
+    {
+     "lib": "sifcmd",
+     "ord": 14,
+     "name": "sceSifInitRpc",
+     "status": "hle-const",
+     "ret": "0",
+     "where": "sif.cpp:396",
+     "hle_name": "sceSifInitRpc"
+    },
+    {
+     "lib": "sifcmd",
+     "ord": 16,
+     "name": "sceSifCallRpc",
+     "status": "hle",
+     "ret": null,
+     "where": "sif.cpp:410",
+     "hle_name": "sceSifCallRpc"
+    },
+    {
+     "lib": "sifcmd",
+     "ord": 17,
+     "name": "sceSifRegisterRpc",
+     "status": "hle",
+     "ret": null,
+     "where": "sif.cpp:430",
+     "hle_name": "sceSifRegisterRpc"
+    },
+    {
+     "lib": "sifcmd",
+     "ord": 19,
+     "name": "sceSifSetRpcQueue",
+     "status": "hle",
+     "ret": null,
+     "where": "sif.cpp:449",
+     "hle_name": "sceSifSetRpcQueue"
+    },
+    {
+     "lib": "sifcmd",
+     "ord": 22,
+     "name": "sceSifRpcLoop",
+     "status": "hle",
+     "ret": null,
+     "where": "sif.cpp:453",
+     "hle_name": "sceSifRpcLoop"
+    },
+    {
+     "lib": "sifcmd",
+     "ord": 24,
+     "name": "sceSifRemoveRpc",
+     "status": "hle",
+     "ret": null,
+     "where": "sif.cpp:463",
+     "hle_name": "sceSifRemoveRpc"
+    },
+    {
+     "lib": "sifcmd",
+     "ord": 25,
+     "name": "sceSifRemoveRpcQueue",
+     "status": "hle",
+     "ret": null,
+     "where": "sif.cpp:468",
+     "hle_name": "sceSifRemoveRpcQueue"
+    },
+    {
+     "lib": "sifman",
+     "ord": 5,
+     "name": "sceSifInit",
+     "status": "hle-const",
+     "ret": "0",
+     "where": "sif.cpp:348",
+     "hle_name": "sceSifInit"
+    },
+    {
+     "lib": "sifman",
+     "ord": 7,
+     "name": "sceSifSetDma",
+     "status": "hle",
+     "ret": null,
+     "where": "sif.cpp:365",
+     "hle_name": "sceSifSetDma"
+    },
+    {
+     "lib": "sifman",
+     "ord": 29,
+     "name": "sceSifCheckInit",
+     "status": "hle-const",
+     "ret": "1",
+     "where": "sif.cpp:367",
+     "hle_name": "sceSifCheckInit"
+    },
+    {
+     "lib": "stdio",
+     "ord": 4,
+     "name": "printf",
+     "status": "hle",
+     "ret": null,
+     "where": "libs.cpp:869",
+     "hle_name": "printf"
+    },
+    {
+     "lib": "sysclib",
+     "ord": 8,
+     "name": "look_ctype_table",
+     "status": "hle",
+     "ret": null,
+     "where": "libs.cpp:703",
+     "hle_name": "look_ctype_table"
+    },
+    {
+     "lib": "sysclib",
+     "ord": 11,
+     "name": "memcmp",
+     "status": "hle",
+     "ret": null,
+     "where": "libs.cpp:720",
+     "hle_name": "memcmp"
+    },
+    {
+     "lib": "sysclib",
+     "ord": 12,
+     "name": "memcpy",
+     "status": "hle",
+     "ret": null,
+     "where": "libs.cpp:732",
+     "hle_name": "memcpy"
+    },
+    {
+     "lib": "sysclib",
+     "ord": 14,
+     "name": "memset",
+     "status": "hle",
+     "ret": null,
+     "where": "libs.cpp:734",
+     "hle_name": "memset"
+    },
+    {
+     "lib": "sysclib",
+     "ord": 19,
+     "name": "sprintf",
+     "status": "hle",
+     "ret": null,
+     "where": "libs.cpp:744",
+     "hle_name": "sprintf"
+    },
+    {
+     "lib": "sysclib",
+     "ord": 20,
+     "name": "strcat",
+     "status": "hle",
+     "ret": null,
+     "where": "libs.cpp:749",
+     "hle_name": "strcat"
+    },
+    {
+     "lib": "sysclib",
+     "ord": 23,
+     "name": "strcpy",
+     "status": "hle",
+     "ret": null,
+     "where": "libs.cpp:765",
+     "hle_name": "strcpy"
+    },
+    {
+     "lib": "sysclib",
+     "ord": 29,
+     "name": "strncmp",
+     "status": "hle",
+     "ret": null,
+     "where": "libs.cpp:781",
+     "hle_name": "strncmp"
+    },
+    {
+     "lib": "sysclib",
+     "ord": 30,
+     "name": "strncpy",
+     "status": "hle",
+     "ret": null,
+     "where": "libs.cpp:785",
+     "hle_name": "strncpy"
+    },
+    {
+     "lib": "sysclib",
+     "ord": 36,
+     "name": "strtol",
+     "status": "hle",
+     "ret": null,
+     "where": "libs.cpp:820",
+     "hle_name": "strtol"
+    },
+    {
+     "lib": "thbase",
+     "ord": 4,
+     "name": "CreateThread",
+     "status": "hle",
+     "ret": null,
+     "where": "libs.cpp:311",
+     "hle_name": "CreateThread"
+    },
+    {
+     "lib": "thbase",
+     "ord": 5,
+     "name": "DeleteThread",
+     "status": "hle",
+     "ret": null,
+     "where": "libs.cpp:315",
+     "hle_name": "DeleteThread"
+    },
+    {
+     "lib": "thbase",
+     "ord": 6,
+     "name": "StartThread",
+     "status": "hle",
+     "ret": null,
+     "where": "libs.cpp:320",
+     "hle_name": "StartThread"
+    },
+    {
+     "lib": "thbase",
+     "ord": 10,
+     "name": "TerminateThread",
+     "status": "hle",
+     "ret": null,
+     "where": "libs.cpp:357",
+     "hle_name": "TerminateThread"
+    },
+    {
+     "lib": "thbase",
+     "ord": 20,
+     "name": "GetThreadId",
+     "status": "hle",
+     "ret": null,
+     "where": "libs.cpp:394",
+     "hle_name": "GetThreadId"
+    },
+    {
+     "lib": "thsemap",
+     "ord": 4,
+     "name": "CreateSema",
+     "status": "hle",
+     "ret": null,
+     "where": "libs.cpp:484",
+     "hle_name": "CreateSema"
+    },
+    {
+     "lib": "thsemap",
+     "ord": 5,
+     "name": "DeleteSema",
+     "status": "hle",
+     "ret": null,
+     "where": "libs.cpp:490",
+     "hle_name": "DeleteSema"
+    },
+    {
+     "lib": "thsemap",
+     "ord": 7,
+     "name": "iSignalSema",
+     "status": "hle",
+     "ret": null,
+     "where": "libs.cpp:500",
+     "hle_name": "iSignalSema"
+    },
+    {
+     "lib": "thsemap",
+     "ord": 8,
+     "name": "WaitSema",
+     "status": "hle",
+     "ret": null,
+     "where": "libs.cpp:501",
+     "hle_name": "WaitSema"
+    },
+    {
+     "lib": "vblank",
+     "ord": 5,
+     "name": "WaitVblankEnd",
+     "status": "hle",
+     "ret": null,
+     "where": "libs.cpp:937",
+     "hle_name": "WaitVblankEnd"
+    }
+   ]
+  },
+  {
+   "module": "SNDFI",
+   "iopmod": "SNDF_Driver",
+   "version": "2.13",
+   "in_boot_order": true,
+   "exports": {
+    "sndfi": 18
+   },
+   "rows": [
+    {
+     "lib": "intrman",
+     "ord": 17,
+     "name": "CpuSuspendIntr",
+     "status": "hle",
+     "ret": null,
+     "where": "libs.cpp:296",
+     "hle_name": "CpuSuspendIntr"
+    },
+    {
+     "lib": "intrman",
+     "ord": 18,
+     "name": "CpuResumeIntr",
+     "status": "hle",
+     "ret": null,
+     "where": "libs.cpp:302",
+     "hle_name": "CpuResumeIntr"
+    },
+    {
+     "lib": "libsd",
+     "ord": 4,
+     "name": "sceSdInit",
+     "status": "lle",
+     "via": "LIBSD"
+    },
+    {
+     "lib": "libsd",
+     "ord": 5,
+     "name": "sceSdSetParam",
+     "status": "lle",
+     "via": "LIBSD"
+    },
+    {
+     "lib": "libsd",
+     "ord": 6,
+     "name": "sceSdGetParam",
+     "status": "lle",
+     "via": "LIBSD"
+    },
+    {
+     "lib": "libsd",
+     "ord": 7,
+     "name": "sceSdSetSwitch",
+     "status": "lle",
+     "via": "LIBSD"
+    },
+    {
+     "lib": "libsd",
+     "ord": 8,
+     "name": "sceSdGetSwitch",
+     "status": "lle",
+     "via": "LIBSD"
+    },
+    {
+     "lib": "libsd",
+     "ord": 9,
+     "name": "sceSdSetAddr",
+     "status": "lle",
+     "via": "LIBSD"
+    },
+    {
+     "lib": "libsd",
+     "ord": 11,
+     "name": "sceSdSetCoreAttr",
+     "status": "lle",
+     "via": "LIBSD"
+    },
+    {
+     "lib": "libsd",
+     "ord": 17,
+     "name": "sceSdVoiceTrans",
+     "status": "lle",
+     "via": "LIBSD"
+    },
+    {
+     "lib": "libsd",
+     "ord": 19,
+     "name": "sceSdVoiceTransStatus",
+     "status": "lle",
+     "via": "LIBSD"
+    },
+    {
+     "lib": "libsd",
+     "ord": 23,
+     "name": "sceSdSetEffectAttr",
+     "status": "lle",
+     "via": "LIBSD"
+    },
+    {
+     "lib": "loadcore",
+     "ord": 6,
+     "name": "RegisterLibraryEntries",
+     "status": "hle",
+     "ret": null,
+     "where": "libs.cpp:269",
+     "hle_name": "RegisterLibraryEntries"
+    },
+    {
+     "lib": "loadcore",
+     "ord": 7,
+     "name": "ReleaseLibraryEntries",
+     "status": "hle-const",
+     "ret": "0",
+     "where": "libs.cpp:276",
+     "hle_name": "ReleaseLibraryEntries"
+    },
+    {
+     "lib": "sifcmd",
+     "ord": 14,
+     "name": "sceSifInitRpc",
+     "status": "hle-const",
+     "ret": "0",
+     "where": "sif.cpp:396",
+     "hle_name": "sceSifInitRpc"
+    },
+    {
+     "lib": "sifcmd",
+     "ord": 17,
+     "name": "sceSifRegisterRpc",
+     "status": "hle",
+     "ret": null,
+     "where": "sif.cpp:430",
+     "hle_name": "sceSifRegisterRpc"
+    },
+    {
+     "lib": "sifcmd",
+     "ord": 19,
+     "name": "sceSifSetRpcQueue",
+     "status": "hle",
+     "ret": null,
+     "where": "sif.cpp:449",
+     "hle_name": "sceSifSetRpcQueue"
+    },
+    {
+     "lib": "sifcmd",
+     "ord": 22,
+     "name": "sceSifRpcLoop",
+     "status": "hle",
+     "ret": null,
+     "where": "sif.cpp:453",
+     "hle_name": "sceSifRpcLoop"
+    },
+    {
+     "lib": "sifcmd",
+     "ord": 24,
+     "name": "sceSifRemoveRpc",
+     "status": "hle",
+     "ret": null,
+     "where": "sif.cpp:463",
+     "hle_name": "sceSifRemoveRpc"
+    },
+    {
+     "lib": "sifcmd",
+     "ord": 25,
+     "name": "sceSifRemoveRpcQueue",
+     "status": "hle",
+     "ret": null,
+     "where": "sif.cpp:468",
+     "hle_name": "sceSifRemoveRpcQueue"
+    },
+    {
+     "lib": "sifman",
+     "ord": 7,
+     "name": "sceSifSetDma",
+     "status": "hle",
+     "ret": null,
+     "where": "sif.cpp:365",
+     "hle_name": "sceSifSetDma"
+    },
+    {
+     "lib": "sifman",
+     "ord": 8,
+     "name": "sceSifDmaStat",
+     "status": "hle-const",
+     "ret": "-1",
+     "where": "sif.cpp:366",
+     "hle_name": "sceSifDmaStat"
+    },
+    {
+     "lib": "stdio",
+     "ord": 4,
+     "name": "printf",
+     "status": "hle",
+     "ret": null,
+     "where": "libs.cpp:869",
+     "hle_name": "printf"
+    },
+    {
+     "lib": "sysclib",
+     "ord": 12,
+     "name": "memcpy",
+     "status": "hle",
+     "ret": null,
+     "where": "libs.cpp:732",
+     "hle_name": "memcpy"
+    },
+    {
+     "lib": "sysclib",
+     "ord": 14,
+     "name": "memset",
+     "status": "hle",
+     "ret": null,
+     "where": "libs.cpp:734",
+     "hle_name": "memset"
+    },
+    {
+     "lib": "sysmem",
+     "ord": 4,
+     "name": "AllocSysMemory",
+     "status": "hle",
+     "ret": null,
+     "where": "libs.cpp:255",
+     "hle_name": "AllocSysMemory"
+    },
+    {
+     "lib": "sysmem",
+     "ord": 5,
+     "name": "FreeSysMemory",
+     "status": "hle",
+     "ret": null,
+     "where": "libs.cpp:256",
+     "hle_name": "FreeSysMemory"
+    },
+    {
+     "lib": "thbase",
+     "ord": 4,
+     "name": "CreateThread",
+     "status": "hle",
+     "ret": null,
+     "where": "libs.cpp:311",
+     "hle_name": "CreateThread"
+    },
+    {
+     "lib": "thbase",
+     "ord": 5,
+     "name": "DeleteThread",
+     "status": "hle",
+     "ret": null,
+     "where": "libs.cpp:315",
+     "hle_name": "DeleteThread"
+    },
+    {
+     "lib": "thbase",
+     "ord": 6,
+     "name": "StartThread",
+     "status": "hle",
+     "ret": null,
+     "where": "libs.cpp:320",
+     "hle_name": "StartThread"
+    },
+    {
+     "lib": "thbase",
+     "ord": 10,
+     "name": "TerminateThread",
+     "status": "hle",
+     "ret": null,
+     "where": "libs.cpp:357",
+     "hle_name": "TerminateThread"
+    },
+    {
+     "lib": "thbase",
+     "ord": 20,
+     "name": "GetThreadId",
+     "status": "hle",
+     "ret": null,
+     "where": "libs.cpp:394",
+     "hle_name": "GetThreadId"
+    },
+    {
+     "lib": "thbase",
+     "ord": 24,
+     "name": "SleepThread",
+     "status": "hle",
+     "ret": null,
+     "where": "libs.cpp:418",
+     "hle_name": "SleepThread"
+    },
+    {
+     "lib": "thbase",
+     "ord": 26,
+     "name": "iWakeupThread",
+     "status": "hle",
+     "ret": null,
+     "where": "libs.cpp:436",
+     "hle_name": "iWakeupThread"
+    },
+    {
+     "lib": "thbase",
+     "ord": 33,
+     "name": "DelayThread",
+     "status": "hle",
+     "ret": null,
+     "where": "libs.cpp:446",
+     "hle_name": "DelayThread"
+    },
+    {
+     "lib": "thbase",
+     "ord": 34,
+     "name": "GetSystemTime",
+     "status": "hle",
+     "ret": null,
+     "where": "libs.cpp:454",
+     "hle_name": "GetSystemTime"
+    },
+    {
+     "lib": "thbase",
+     "ord": 40,
+     "name": "SysClock2USec",
+     "status": "hle",
+     "ret": null,
+     "where": "libs.cpp:472",
+     "hle_name": "SysClock2USec"
+    },
+    {
+     "lib": "timrman",
+     "ord": 4,
+     "name": "AllocHardTimer",
+     "status": "hle",
+     "ret": null,
+     "where": "libs.cpp:969",
+     "hle_name": "AllocHardTimer"
+    },
+    {
+     "lib": "timrman",
+     "ord": 6,
+     "name": "FreeHardTimer",
+     "status": "hle-const",
+     "ret": "0",
+     "where": "libs.cpp:971",
+     "hle_name": "FreeHardTimer"
+    },
+    {
+     "lib": "timrman",
+     "ord": 20,
+     "name": "SetTimerHandler",
+     "status": "hle",
+     "ret": null,
+     "where": "libs.cpp:981",
+     "hle_name": "SetTimerHandler"
+    },
+    {
+     "lib": "timrman",
+     "ord": 22,
+     "name": "SetupHardTimer",
+     "status": "hle",
+     "ret": null,
+     "where": "libs.cpp:989",
+     "hle_name": "SetupHardTimer"
+    },
+    {
+     "lib": "timrman",
+     "ord": 23,
+     "name": "StartHardTimer",
+     "status": "hle",
+     "ret": null,
+     "where": "libs.cpp:995",
+     "hle_name": "StartHardTimer"
+    }
+   ]
+  },
+  {
+   "module": "MTAPMAN",
+   "iopmod": "multitap_manager",
+   "version": "3.16",
+   "in_boot_order": false,
+   "exports": {
+    "mtapman": 7
+   },
+   "rows": [
+    {
+     "lib": "intrman",
+     "ord": 17,
+     "name": "CpuSuspendIntr",
+     "status": "hle",
+     "ret": null,
+     "where": "libs.cpp:296",
+     "hle_name": "CpuSuspendIntr"
+    },
+    {
+     "lib": "intrman",
+     "ord": 18,
+     "name": "CpuResumeIntr",
+     "status": "hle",
+     "ret": null,
+     "where": "libs.cpp:302",
+     "hle_name": "CpuResumeIntr"
+    },
+    {
+     "lib": "loadcore",
+     "ord": 6,
+     "name": "RegisterLibraryEntries",
+     "status": "hle",
+     "ret": null,
+     "where": "libs.cpp:269",
+     "hle_name": "RegisterLibraryEntries"
+    },
+    {
+     "lib": "loadcore",
+     "ord": 27,
+     "name": "SetRebootTimeLibraryHandlingMode",
+     "status": "hle-const",
+     "ret": "0",
+     "where": "libs.cpp:278",
+     "hle_name": "SetRebootTimeLibraryHandlingMode"
+    },
+    {
+     "lib": "sifcmd",
+     "ord": 14,
+     "name": "sceSifInitRpc",
+     "status": "hle-const",
+     "ret": "0",
+     "where": "sif.cpp:396",
+     "hle_name": "sceSifInitRpc"
+    },
+    {
+     "lib": "sifcmd",
+     "ord": 17,
+     "name": "sceSifRegisterRpc",
+     "status": "hle",
+     "ret": null,
+     "where": "sif.cpp:430",
+     "hle_name": "sceSifRegisterRpc"
+    },
+    {
+     "lib": "sifcmd",
+     "ord": 19,
+     "name": "sceSifSetRpcQueue",
+     "status": "hle",
+     "ret": null,
+     "where": "sif.cpp:449",
+     "hle_name": "sceSifSetRpcQueue"
+    },
+    {
+     "lib": "sifcmd",
+     "ord": 22,
+     "name": "sceSifRpcLoop",
+     "status": "hle",
+     "ret": null,
+     "where": "sif.cpp:453",
+     "hle_name": "sceSifRpcLoop"
+    },
+    {
+     "lib": "sifman",
+     "ord": 5,
+     "name": "sceSifInit",
+     "status": "hle-const",
+     "ret": "0",
+     "where": "sif.cpp:348",
+     "hle_name": "sceSifInit"
+    },
+    {
+     "lib": "sifman",
+     "ord": 7,
+     "name": "sceSifSetDma",
+     "status": "hle",
+     "ret": null,
+     "where": "sif.cpp:365",
+     "hle_name": "sceSifSetDma"
+    },
+    {
+     "lib": "sifman",
+     "ord": 8,
+     "name": "sceSifDmaStat",
+     "status": "hle-const",
+     "ret": "-1",
+     "where": "sif.cpp:366",
+     "hle_name": "sceSifDmaStat"
+    },
+    {
+     "lib": "sifman",
+     "ord": 29,
+     "name": "sceSifCheckInit",
+     "status": "hle-const",
+     "ret": "1",
+     "where": "sif.cpp:367",
+     "hle_name": "sceSifCheckInit"
+    },
+    {
+     "lib": "sio2man",
+     "ord": 48,
+     "name": "sio2_mtap_transfer_init",
+     "status": "lle",
+     "via": "SIO2MAN"
+    },
+    {
+     "lib": "sio2man",
+     "ord": 51,
+     "name": "sio2_transfer2",
+     "status": "lle",
+     "via": "SIO2MAN"
+    },
+    {
+     "lib": "sio2man",
+     "ord": 52,
+     "name": "sio2_transfer_reset2",
+     "status": "lle",
+     "via": "SIO2MAN"
+    },
+    {
+     "lib": "sio2man",
+     "ord": 53,
+     "name": "sio2_mtap_change_slot_set",
+     "status": "lle",
+     "via": "SIO2MAN"
+    },
+    {
+     "lib": "sio2man",
+     "ord": 54,
+     "name": "sio2_mtap_get_slot_max_set",
+     "status": "lle",
+     "via": "SIO2MAN"
+    },
+    {
+     "lib": "sio2man",
+     "ord": 55,
+     "name": "sio2_mtap_get_slot_max2_set",
+     "status": "lle",
+     "via": "SIO2MAN"
+    },
+    {
+     "lib": "sio2man",
+     "ord": 56,
+     "name": "sio2_mtap_update_slots_set",
+     "status": "lle",
+     "via": "SIO2MAN"
+    },
+    {
+     "lib": "stdio",
+     "ord": 4,
+     "name": "printf",
+     "status": "hle",
+     "ret": null,
+     "where": "libs.cpp:869",
+     "hle_name": "printf"
+    },
+    {
+     "lib": "sysclib",
+     "ord": 8,
+     "name": "look_ctype_table",
+     "status": "hle",
+     "ret": null,
+     "where": "libs.cpp:703",
+     "hle_name": "look_ctype_table"
+    },
+    {
+     "lib": "sysclib",
+     "ord": 29,
+     "name": "strncmp",
+     "status": "hle",
+     "ret": null,
+     "where": "libs.cpp:781",
+     "hle_name": "strncmp"
+    },
+    {
+     "lib": "sysclib",
+     "ord": 36,
+     "name": "strtol",
+     "status": "hle",
+     "ret": null,
+     "where": "libs.cpp:820",
+     "hle_name": "strtol"
+    },
+    {
+     "lib": "sysmem",
+     "ord": 14,
+     "name": "Kprintf",
+     "status": "hle",
+     "ret": null,
+     "where": "libs.cpp:262",
+     "hle_name": "Kprintf"
+    },
+    {
+     "lib": "thbase",
+     "ord": 4,
+     "name": "CreateThread",
+     "status": "hle",
+     "ret": null,
+     "where": "libs.cpp:311",
+     "hle_name": "CreateThread"
+    },
+    {
+     "lib": "thbase",
+     "ord": 6,
+     "name": "StartThread",
+     "status": "hle",
+     "ret": null,
+     "where": "libs.cpp:320",
+     "hle_name": "StartThread"
+    },
+    {
+     "lib": "thbase",
+     "ord": 8,
+     "name": "ExitThread",
+     "status": "hle",
+     "ret": null,
+     "where": "libs.cpp:342",
+     "hle_name": "ExitThread"
+    },
+    {
+     "lib": "thbase",
+     "ord": 14,
+     "name": "ChangeThreadPriority",
+     "status": "hle",
+     "ret": null,
+     "where": "libs.cpp:370",
+     "hle_name": "ChangeThreadPriority"
+    },
+    {
+     "lib": "thbase",
+     "ord": 20,
+     "name": "GetThreadId",
+     "status": "hle",
+     "ret": null,
+     "where": "libs.cpp:394",
+     "hle_name": "GetThreadId"
+    },
+    {
+     "lib": "thbase",
+     "ord": 33,
+     "name": "DelayThread",
+     "status": "hle",
+     "ret": null,
+     "where": "libs.cpp:446",
+     "hle_name": "DelayThread"
+    },
+    {
+     "lib": "thevent",
+     "ord": 4,
+     "name": "CreateEventFlag",
+     "status": "hle",
+     "ret": null,
+     "where": "libs.cpp:533",
+     "hle_name": "CreateEventFlag"
+    },
+    {
+     "lib": "thevent",
+     "ord": 6,
+     "name": "SetEventFlag",
+     "status": "hle",
+     "ret": null,
+     "where": "libs.cpp:547",
+     "hle_name": "SetEventFlag"
+    },
+    {
+     "lib": "thevent",
+     "ord": 10,
+     "name": "WaitEventFlag",
+     "status": "hle",
+     "ret": null,
+     "where": "libs.cpp:557",
+     "hle_name": "WaitEventFlag"
+    },
+    {
+     "lib": "thsemap",
+     "ord": 4,
+     "name": "CreateSema",
+     "status": "hle",
+     "ret": null,
+     "where": "libs.cpp:484",
+     "hle_name": "CreateSema"
+    },
+    {
+     "lib": "thsemap",
+     "ord": 5,
+     "name": "DeleteSema",
+     "status": "hle",
+     "ret": null,
+     "where": "libs.cpp:490",
+     "hle_name": "DeleteSema"
+    },
+    {
+     "lib": "thsemap",
+     "ord": 6,
+     "name": "SignalSema",
+     "status": "hle",
+     "ret": null,
+     "where": "libs.cpp:499",
+     "hle_name": "SignalSema"
+    },
+    {
+     "lib": "thsemap",
+     "ord": 8,
+     "name": "WaitSema",
+     "status": "hle",
+     "ret": null,
+     "where": "libs.cpp:501",
+     "hle_name": "WaitSema"
+    }
+   ]
+  }
+ ]
+}

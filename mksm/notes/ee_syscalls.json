@@ -1,0 +1,2669 @@
+{
+ "rows": [
+  {
+   "number": 0,
+   "hex": "0x00",
+   "name": "?",
+   "sites": 1,
+   "jal_callers": 0,
+   "caller_addrs": [],
+   "site_addrs": [
+    "0x0047FA44"
+   ],
+   "handled": false,
+   "status": "MISSING",
+   "analysis": null,
+   "setsyscall": []
+  },
+  {
+   "number": 1,
+   "hex": "0x01",
+   "name": "ResetEE",
+   "sites": 1,
+   "jal_callers": 0,
+   "caller_addrs": [],
+   "site_addrs": [
+    "0x0047FA54"
+   ],
+   "handled": false,
+   "status": "MISSING",
+   "analysis": null,
+   "setsyscall": []
+  },
+  {
+   "number": 2,
+   "hex": "0x02",
+   "name": "SetGsCrt",
+   "sites": 1,
+   "jal_callers": 2,
+   "caller_addrs": [
+    "0x002061C0",
+    "0x00206238"
+   ],
+   "site_addrs": [
+    "0x0047FA64"
+   ],
+   "handled": true,
+   "status": "native",
+   "analysis": null,
+   "setsyscall": []
+  },
+  {
+   "number": 3,
+   "hex": "0x03",
+   "name": "?",
+   "sites": 1,
+   "jal_callers": 0,
+   "caller_addrs": [],
+   "site_addrs": [
+    "0x0047FA74"
+   ],
+   "handled": false,
+   "status": "MISSING",
+   "analysis": null,
+   "setsyscall": []
+  },
+  {
+   "number": 4,
+   "hex": "0x04",
+   "name": "KExit",
+   "sites": 1,
+   "jal_callers": 1,
+   "caller_addrs": [
+    "0x004865D8"
+   ],
+   "site_addrs": [
+    "0x0047FA84"
+   ],
+   "handled": true,
+   "status": "native",
+   "analysis": null,
+   "setsyscall": []
+  },
+  {
+   "number": 5,
+   "hex": "0x05",
+   "name": "ResumeIntrDispatch",
+   "sites": 1,
+   "jal_callers": 0,
+   "caller_addrs": [],
+   "site_addrs": [
+    "0x0047FA94"
+   ],
+   "handled": false,
+   "status": "MISSING",
+   "analysis": null,
+   "setsyscall": []
+  },
+  {
+   "number": 6,
+   "hex": "0x06",
+   "name": "_LoadExecPS2",
+   "sites": 1,
+   "jal_callers": 1,
+   "caller_addrs": [
+    "0x004865B0"
+   ],
+   "site_addrs": [
+    "0x0047FAA4"
+   ],
+   "handled": true,
+   "status": "native",
+   "analysis": null,
+   "setsyscall": []
+  },
+  {
+   "number": 7,
+   "hex": "0x07",
+   "name": "_ExecPS2",
+   "sites": 1,
+   "jal_callers": 0,
+   "caller_addrs": [],
+   "site_addrs": [
+    "0x0047FAB4"
+   ],
+   "handled": true,
+   "status": "native",
+   "analysis": null,
+   "setsyscall": []
+  },
+  {
+   "number": 8,
+   "hex": "0x08",
+   "name": "ResumeT3IntrDispatch",
+   "sites": 1,
+   "jal_callers": 0,
+   "caller_addrs": [],
+   "site_addrs": [
+    "0x0047FAC4"
+   ],
+   "handled": false,
+   "status": "MISSING",
+   "analysis": null,
+   "setsyscall": []
+  },
+  {
+   "number": 9,
+   "hex": "0x09",
+   "name": "RFU009",
+   "sites": 1,
+   "jal_callers": 0,
+   "caller_addrs": [],
+   "site_addrs": [
+    "0x0047FAD4"
+   ],
+   "handled": false,
+   "status": "MISSING",
+   "analysis": null,
+   "setsyscall": []
+  },
+  {
+   "number": 10,
+   "hex": "0x0A",
+   "name": "AddSbusIntcHandler",
+   "sites": 1,
+   "jal_callers": 0,
+   "caller_addrs": [],
+   "site_addrs": [
+    "0x0047FAE4"
+   ],
+   "handled": false,
+   "status": "MISSING",
+   "analysis": null,
+   "setsyscall": []
+  },
+  {
+   "number": 11,
+   "hex": "0x0B",
+   "name": "RemoveSbusIntcHandler",
+   "sites": 1,
+   "jal_callers": 0,
+   "caller_addrs": [],
+   "site_addrs": [
+    "0x0047FAF4"
+   ],
+   "handled": false,
+   "status": "MISSING",
+   "analysis": null,
+   "setsyscall": []
+  },
+  {
+   "number": 12,
+   "hex": "0x0C",
+   "name": "Interrupt2Iop",
+   "sites": 1,
+   "jal_callers": 0,
+   "caller_addrs": [],
+   "site_addrs": [
+    "0x0047FB04"
+   ],
+   "handled": false,
+   "status": "MISSING",
+   "analysis": null,
+   "setsyscall": []
+  },
+  {
+   "number": 13,
+   "hex": "0x0D",
+   "name": "SetVTLBRefillHandler",
+   "sites": 1,
+   "jal_callers": 0,
+   "caller_addrs": [],
+   "site_addrs": [
+    "0x0047FB14"
+   ],
+   "handled": false,
+   "status": "MISSING",
+   "analysis": null,
+   "setsyscall": []
+  },
+  {
+   "number": 14,
+   "hex": "0x0E",
+   "name": "SetVCommonHandler",
+   "sites": 1,
+   "jal_callers": 0,
+   "caller_addrs": [],
+   "site_addrs": [
+    "0x0047FB24"
+   ],
+   "handled": false,
+   "status": "MISSING",
+   "analysis": null,
+   "setsyscall": []
+  },
+  {
+   "number": 15,
+   "hex": "0x0F",
+   "name": "SetVInterruptHandler",
+   "sites": 1,
+   "jal_callers": 0,
+   "caller_addrs": [],
+   "site_addrs": [
+    "0x0047FB34"
+   ],
+   "handled": false,
+   "status": "MISSING",
+   "analysis": null,
+   "setsyscall": []
+  },
+  {
+   "number": 16,
+   "hex": "0x10",
+   "name": "AddIntcHandler",
+   "sites": 2,
+   "jal_callers": 5,
+   "caller_addrs": [
+    "0x0024D564",
+    "0x0024D5CC",
+    "0x00383E20",
+    "0x00410C58",
+    "0x00486870"
+   ],
+   "site_addrs": [
+    "0x0047FB44",
+    "0x0047FB54"
+   ],
+   "handled": true,
+   "status": "native",
+   "analysis": null,
+   "setsyscall": []
+  },
+  {
+   "number": 17,
+   "hex": "0x11",
+   "name": "RemoveIntcHandler",
+   "sites": 1,
+   "jal_callers": 4,
+   "caller_addrs": [
+    "0x00206190",
+    "0x00383DE4",
+    "0x00383E0C",
+    "0x00499FF0"
+   ],
+   "site_addrs": [
+    "0x0047FB64"
+   ],
+   "handled": true,
+   "status": "native",
+   "analysis": null,
+   "setsyscall": []
+  },
+  {
+   "number": 18,
+   "hex": "0x12",
+   "name": "AddDmacHandler",
+   "sites": 2,
+   "jal_callers": 3,
+   "caller_addrs": [
+    "0x00469930",
+    "0x00469B70",
+    "0x004828F0"
+   ],
+   "site_addrs": [
+    "0x0047FB74",
+    "0x0047FB84"
+   ],
+   "handled": true,
+   "status": "native",
+   "analysis": null,
+   "setsyscall": []
+  },
+  {
+   "number": 19,
+   "hex": "0x13",
+   "name": "RemoveDmacHandler",
+   "sites": 1,
+   "jal_callers": 3,
+   "caller_addrs": [
+    "0x00469A38",
+    "0x00469D50",
+    "0x00482A00"
+   ],
+   "site_addrs": [
+    "0x0047FB94"
+   ],
+   "handled": true,
+   "status": "native",
+   "analysis": null,
+   "setsyscall": []
+  },
+  {
+   "number": 20,
+   "hex": "0x14",
+   "name": "_EnableIntc",
+   "sites": 1,
+   "jal_callers": 1,
+   "caller_addrs": [
+    "0x00480910"
+   ],
+   "site_addrs": [
+    "0x0047FBA4"
+   ],
+   "handled": true,
+   "status": "native",
+   "analysis": null,
+   "setsyscall": []
+  },
+  {
+   "number": 21,
+   "hex": "0x15",
+   "name": "_DisableIntc",
+   "sites": 1,
+   "jal_callers": 1,
+   "caller_addrs": [
+    "0x004808A8"
+   ],
+   "site_addrs": [
+    "0x0047FBB4"
+   ],
+   "handled": true,
+   "status": "native",
+   "analysis": null,
+   "setsyscall": []
+  },
+  {
+   "number": 22,
+   "hex": "0x16",
+   "name": "_EnableDmac",
+   "sites": 1,
+   "jal_callers": 1,
+   "caller_addrs": [
+    "0x004809E0"
+   ],
+   "site_addrs": [
+    "0x0047FBC4"
+   ],
+   "handled": true,
+   "status": "native",
+   "analysis": null,
+   "setsyscall": []
+  },
+  {
+   "number": 23,
+   "hex": "0x17",
+   "name": "_DisableDmac",
+   "sites": 1,
+   "jal_callers": 1,
+   "caller_addrs": [
+    "0x00480978"
+   ],
+   "site_addrs": [
+    "0x0047FBD4"
+   ],
+   "handled": true,
+   "status": "native",
+   "analysis": null,
+   "setsyscall": []
+  },
+  {
+   "number": -26,
+   "hex": "-0x1A",
+   "name": "_iEnableIntc",
+   "sites": 1,
+   "jal_callers": 0,
+   "caller_addrs": [],
+   "site_addrs": [
+    "0x0047FC04"
+   ],
+   "handled": true,
+   "status": "native",
+   "analysis": null,
+   "setsyscall": []
+  },
+  {
+   "number": -27,
+   "hex": "-0x1B",
+   "name": "_iDisableIntc",
+   "sites": 1,
+   "jal_callers": 0,
+   "caller_addrs": [],
+   "site_addrs": [
+    "0x0047FC14"
+   ],
+   "handled": true,
+   "status": "native",
+   "analysis": null,
+   "setsyscall": []
+  },
+  {
+   "number": -28,
+   "hex": "-0x1C",
+   "name": "_iEnableDmac",
+   "sites": 1,
+   "jal_callers": 0,
+   "caller_addrs": [],
+   "site_addrs": [
+    "0x0047FC24"
+   ],
+   "handled": true,
+   "status": "native",
+   "analysis": null,
+   "setsyscall": []
+  },
+  {
+   "number": -29,
+   "hex": "-0x1D",
+   "name": "_iDisableDmac",
+   "sites": 1,
+   "jal_callers": 0,
+   "caller_addrs": [],
+   "site_addrs": [
+    "0x0047FC34"
+   ],
+   "handled": true,
+   "status": "native",
+   "analysis": null,
+   "setsyscall": []
+  },
+  {
+   "number": 32,
+   "hex": "0x20",
+   "name": "CreateThread",
+   "sites": 1,
+   "jal_callers": 5,
+   "caller_addrs": [
+    "0x00414AFC",
+    "0x00414BAC",
+    "0x00414C34",
+    "0x00414CBC",
+    "0x00480B70"
+   ],
+   "site_addrs": [
+    "0x0047FC64"
+   ],
+   "handled": true,
+   "status": "native",
+   "analysis": null,
+   "setsyscall": []
+  },
+  {
+   "number": 33,
+   "hex": "0x21",
+   "name": "DeleteThread",
+   "sites": 1,
+   "jal_callers": 0,
+   "caller_addrs": [],
+   "site_addrs": [
+    "0x0047FC74"
+   ],
+   "handled": true,
+   "status": "native",
+   "analysis": null,
+   "setsyscall": []
+  },
+  {
+   "number": 34,
+   "hex": "0x22",
+   "name": "StartThread",
+   "sites": 1,
+   "jal_callers": 1,
+   "caller_addrs": [
+    "0x00480EA0"
+   ],
+   "site_addrs": [
+    "0x0047FC84"
+   ],
+   "handled": true,
+   "status": "native",
+   "analysis": null,
+   "setsyscall": []
+  },
+  {
+   "number": 35,
+   "hex": "0x23",
+   "name": "ExitThread",
+   "sites": 2,
+   "jal_callers": 0,
+   "caller_addrs": [],
+   "site_addrs": [
+    "0x0011C2BC",
+    "0x0047FC94"
+   ],
+   "handled": true,
+   "status": "native",
+   "analysis": null,
+   "setsyscall": []
+  },
+  {
+   "number": 36,
+   "hex": "0x24",
+   "name": "ExitDeleteThread",
+   "sites": 1,
+   "jal_callers": 4,
+   "caller_addrs": [
+    "0x004145F8",
+    "0x004146FC",
+    "0x004147F0",
+    "0x00414928"
+   ],
+   "site_addrs": [
+    "0x0047FCA4"
+   ],
+   "handled": true,
+   "status": "native",
+   "analysis": null,
+   "setsyscall": []
+  },
+  {
+   "number": 37,
+   "hex": "0x25",
+   "name": "TerminateThread",
+   "sites": 1,
+   "jal_callers": 0,
+   "caller_addrs": [],
+   "site_addrs": [
+    "0x0047FCB4"
+   ],
+   "handled": true,
+   "status": "native",
+   "analysis": null,
+   "setsyscall": []
+  },
+  {
+   "number": -38,
+   "hex": "-0x26",
+   "name": "iTerminateThread",
+   "sites": 1,
+   "jal_callers": 0,
+   "caller_addrs": [],
+   "site_addrs": [
+    "0x0047FCC4"
+   ],
+   "handled": true,
+   "status": "native",
+   "analysis": null,
+   "setsyscall": []
+  },
+  {
+   "number": 39,
+   "hex": "0x27",
+   "name": "DisableDispatchThread",
+   "sites": 1,
+   "jal_callers": 0,
+   "caller_addrs": [],
+   "site_addrs": [
+    "0x0047FCD4"
+   ],
+   "handled": false,
+   "status": "MISSING",
+   "analysis": null,
+   "setsyscall": []
+  },
+  {
+   "number": 40,
+   "hex": "0x28",
+   "name": "EnableDispatchThread",
+   "sites": 1,
+   "jal_callers": 0,
+   "caller_addrs": [],
+   "site_addrs": [
+    "0x0047FCE4"
+   ],
+   "handled": false,
+   "status": "MISSING",
+   "analysis": null,
+   "setsyscall": []
+  },
+  {
+   "number": 41,
+   "hex": "0x29",
+   "name": "ChangeThreadPriority",
+   "sites": 1,
+   "jal_callers": 15,
+   "caller_addrs": [
+    "0x004143C4",
+    "0x00414458",
+    "0x004144D0",
+    "0x00414534",
+    "0x00414B44",
+    "0x00414BD0",
+    "0x00414C58",
+    "0x00414CE0",
+    "0x00414E8C",
+    "0x00414F78",
+    "0x00415018",
+    "0x004150E8",
+    "0x00415210",
+    "0x004152F0",
+    "0x00480BB8"
+   ],
+   "site_addrs": [
+    "0x0047FCF4"
+   ],
+   "handled": true,
+   "status": "native",
+   "analysis": null,
+   "setsyscall": []
+  },
+  {
+   "number": -42,
+   "hex": "-0x2A",
+   "name": "iChangeThreadPriority",
+   "sites": 1,
+   "jal_callers": 0,
+   "caller_addrs": [],
+   "site_addrs": [
+    "0x0047FD04"
+   ],
+   "handled": true,
+   "status": "native",
+   "analysis": null,
+   "setsyscall": []
+  },
+  {
+   "number": 43,
+   "hex": "0x2B",
+   "name": "RotateThreadReadyQueue",
+   "sites": 1,
+   "jal_callers": 1,
+   "caller_addrs": [
+    "0x00480AC0"
+   ],
+   "site_addrs": [
+    "0x0047FD14"
+   ],
+   "handled": true,
+   "status": "native",
+   "analysis": null,
+   "setsyscall": []
+  },
+  {
+   "number": -44,
+   "hex": "-0x2C",
+   "name": "_iRotateThreadReadyQueue",
+   "sites": 1,
+   "jal_callers": 0,
+   "caller_addrs": [],
+   "site_addrs": [
+    "0x0047FD24"
+   ],
+   "handled": true,
+   "status": "native",
+   "analysis": null,
+   "setsyscall": []
+  },
+  {
+   "number": 45,
+   "hex": "0x2D",
+   "name": "ReleaseWaitThread",
+   "sites": 1,
+   "jal_callers": 0,
+   "caller_addrs": [],
+   "site_addrs": [
+    "0x0047FD34"
+   ],
+   "handled": true,
+   "status": "native",
+   "analysis": null,
+   "setsyscall": []
+  },
+  {
+   "number": -46,
+   "hex": "-0x2E",
+   "name": "iReleaseWaitThread",
+   "sites": 1,
+   "jal_callers": 0,
+   "caller_addrs": [],
+   "site_addrs": [
+    "0x0047FD44"
+   ],
+   "handled": true,
+   "status": "native",
+   "analysis": null,
+   "setsyscall": []
+  },
+  {
+   "number": 47,
+   "hex": "0x2F",
+   "name": "GetThreadId",
+   "sites": 1,
+   "jal_callers": 5,
+   "caller_addrs": [
+    "0x004143AC",
+    "0x00414448",
+    "0x00414E40",
+    "0x00476D70",
+    "0x00480BAC"
+   ],
+   "site_addrs": [
+    "0x0047FD54"
+   ],
+   "handled": true,
+   "status": "native",
+   "analysis": null,
+   "setsyscall": []
+  },
+  {
+   "number": -47,
+   "hex": "-0x2F",
+   "name": "GetThreadId",
+   "sites": 1,
+   "jal_callers": 0,
+   "caller_addrs": [],
+   "site_addrs": [
+    "0x00480BF0"
+   ],
+   "handled": true,
+   "status": "native",
+   "analysis": null,
+   "setsyscall": []
+  },
+  {
+   "number": 48,
+   "hex": "0x30",
+   "name": "ReferThreadStatus",
+   "sites": 1,
+   "jal_callers": 6,
+   "caller_addrs": [
+    "0x0041499C",
+    "0x00414A0C",
+    "0x00414A74",
+    "0x00414E54",
+    "0x004155B0",
+    "0x00480D80"
+   ],
+   "site_addrs": [
+    "0x0047FD64"
+   ],
+   "handled": true,
+   "status": "native",
+   "analysis": null,
+   "setsyscall": []
+  },
+  {
+   "number": -49,
+   "hex": "-0x31",
+   "name": "iReferThreadStatus",
+   "sites": 1,
+   "jal_callers": 1,
+   "caller_addrs": [
+    "0x0041494C"
+   ],
+   "site_addrs": [
+    "0x0047FD74"
+   ],
+   "handled": true,
+   "status": "native",
+   "analysis": null,
+   "setsyscall": []
+  },
+  {
+   "number": 50,
+   "hex": "0x32",
+   "name": "SleepThread",
+   "sites": 1,
+   "jal_callers": 1,
+   "caller_addrs": [
+    "0x004149E4"
+   ],
+   "site_addrs": [
+    "0x0047FD84"
+   ],
+   "handled": true,
+   "status": "native",
+   "analysis": null,
+   "setsyscall": []
+  },
+  {
+   "number": 51,
+   "hex": "0x33",
+   "name": "WakeupThread",
+   "sites": 1,
+   "jal_callers": 7,
+   "caller_addrs": [
+    "0x004149C0",
+    "0x00415020",
+    "0x004150F0",
+    "0x00415218",
+    "0x004152F8",
+    "0x004155D4",
+    "0x00480AB0"
+   ],
+   "site_addrs": [
+    "0x0047FD94"
+   ],
+   "handled": true,
+   "status": "native",
+   "analysis": null,
+   "setsyscall": []
+  },
+  {
+   "number": -52,
+   "hex": "-0x34",
+   "name": "_iWakeupThread",
+   "sites": 1,
+   "jal_callers": 1,
+   "caller_addrs": [
+    "0x00480C00"
+   ],
+   "site_addrs": [
+    "0x0047FDA4"
+   ],
+   "handled": true,
+   "status": "native",
+   "analysis": null,
+   "setsyscall": []
+  },
+  {
+   "number": 53,
+   "hex": "0x35",
+   "name": "CancelWakeupThread",
+   "sites": 1,
+   "jal_callers": 0,
+   "caller_addrs": [],
+   "site_addrs": [
+    "0x0047FDB4"
+   ],
+   "handled": true,
+   "status": "native",
+   "analysis": null,
+   "setsyscall": []
+  },
+  {
+   "number": -54,
+   "hex": "-0x36",
+   "name": "iCancelWakeupThread",
+   "sites": 1,
+   "jal_callers": 0,
+   "caller_addrs": [],
+   "site_addrs": [
+    "0x0047FDC4"
+   ],
+   "handled": true,
+   "status": "native",
+   "analysis": null,
+   "setsyscall": []
+  },
+  {
+   "number": 55,
+   "hex": "0x37",
+   "name": "SuspendThread",
+   "sites": 1,
+   "jal_callers": 2,
+   "caller_addrs": [
+    "0x00414A94",
+    "0x00480AD0"
+   ],
+   "site_addrs": [
+    "0x0047FDD4"
+   ],
+   "handled": true,
+   "status": "native",
+   "analysis": null,
+   "setsyscall": []
+  },
+  {
+   "number": -56,
+   "hex": "-0x38",
+   "name": "_iSuspendThread",
+   "sites": 1,
+   "jal_callers": 0,
+   "caller_addrs": [],
+   "site_addrs": [
+    "0x0047FDE4"
+   ],
+   "handled": true,
+   "status": "native",
+   "analysis": null,
+   "setsyscall": []
+  },
+  {
+   "number": 57,
+   "hex": "0x39",
+   "name": "ResumeThread",
+   "sites": 1,
+   "jal_callers": 1,
+   "caller_addrs": [
+    "0x00414A30"
+   ],
+   "site_addrs": [
+    "0x0047FDF4"
+   ],
+   "handled": true,
+   "status": "native",
+   "analysis": null,
+   "setsyscall": []
+  },
+  {
+   "number": -58,
+   "hex": "-0x3A",
+   "name": "iResumeThread",
+   "sites": 1,
+   "jal_callers": 0,
+   "caller_addrs": [],
+   "site_addrs": [
+    "0x0047FE04"
+   ],
+   "handled": true,
+   "status": "native",
+   "analysis": null,
+   "setsyscall": []
+  },
+  {
+   "number": 59,
+   "hex": "0x3B",
+   "name": "RFU059",
+   "sites": 1,
+   "jal_callers": 0,
+   "caller_addrs": [],
+   "site_addrs": [
+    "0x0047FE14"
+   ],
+   "handled": false,
+   "status": "MISSING",
+   "analysis": null,
+   "setsyscall": []
+  },
+  {
+   "number": 60,
+   "hex": "0x3C",
+   "name": "RFU060",
+   "sites": 2,
+   "jal_callers": 0,
+   "caller_addrs": [],
+   "site_addrs": [
+    "0x0011C230",
+    "0x0047FE24"
+   ],
+   "handled": true,
+   "status": "native",
+   "analysis": null,
+   "setsyscall": []
+  },
+  {
+   "number": 61,
+   "hex": "0x3D",
+   "name": "RFU061",
+   "sites": 2,
+   "jal_callers": 0,
+   "caller_addrs": [],
+   "site_addrs": [
+    "0x0011C24C",
+    "0x0047FE34"
+   ],
+   "handled": true,
+   "status": "native",
+   "analysis": null,
+   "setsyscall": []
+  },
+  {
+   "number": 62,
+   "hex": "0x3E",
+   "name": "EndOfHeap",
+   "sites": 1,
+   "jal_callers": 1,
+   "caller_addrs": [
+    "0x00480580"
+   ],
+   "site_addrs": [
+    "0x0047FE44"
+   ],
+   "handled": true,
+   "status": "native",
+   "analysis": null,
+   "setsyscall": []
+  },
+  {
+   "number": 63,
+   "hex": "0x3F",
+   "name": "?",
+   "sites": 1,
+   "jal_callers": 0,
+   "caller_addrs": [],
+   "site_addrs": [
+    "0x0047FE54"
+   ],
+   "handled": false,
+   "status": "MISSING",
+   "analysis": null,
+   "setsyscall": []
+  },
+  {
+   "number": 64,
+   "hex": "0x40",
+   "name": "CreateSema",
+   "sites": 1,
+   "jal_callers": 23,
+   "caller_addrs": [
+    "0x00385AF0",
+    "0x00385B08",
+    "0x00385B20",
+    "0x00385B3C",
+    "0x00386924",
+    "0x00386950",
+    "0x0044BDAC",
+    "0x00480B2C",
+    "0x00480CC8",
+    "0x0048355C",
+    "0x00483818",
+    "0x00483950",
+    "0x00483968",
+    "0x00483F68",
+    "0x00484420",
+    "0x004845D8",
+    "0x0048476C",
+    "0x004849B4",
+    "0x00484C24",
+    "0x004850DC",
+    "0x004852BC",
+    "0x00486054",
+    "0x00486064"
+   ],
+   "site_addrs": [
+    "0x0047FE64"
+   ],
+   "handled": true,
+   "status": "native",
+   "analysis": null,
+   "setsyscall": []
+  },
+  {
+   "number": 65,
+   "hex": "0x41",
+   "name": "DeleteSema",
+   "sites": 1,
+   "jal_callers": 38,
+   "caller_addrs": [
+    "0x00385BB0",
+    "0x00385BBC",
+    "0x00385BC8",
+    "0x00385BD0",
+    "0x00386968",
+    "0x0044C72C",
+    "0x00480B84",
+    "0x00480D10",
+    "0x00480D28",
+    "0x004835AC",
+    "0x004835C4",
+    "0x00483864",
+    "0x00483884",
+    "0x00484470",
+    "0x0048449C",
+    "0x004844B4",
+    "0x00484638",
+    "0x00484668",
+    "0x00484680",
+    "0x00484864",
+    "0x00484890",
+    "0x004848A8",
+    "0x004848C0",
+    "0x00484AD0",
+    "0x00484AF8",
+    "0x00484B10",
+    "0x00484B28",
+    "0x00484D90",
+    "0x00484DBC",
+    "0x00484DD4",
+    "0x00484DEC",
+    "0x00485138",
+    "0x00485164",
+    "0x0048517C",
+    "0x004853B4",
+    "0x004853E0",
+    "0x004853F8",
+    "0x00485410"
+   ],
+   "site_addrs": [
+    "0x0047FE74"
+   ],
+   "handled": true,
+   "status": "native",
+   "analysis": null,
+   "setsyscall": []
+  },
+  {
+   "number": 66,
+   "hex": "0x42",
+   "name": "SignalSema",
+   "sites": 1,
+   "jal_callers": 51,
+   "caller_addrs": [
+    "0x00385B98",
+    "0x00385EE4",
+    "0x00385FA0",
+    "0x0038607C",
+    "0x003861B8",
+    "0x003861D4",
+    "0x0038637C",
+    "0x003867D0",
+    "0x003867EC",
+    "0x00386880",
+    "0x003868B4",
+    "0x00386A68",
+    "0x00386B8C",
+    "0x00386BFC",
+    "0x00386D00",
+    "0x00386EB8",
+    "0x00387038",
+    "0x0038710C",
+    "0x003872CC",
+    "0x00387398",
+    "0x0038741C",
+    "0x00387504",
+    "0x003875D0",
+    "0x003876A4",
+    "0x0044BFFC",
+    "0x0044C050",
+    "0x0044C0B8",
+    "0x0044C11C",
+    "0x0044C29C",
+    "0x0044C3BC",
+    "0x0044C6B8",
+    "0x0044C78C",
+    "0x00467AD4",
+    "0x00467B88",
+    "0x00467BA4",
+    "0x00467C30",
+    "0x00467C58",
+    "0x00476DEC",
+    "0x004839DC",
+    "0x004839F8",
+    "0x00483B38",
+    "0x00483B54",
+    "0x00483FBC",
+    "0x00484148",
+    "0x004844D4",
+    "0x00484504",
+    "0x00484810",
+    "0x00484A54",
+    "0x00484CC4",
+    "0x00484F50",
+    "0x00485360"
+   ],
+   "site_addrs": [
+    "0x0047FE84"
+   ],
+   "handled": true,
+   "status": "native",
+   "analysis": null,
+   "setsyscall": []
+  },
+  {
+   "number": -67,
+   "hex": "-0x43",
+   "name": "iSignalSema",
+   "sites": 1,
+   "jal_callers": 9,
+   "caller_addrs": [
+    "0x00385974",
+    "0x0038599C",
+    "0x00386B04",
+    "0x00386DE0",
+    "0x00387190",
+    "0x00480C58",
+    "0x00480EC8",
+    "0x00483238",
+    "0x00483F14"
+   ],
+   "site_addrs": [
+    "0x0047FE94"
+   ],
+   "handled": true,
+   "status": "native",
+   "analysis": null,
+   "setsyscall": []
+  },
+  {
+   "number": 68,
+   "hex": "0x44",
+   "name": "WaitSema",
+   "sites": 1,
+   "jal_callers": 32,
+   "caller_addrs": [
+    "0x0038698C",
+    "0x003870D4",
+    "0x0044BF48",
+    "0x0044C020",
+    "0x0044C070",
+    "0x0044C108",
+    "0x0044C2E8",
+    "0x0044C400",
+    "0x0044C758",
+    "0x00476D90",
+    "0x00480A58",
+    "0x00480D20",
+    "0x004835BC",
+    "0x0048387C",
+    "0x004839A8",
+    "0x00483B24",
+    "0x00483F9C",
+    "0x004840F0",
+    "0x004844AC",
+    "0x004844C8",
+    "0x004844E8",
+    "0x00484678",
+    "0x00484794",
+    "0x004848B8",
+    "0x004849DC",
+    "0x00484B20",
+    "0x00484C4C",
+    "0x00484DE4",
+    "0x00484EEC",
+    "0x00485174",
+    "0x004852E4",
+    "0x00485408"
+   ],
+   "site_addrs": [
+    "0x0047FEA4"
+   ],
+   "handled": true,
+   "status": "native",
+   "analysis": null,
+   "setsyscall": []
+  },
+  {
+   "number": 69,
+   "hex": "0x45",
+   "name": "PollSema",
+   "sites": 1,
+   "jal_callers": 13,
+   "caller_addrs": [
+    "0x00385D24",
+    "0x00386024",
+    "0x00386324",
+    "0x00386B68",
+    "0x00386CAC",
+    "0x00386E34",
+    "0x00386F48",
+    "0x003870BC",
+    "0x003871F0",
+    "0x00387374",
+    "0x003874AC",
+    "0x0038757C",
+    "0x0038764C"
+   ],
+   "site_addrs": [
+    "0x0047FEB4"
+   ],
+   "handled": true,
+   "status": "native",
+   "analysis": null,
+   "setsyscall": []
+  },
+  {
+   "number": -70,
+   "hex": "-0x46",
+   "name": "iPollSema",
+   "sites": 1,
+   "jal_callers": 0,
+   "caller_addrs": [],
+   "site_addrs": [
+    "0x0047FEC4"
+   ],
+   "handled": true,
+   "status": "native",
+   "analysis": null,
+   "setsyscall": []
+  },
+  {
+   "number": 71,
+   "hex": "0x47",
+   "name": "ReferSemaStatus",
+   "sites": 1,
+   "jal_callers": 0,
+   "caller_addrs": [],
+   "site_addrs": [
+    "0x0047FED4"
+   ],
+   "handled": true,
+   "status": "native",
+   "analysis": null,
+   "setsyscall": []
+  },
+  {
+   "number": -72,
+   "hex": "-0x48",
+   "name": "iReferSemaStatus",
+   "sites": 1,
+   "jal_callers": 0,
+   "caller_addrs": [],
+   "site_addrs": [
+    "0x0047FEE4"
+   ],
+   "handled": true,
+   "status": "native",
+   "analysis": null,
+   "setsyscall": []
+  },
+  {
+   "number": 73,
+   "hex": "0x49",
+   "name": "iDeleteSema",
+   "sites": 1,
+   "jal_callers": 0,
+   "caller_addrs": [],
+   "site_addrs": [
+    "0x0047FEF4"
+   ],
+   "handled": false,
+   "status": "MISSING",
+   "analysis": null,
+   "setsyscall": []
+  },
+  {
+   "number": 74,
+   "hex": "0x4A",
+   "name": "SetOsdConfigParam",
+   "sites": 1,
+   "jal_callers": 2,
+   "caller_addrs": [
+    "0x00486318",
+    "0x00486328"
+   ],
+   "site_addrs": [
+    "0x0047FF04"
+   ],
+   "handled": true,
+   "status": "native",
+   "analysis": null,
+   "setsyscall": []
+  },
+  {
+   "number": 75,
+   "hex": "0x4B",
+   "name": "GetOsdConfigParam",
+   "sites": 1,
+   "jal_callers": 4,
+   "caller_addrs": [
+    "0x0040C868",
+    "0x0040C888",
+    "0x004862F4",
+    "0x00486320"
+   ],
+   "site_addrs": [
+    "0x0047FF14"
+   ],
+   "handled": true,
+   "status": "native",
+   "analysis": null,
+   "setsyscall": []
+  },
+  {
+   "number": 76,
+   "hex": "0x4C",
+   "name": "GetGsHParam",
+   "sites": 1,
+   "jal_callers": 0,
+   "caller_addrs": [],
+   "site_addrs": [
+    "0x0047FF24"
+   ],
+   "handled": false,
+   "status": "MISSING",
+   "analysis": null,
+   "setsyscall": []
+  },
+  {
+   "number": 77,
+   "hex": "0x4D",
+   "name": "GetGsVParam",
+   "sites": 1,
+   "jal_callers": 0,
+   "caller_addrs": [],
+   "site_addrs": [
+    "0x0047FF34"
+   ],
+   "handled": false,
+   "status": "MISSING",
+   "analysis": null,
+   "setsyscall": []
+  },
+  {
+   "number": 78,
+   "hex": "0x4E",
+   "name": "SetGsHParam",
+   "sites": 1,
+   "jal_callers": 0,
+   "caller_addrs": [],
+   "site_addrs": [
+    "0x0047FF44"
+   ],
+   "handled": false,
+   "status": "MISSING",
+   "analysis": null,
+   "setsyscall": []
+  },
+  {
+   "number": 79,
+   "hex": "0x4F",
+   "name": "SetGsVParam",
+   "sites": 1,
+   "jal_callers": 0,
+   "caller_addrs": [],
+   "site_addrs": [
+    "0x0047FF54"
+   ],
+   "handled": false,
+   "status": "MISSING",
+   "analysis": null,
+   "setsyscall": []
+  },
+  {
+   "number": 80,
+   "hex": "0x50",
+   "name": "CreateEventFlag",
+   "sites": 1,
+   "jal_callers": 0,
+   "caller_addrs": [],
+   "site_addrs": [
+    "0x0047FF64"
+   ],
+   "handled": false,
+   "status": "MISSING",
+   "analysis": null,
+   "setsyscall": []
+  },
+  {
+   "number": 81,
+   "hex": "0x51",
+   "name": "DeleteEventFlag",
+   "sites": 1,
+   "jal_callers": 0,
+   "caller_addrs": [],
+   "site_addrs": [
+    "0x0047FF74"
+   ],
+   "handled": false,
+   "status": "MISSING",
+   "analysis": null,
+   "setsyscall": []
+  },
+  {
+   "number": 82,
+   "hex": "0x52",
+   "name": "SetEventFlag",
+   "sites": 1,
+   "jal_callers": 0,
+   "caller_addrs": [],
+   "site_addrs": [
+    "0x0047FF84"
+   ],
+   "handled": false,
+   "status": "MISSING",
+   "analysis": null,
+   "setsyscall": []
+  },
+  {
+   "number": -83,
+   "hex": "-0x53",
+   "name": "iSetEventFlag",
+   "sites": 1,
+   "jal_callers": 0,
+   "caller_addrs": [],
+   "site_addrs": [
+    "0x0047FF94"
+   ],
+   "handled": false,
+   "status": "MISSING",
+   "analysis": null,
+   "setsyscall": []
+  },
+  {
+   "number": 84,
+   "hex": "0x54",
+   "name": "xlaunch",
+   "sites": 1,
+   "jal_callers": 0,
+   "caller_addrs": [],
+   "site_addrs": [
+    "0x0047FFA4"
+   ],
+   "handled": false,
+   "status": "guest",
+   "analysis": null,
+   "setsyscall": [
+    "text@0x005653D8->0x00487C00"
+   ]
+  },
+  {
+   "number": -84,
+   "hex": "-0x54",
+   "name": "xlaunch",
+   "sites": 1,
+   "jal_callers": 0,
+   "caller_addrs": [],
+   "site_addrs": [
+    "0x00487BD8"
+   ],
+   "handled": false,
+   "status": "guest",
+   "analysis": null,
+   "setsyscall": [
+    "text@0x005653D8->0x00487C00"
+   ]
+  },
+  {
+   "number": -85,
+   "hex": "-0x55",
+   "name": "PutTLBEntry",
+   "sites": 1,
+   "jal_callers": 0,
+   "caller_addrs": [],
+   "site_addrs": [
+    "0x0047FFB4"
+   ],
+   "handled": false,
+   "status": "MISSING",
+   "analysis": null,
+   "setsyscall": []
+  },
+  {
+   "number": 86,
+   "hex": "0x56",
+   "name": "_SetTLBEntry",
+   "sites": 2,
+   "jal_callers": 4,
+   "caller_addrs": [
+    "0x00487A30",
+    "0x00487A98",
+    "0x00487B10",
+    "0x00487B54"
+   ],
+   "site_addrs": [
+    "0x0047FFC4",
+    "0x00487944"
+   ],
+   "handled": false,
+   "status": "MISSING",
+   "analysis": "BOOT PATH. crt0 0x11C2B0 -> 0x4865B8 -> 0x487950: GetMemorySize()==32MB -> 0x487990 calls _SetTLBEntry 4x. Flat memory needs no TLB: no-op returning 0 (silences 4 log lines).",
+   "setsyscall": []
+  },
+  {
+   "number": 87,
+   "hex": "0x57",
+   "name": "GetTLBEntry",
+   "sites": 1,
+   "jal_callers": 0,
+   "caller_addrs": [],
+   "site_addrs": [
+    "0x0047FFD4"
+   ],
+   "handled": false,
+   "status": "MISSING",
+   "analysis": null,
+   "setsyscall": []
+  },
+  {
+   "number": -88,
+   "hex": "-0x58",
+   "name": "ProbeTLBEntry",
+   "sites": 1,
+   "jal_callers": 0,
+   "caller_addrs": [],
+   "site_addrs": [
+    "0x0047FFE4"
+   ],
+   "handled": false,
+   "status": "MISSING",
+   "analysis": null,
+   "setsyscall": []
+  },
+  {
+   "number": 89,
+   "hex": "0x59",
+   "name": "ExpandScratchPad",
+   "sites": 1,
+   "jal_callers": 0,
+   "caller_addrs": [],
+   "site_addrs": [
+    "0x0047FFF4"
+   ],
+   "handled": false,
+   "status": "MISSING",
+   "analysis": null,
+   "setsyscall": []
+  },
+  {
+   "number": 90,
+   "hex": "0x5A",
+   "name": "Copy",
+   "sites": 4,
+   "jal_callers": 8,
+   "caller_addrs": [
+    "0x00486398",
+    "0x004864B8",
+    "0x004864D8",
+    "0x00486504",
+    "0x00486528",
+    "0x004866A8",
+    "0x004866C0",
+    "0x004878B8"
+   ],
+   "site_addrs": [
+    "0x00486294",
+    "0x00486404",
+    "0x004865FC",
+    "0x00487814"
+   ],
+   "handled": false,
+   "status": "guest",
+   "analysis": "Copy (kCopy). crt0 _InitSys (0x486228) installs SetSyscall(0x5A, guest memcpy) before use; calls then run recompiled guest code. 0x486350 copies a 1960-byte patch to 0x80074000.",
+   "setsyscall": [
+    "text@0x005640A0->0x00486088",
+    "text@0x00564858->0x004862A0",
+    "text@0x00564870->0x00486410",
+    "text@0x00564FE0->0x00486608",
+    "text@0x005653C8->0x00487820"
+   ]
+  },
+  {
+   "number": -90,
+   "hex": "-0x5A",
+   "name": "Copy",
+   "sites": 1,
+   "jal_callers": 0,
+   "caller_addrs": [],
+   "site_addrs": [
+    "0x00480004"
+   ],
+   "handled": false,
+   "status": "guest",
+   "analysis": "Copy (kCopy). crt0 _InitSys (0x486228) installs SetSyscall(0x5A, guest memcpy) before use; calls then run recompiled guest code. 0x486350 copies a 1960-byte patch to 0x80074000.",
+   "setsyscall": [
+    "text@0x005640A0->0x00486088",
+    "text@0x00564858->0x004862A0",
+    "text@0x00564870->0x00486410",
+    "text@0x00564FE0->0x00486608",
+    "text@0x005653C8->0x00487820"
+   ]
+  },
+  {
+   "number": 91,
+   "hex": "0x5B",
+   "name": "GetEntryAddress",
+   "sites": 4,
+   "jal_callers": 4,
+   "caller_addrs": [
+    "0x004863C0",
+    "0x004866E8",
+    "0x004878F0",
+    "0x00487914"
+   ],
+   "site_addrs": [
+    "0x00480014",
+    "0x004862DC",
+    "0x00486644",
+    "0x0048785C"
+   ],
+   "handled": true,
+   "status": "native",
+   "analysis": "SetSyscall(0x5B, 0x80074000) points at kernel-RAM code copied by Copy -> not recompiled -> falls through to the native case 0x5B (returns 0).",
+   "setsyscall": [
+    "kseg0@0x00564860->0x80074000",
+    "kseg0@0x00564FE8->0x80076000",
+    "kseg0@0x005653D0->0x80075000"
+   ]
+  },
+  {
+   "number": 92,
+   "hex": "0x5C",
+   "name": "EnableIntcHandler",
+   "sites": 1,
+   "jal_callers": 0,
+   "caller_addrs": [],
+   "site_addrs": [
+    "0x00480024"
+   ],
+   "handled": false,
+   "status": "MISSING",
+   "analysis": null,
+   "setsyscall": []
+  },
+  {
+   "number": -92,
+   "hex": "-0x5C",
+   "name": "EnableIntcHandler",
+   "sites": 1,
+   "jal_callers": 0,
+   "caller_addrs": [],
+   "site_addrs": [
+    "0x00480034"
+   ],
+   "handled": false,
+   "status": "MISSING",
+   "analysis": null,
+   "setsyscall": []
+  },
+  {
+   "number": 93,
+   "hex": "0x5D",
+   "name": "DisableIntcHandler",
+   "sites": 1,
+   "jal_callers": 0,
+   "caller_addrs": [],
+   "site_addrs": [
+    "0x00480044"
+   ],
+   "handled": false,
+   "status": "MISSING",
+   "analysis": null,
+   "setsyscall": []
+  },
+  {
+   "number": -93,
+   "hex": "-0x5D",
+   "name": "DisableIntcHandler",
+   "sites": 1,
+   "jal_callers": 0,
+   "caller_addrs": [],
+   "site_addrs": [
+    "0x00480054"
+   ],
+   "handled": false,
+   "status": "MISSING",
+   "analysis": null,
+   "setsyscall": []
+  },
+  {
+   "number": 94,
+   "hex": "0x5E",
+   "name": "EnableDmacHandler",
+   "sites": 1,
+   "jal_callers": 0,
+   "caller_addrs": [],
+   "site_addrs": [
+    "0x00480064"
+   ],
+   "handled": false,
+   "status": "MISSING",
+   "analysis": null,
+   "setsyscall": []
+  },
+  {
+   "number": -94,
+   "hex": "-0x5E",
+   "name": "EnableDmacHandler",
+   "sites": 1,
+   "jal_callers": 0,
+   "caller_addrs": [],
+   "site_addrs": [
+    "0x00480074"
+   ],
+   "handled": false,
+   "status": "MISSING",
+   "analysis": null,
+   "setsyscall": []
+  },
+  {
+   "number": 95,
+   "hex": "0x5F",
+   "name": "DisableDmacHandler",
+   "sites": 1,
+   "jal_callers": 0,
+   "caller_addrs": [],
+   "site_addrs": [
+    "0x00480084"
+   ],
+   "handled": false,
+   "status": "MISSING",
+   "analysis": null,
+   "setsyscall": []
+  },
+  {
+   "number": -95,
+   "hex": "-0x5F",
+   "name": "DisableDmacHandler",
+   "sites": 1,
+   "jal_callers": 0,
+   "caller_addrs": [],
+   "site_addrs": [
+    "0x00480094"
+   ],
+   "handled": false,
+   "status": "MISSING",
+   "analysis": null,
+   "setsyscall": []
+  },
+  {
+   "number": 96,
+   "hex": "0x60",
+   "name": "KSeg0",
+   "sites": 1,
+   "jal_callers": 0,
+   "caller_addrs": [],
+   "site_addrs": [
+    "0x004800A4"
+   ],
+   "handled": false,
+   "status": "MISSING",
+   "analysis": null,
+   "setsyscall": []
+  },
+  {
+   "number": 97,
+   "hex": "0x61",
+   "name": "EnableCache",
+   "sites": 1,
+   "jal_callers": 0,
+   "caller_addrs": [],
+   "site_addrs": [
+    "0x004800B4"
+   ],
+   "handled": false,
+   "status": "MISSING",
+   "analysis": null,
+   "setsyscall": []
+  },
+  {
+   "number": 98,
+   "hex": "0x62",
+   "name": "DisableCache",
+   "sites": 1,
+   "jal_callers": 0,
+   "caller_addrs": [],
+   "site_addrs": [
+    "0x004800C4"
+   ],
+   "handled": false,
+   "status": "MISSING",
+   "analysis": null,
+   "setsyscall": []
+  },
+  {
+   "number": 99,
+   "hex": "0x63",
+   "name": "GetCop0",
+   "sites": 1,
+   "jal_callers": 0,
+   "caller_addrs": [],
+   "site_addrs": [
+    "0x004800D4"
+   ],
+   "handled": false,
+   "status": "MISSING",
+   "analysis": null,
+   "setsyscall": []
+  },
+  {
+   "number": 100,
+   "hex": "0x64",
+   "name": "FlushCache",
+   "sites": 1,
+   "jal_callers": 50,
+   "caller_addrs": [
+    "0x0011C258",
+    "0x00226CA0",
+    "0x00228570",
+    "0x00228590",
+    "0x002285AC",
+    "0x002292FC",
+    "0x00229318",
+    "0x0022944C",
+    "0x00229468",
+    "0x00229924",
+    "0x00229940",
+    "0x0022A5D8",
+    "0x0022ACC4",
+    "0x0022B014",
+    "0x0022BCF0",
+    "0x0022BE2C",
+    "0x0022E69C",
+    "0x00231394",
+    "0x002313CC",
+    "0x0023C724",
+    "0x00241380",
+    "0x00241468",
+    "0x00241BBC",
+    "0x00241C80",
+    "0x0024BDC0",
+    "0x0024C98C",
+    "0x00254E08",
+    "0x00254E24",
+    "0x00254F68",
+    "0x00254F84",
+    "0x00268A9C",
+    "0x00268E9C",
+    "0x0026B7A8",
+    "0x002721B4",
+    "0x002728FC",
+    "0x002729E4",
+    "0x00275D24",
+    "0x0027634C",
+    "0x002DC8DC",
+    "0x00382A4C",
+    "0x00387000",
+    "0x00469B30",
+    "0x00481384",
+    "0x0048289C",
+    "0x004863A0",
+    "0x004863A8",
+    "0x004866C8",
+    "0x004866D0",
+    "0x004878C0",
+    "0x004878C8"
+   ],
+   "site_addrs": [
+    "0x004800E4"
+   ],
+   "handled": true,
+   "status": "native",
+   "analysis": null,
+   "setsyscall": []
+  },
+  {
+   "number": 102,
+   "hex": "0x66",
+   "name": "CpuConfig",
+   "sites": 1,
+   "jal_callers": 0,
+   "caller_addrs": [],
+   "site_addrs": [
+    "0x004800F4"
+   ],
+   "handled": false,
+   "status": "MISSING",
+   "analysis": null,
+   "setsyscall": []
+  },
+  {
+   "number": -103,
+   "hex": "-0x67",
+   "name": "iGetCop0",
+   "sites": 1,
+   "jal_callers": 0,
+   "caller_addrs": [],
+   "site_addrs": [
+    "0x00480104"
+   ],
+   "handled": false,
+   "status": "MISSING",
+   "analysis": null,
+   "setsyscall": []
+  },
+  {
+   "number": -104,
+   "hex": "-0x68",
+   "name": "iFlushCache",
+   "sites": 1,
+   "jal_callers": 0,
+   "caller_addrs": [],
+   "site_addrs": [
+    "0x00480114"
+   ],
+   "handled": true,
+   "status": "native",
+   "analysis": null,
+   "setsyscall": []
+  },
+  {
+   "number": -106,
+   "hex": "-0x6A",
+   "name": "iCpuConfig",
+   "sites": 1,
+   "jal_callers": 0,
+   "caller_addrs": [],
+   "site_addrs": [
+    "0x00480124"
+   ],
+   "handled": false,
+   "status": "MISSING",
+   "analysis": null,
+   "setsyscall": []
+  },
+  {
+   "number": 107,
+   "hex": "0x6B",
+   "name": "sceSifStopDma",
+   "sites": 1,
+   "jal_callers": 1,
+   "caller_addrs": [
+    "0x00485D30"
+   ],
+   "site_addrs": [
+    "0x00480134"
+   ],
+   "handled": true,
+   "status": "native",
+   "analysis": null,
+   "setsyscall": []
+  },
+  {
+   "number": 108,
+   "hex": "0x6C",
+   "name": "SetCPUTimerHandler",
+   "sites": 1,
+   "jal_callers": 0,
+   "caller_addrs": [],
+   "site_addrs": [
+    "0x00480144"
+   ],
+   "handled": false,
+   "status": "MISSING",
+   "analysis": null,
+   "setsyscall": []
+  },
+  {
+   "number": 109,
+   "hex": "0x6D",
+   "name": "SetCPUTimer",
+   "sites": 1,
+   "jal_callers": 0,
+   "caller_addrs": [],
+   "site_addrs": [
+    "0x00480154"
+   ],
+   "handled": false,
+   "status": "MISSING",
+   "analysis": null,
+   "setsyscall": []
+  },
+  {
+   "number": 110,
+   "hex": "0x6E",
+   "name": "SetOsdConfigParam2",
+   "sites": 1,
+   "jal_callers": 0,
+   "caller_addrs": [],
+   "site_addrs": [
+    "0x00480164"
+   ],
+   "handled": false,
+   "status": "MISSING",
+   "analysis": null,
+   "setsyscall": []
+  },
+  {
+   "number": 111,
+   "hex": "0x6F",
+   "name": "GetOsdConfigParam2",
+   "sites": 1,
+   "jal_callers": 0,
+   "caller_addrs": [],
+   "site_addrs": [
+    "0x00480174"
+   ],
+   "handled": false,
+   "status": "MISSING",
+   "analysis": null,
+   "setsyscall": []
+  },
+  {
+   "number": 112,
+   "hex": "0x70",
+   "name": "GsGetIMR",
+   "sites": 1,
+   "jal_callers": 2,
+   "caller_addrs": [
+    "0x00383E60",
+    "0x00384078"
+   ],
+   "site_addrs": [
+    "0x00480184"
+   ],
+   "handled": true,
+   "status": "native",
+   "analysis": null,
+   "setsyscall": []
+  },
+  {
+   "number": -112,
+   "hex": "-0x70",
+   "name": "GsGetIMR",
+   "sites": 1,
+   "jal_callers": 0,
+   "caller_addrs": [],
+   "site_addrs": [
+    "0x00480194"
+   ],
+   "handled": true,
+   "status": "native",
+   "analysis": null,
+   "setsyscall": []
+  },
+  {
+   "number": 113,
+   "hex": "0x71",
+   "name": "GsPutIMR",
+   "sites": 1,
+   "jal_callers": 2,
+   "caller_addrs": [
+    "0x0020616C",
+    "0x00383E6C"
+   ],
+   "site_addrs": [
+    "0x004801A4"
+   ],
+   "handled": true,
+   "status": "native",
+   "analysis": null,
+   "setsyscall": []
+  },
+  {
+   "number": -113,
+   "hex": "-0x71",
+   "name": "GsPutIMR",
+   "sites": 1,
+   "jal_callers": 0,
+   "caller_addrs": [],
+   "site_addrs": [
+    "0x004801B4"
+   ],
+   "handled": true,
+   "status": "native",
+   "analysis": null,
+   "setsyscall": []
+  },
+  {
+   "number": 114,
+   "hex": "0x72",
+   "name": "SetPgifHandler",
+   "sites": 1,
+   "jal_callers": 0,
+   "caller_addrs": [],
+   "site_addrs": [
+    "0x004801C4"
+   ],
+   "handled": false,
+   "status": "MISSING",
+   "analysis": null,
+   "setsyscall": []
+  },
+  {
+   "number": 115,
+   "hex": "0x73",
+   "name": "SetVSyncFlag",
+   "sites": 1,
+   "jal_callers": 1,
+   "caller_addrs": [
+    "0x00480390"
+   ],
+   "site_addrs": [
+    "0x004801D4"
+   ],
+   "handled": true,
+   "status": "native",
+   "analysis": null,
+   "setsyscall": []
+  },
+  {
+   "number": 116,
+   "hex": "0x74",
+   "name": "SetSyscall",
+   "sites": 6,
+   "jal_callers": 13,
+   "caller_addrs": [
+    "0x00486150",
+    "0x0048615C",
+    "0x00486380",
+    "0x004863B4",
+    "0x004863D0",
+    "0x0048649C",
+    "0x00486690",
+    "0x004866DC",
+    "0x004866F8",
+    "0x004878A0",
+    "0x004878D4",
+    "0x004878E0",
+    "0x00487900"
+   ],
+   "site_addrs": [
+    "0x004801E4",
+    "0x0048621C",
+    "0x00486284",
+    "0x00486444",
+    "0x004865EC",
+    "0x0048786C"
+   ],
+   "handled": true,
+   "status": "native",
+   "analysis": null,
+   "setsyscall": []
+  },
+  {
+   "number": 117,
+   "hex": "0x75",
+   "name": "_print",
+   "sites": 1,
+   "jal_callers": 0,
+   "caller_addrs": [],
+   "site_addrs": [
+    "0x004801F4"
+   ],
+   "handled": false,
+   "status": "MISSING",
+   "analysis": null,
+   "setsyscall": []
+  },
+  {
+   "number": 118,
+   "hex": "0x76",
+   "name": "sceSifDmaStat",
+   "sites": 1,
+   "jal_callers": 6,
+   "caller_addrs": [
+    "0x002065C8",
+    "0x00382AD0",
+    "0x00431B78",
+    "0x00431D50",
+    "0x00462E48",
+    "0x00463A60"
+   ],
+   "site_addrs": [
+    "0x00480204"
+   ],
+   "handled": true,
+   "status": "native",
+   "analysis": null,
+   "setsyscall": []
+  },
+  {
+   "number": -118,
+   "hex": "-0x76",
+   "name": "sceSifDmaStat",
+   "sites": 1,
+   "jal_callers": 0,
+   "caller_addrs": [],
+   "site_addrs": [
+    "0x00480214"
+   ],
+   "handled": true,
+   "status": "native",
+   "analysis": null,
+   "setsyscall": []
+  },
+  {
+   "number": 119,
+   "hex": "0x77",
+   "name": "sceSifSetDma",
+   "sites": 1,
+   "jal_callers": 8,
+   "caller_addrs": [
+    "0x00206634",
+    "0x00382AA8",
+    "0x0041ECEC",
+    "0x00431A9C",
+    "0x00462E3C",
+    "0x00463A50",
+    "0x00482BF4",
+    "0x00485DF4"
+   ],
+   "site_addrs": [
+    "0x00480224"
+   ],
+   "handled": true,
+   "status": "native",
+   "analysis": null,
+   "setsyscall": []
+  },
+  {
+   "number": -119,
+   "hex": "-0x77",
+   "name": "sceSifSetDma",
+   "sites": 1,
+   "jal_callers": 1,
+   "caller_addrs": [
+    "0x00482BE4"
+   ],
+   "site_addrs": [
+    "0x00480234"
+   ],
+   "handled": true,
+   "status": "native",
+   "analysis": null,
+   "setsyscall": []
+  },
+  {
+   "number": 120,
+   "hex": "0x78",
+   "name": "sceSifSetDChain",
+   "sites": 1,
+   "jal_callers": 1,
+   "caller_addrs": [
+    "0x004828DC"
+   ],
+   "site_addrs": [
+    "0x00480244"
+   ],
+   "handled": true,
+   "status": "native",
+   "analysis": null,
+   "setsyscall": []
+  },
+  {
+   "number": -120,
+   "hex": "-0x78",
+   "name": "sceSifSetDChain",
+   "sites": 1,
+   "jal_callers": 1,
+   "caller_addrs": [
+    "0x00482D14"
+   ],
+   "site_addrs": [
+    "0x00480254"
+   ],
+   "handled": true,
+   "status": "native",
+   "analysis": null,
+   "setsyscall": []
+  },
+  {
+   "number": 121,
+   "hex": "0x79",
+   "name": "sceSifSetReg",
+   "sites": 1,
+   "jal_callers": 8,
+   "caller_addrs": [
+    "0x00482984",
+    "0x00482994",
+    "0x00483018",
+    "0x00485DE8",
+    "0x00485E04",
+    "0x00485E10",
+    "0x00485E20",
+    "0x00485E2C"
+   ],
+   "site_addrs": [
+    "0x00480264"
+   ],
+   "handled": true,
+   "status": "native",
+   "analysis": null,
+   "setsyscall": []
+  },
+  {
+   "number": 122,
+   "hex": "0x7A",
+   "name": "sceSifGetReg",
+   "sites": 1,
+   "jal_callers": 6,
+   "caller_addrs": [
+    "0x0048290C",
+    "0x00482960",
+    "0x00482974",
+    "0x00482FB8",
+    "0x00485D38",
+    "0x00485E60"
+   ],
+   "site_addrs": [
+    "0x00480274"
+   ],
+   "handled": true,
+   "status": "native",
+   "analysis": null,
+   "setsyscall": []
+  },
+  {
+   "number": 123,
+   "hex": "0x7B",
+   "name": "_ExecOSD",
+   "sites": 1,
+   "jal_callers": 0,
+   "caller_addrs": [],
+   "site_addrs": [
+    "0x00480284"
+   ],
+   "handled": false,
+   "status": "MISSING",
+   "analysis": null,
+   "setsyscall": []
+  },
+  {
+   "number": 124,
+   "hex": "0x7C",
+   "name": "Deci2Call",
+   "sites": 1,
+   "jal_callers": 6,
+   "caller_addrs": [
+    "0x004876E0",
+    "0x0048771C",
+    "0x00487740",
+    "0x00487780",
+    "0x004877B8",
+    "0x004877F0"
+   ],
+   "site_addrs": [
+    "0x00480294"
+   ],
+   "handled": true,
+   "status": "native",
+   "analysis": null,
+   "setsyscall": []
+  },
+  {
+   "number": 125,
+   "hex": "0x7D",
+   "name": "PSMode",
+   "sites": 1,
+   "jal_callers": 0,
+   "caller_addrs": [],
+   "site_addrs": [
+    "0x004802A4"
+   ],
+   "handled": false,
+   "status": "MISSING",
+   "analysis": null,
+   "setsyscall": []
+  },
+  {
+   "number": 126,
+   "hex": "0x7E",
+   "name": "MachineType",
+   "sites": 1,
+   "jal_callers": 0,
+   "caller_addrs": [],
+   "site_addrs": [
+    "0x004802B4"
+   ],
+   "handled": true,
+   "status": "native",
+   "analysis": null,
+   "setsyscall": []
+  },
+  {
+   "number": 127,
+   "hex": "0x7F",
+   "name": "GetMemorySize",
+   "sites": 1,
+   "jal_callers": 1,
+   "caller_addrs": [
+    "0x00487958"
+   ],
+   "site_addrs": [
+    "0x004802C4"
+   ],
+   "handled": true,
+   "status": "native",
+   "analysis": null,
+   "setsyscall": []
+  },
+  {
+   "number": 128,
+   "hex": "0x80",
+   "name": "_GetGsDxDyOffset",
+   "sites": 1,
+   "jal_callers": 1,
+   "caller_addrs": [
+    "0x00382FC8"
+   ],
+   "site_addrs": [
+    "0x00382F34"
+   ],
+   "handled": false,
+   "status": "MISSING",
+   "analysis": "BOOT PATH. sceGsResetGraph-side helper 0x382F40 opens rom0:ROMVER, and if the ROM date > 20010608 (runtime io.cpp serves 20060210) calls _GetGsDxDyOffset(mode,&dx,&dy,&dw,&dh) (a0..t0). Unhandled -> 4 stack outputs left uninitialised -> garbage DISPLAY offsets. Fix: write 0 to the 4 pointers, return 0.",
+   "setsyscall": []
+  },
+  {
+   "number": 130,
+   "hex": "0x82",
+   "name": "_InitTLB",
+   "sites": 1,
+   "jal_callers": 1,
+   "caller_addrs": [
+    "0x0048797C"
+   ],
+   "site_addrs": [
+    "0x004802D4"
+   ],
+   "handled": false,
+   "status": "MISSING",
+   "analysis": "Only when GetMemorySize()!=32MB (0x487950 else-branch); runtime returns 32MB -> unreachable. No-op returning 0.",
+   "setsyscall": []
+  },
+  {
+   "number": 131,
+   "hex": "0x83",
+   "name": "FindAddress",
+   "sites": 1,
+   "jal_callers": 4,
+   "caller_addrs": [
+    "0x0048616C",
+    "0x00486180",
+    "0x004861AC",
+    "0x004861C8"
+   ],
+   "site_addrs": [
+    "0x00486104"
+   ],
+   "handled": false,
+   "status": "guest",
+   "analysis": "FindAddress. _InitSys installs SetSyscall(0x83, 0x4860C0) then 0x486118 loops until two FindAddress results agree on the syscall-table base (kSyscallTable 0x1800 lies inside the searched 0x80000000-0x80080000, so it terminates). If the table ever moved above 0x80000 this loop would spin forever.",
+   "setsyscall": [
+    "text@0x00564098->0x004860C0"
+   ]
+  },
+  {
+   "number": 252,
+   "hex": "0xFC",
+   "name": "?",
+   "sites": 1,
+   "jal_callers": 0,
+   "caller_addrs": [],
+   "site_addrs": [
+    "0x0047FBE4"
+   ],
+   "handled": true,
+   "status": "native",
+   "analysis": null,
+   "setsyscall": []
+  },
+  {
+   "number": 253,
+   "hex": "0xFD",
+   "name": "?",
+   "sites": 1,
+   "jal_callers": 0,
+   "caller_addrs": [],
+   "site_addrs": [
+    "0x0047FBF4"
+   ],
+   "handled": true,
+   "status": "native",
+   "analysis": null,
+   "setsyscall": []
+  },
+  {
+   "number": -254,
+   "hex": "-0xFE",
+   "name": "?",
+   "sites": 1,
+   "jal_callers": 0,
+   "caller_addrs": [],
+   "site_addrs": [
+    "0x0047FC44"
+   ],
+   "handled": true,
+   "status": "native",
+   "analysis": null,
+   "setsyscall": []
+  },
+  {
+   "number": -255,
+   "hex": "-0xFF",
+   "name": "?",
+   "sites": 1,
+   "jal_callers": 0,
+   "caller_addrs": [],
+   "site_addrs": [
+    "0x0047FC54"
+   ],
+   "handled": true,
+   "status": "native",
+   "analysis": null,
+   "setsyscall": []
+  }
+ ],
+ "unknown": [],
+ "runtime_handled": [
+  2,
+  4,
+  6,
+  7,
+  16,
+  17,
+  18,
+  19,
+  20,
+  21,
+  22,
+  23,
+  24,
+  25,
+  26,
+  27,
+  28,
+  29,
+  30,
+  31,
+  32,
+  33,
+  34,
+  35,
+  36,
+  37,
+  38,
+  41,
+  42,
+  43,
+  44,
+  45,
+  46,
+  47,
+  48,
+  49,
+  50,
+  51,
+  52,
+  53,
+  54,
+  55,
+  56,
+  57,
+  58,
+  60,
+  61,
+  62,
+  64,
+  65,
+  66,
+  67,
+  68,
+  69,
+  70,
+  71,
+  72,
+  74,
+  75,
+  91,
+  100,
+  104,
+  107,
+  112,
+  113,
+  115,
+  116,
+  118,
+  119,
+  120,
+  121,
+  122,
+  124,
+  126,
+  127,
+  252,
+  253,
+  254,
+  255
+ ]
+}
