@@ -3,6 +3,8 @@
 
 #include <algorithm>
 #include <cstdio>
+#include <cstdlib>
+#include <cstring>
 #include <fstream>
 #include <set>
 #include <string>
@@ -162,6 +164,25 @@ void stop(Cpu &c, std::uint32_t pc, const char *what) {
 }
 
 void probe(Cpu &c, std::uint32_t pc) {
+    // Debug: PS2_PROBE_FRAME=N logs probes only from the first hit of PS2_PROBE_START (hex pc) in frame N,
+    // at most PS2_PROBE_COUNT lines, with FPU registers, to PS2_PROBE_OUT.
+    static const char *gate = std::getenv("PS2_PROBE_FRAME");
+    if (gate) {
+        static const std::uint64_t frame = std::strtoull(gate, nullptr, 10);
+        static const std::uint32_t start = std::getenv("PS2_PROBE_START") ? std::strtoul(std::getenv("PS2_PROBE_START"), nullptr, 16) : 0;
+        static long left = std::getenv("PS2_PROBE_COUNT") ? std::atol(std::getenv("PS2_PROBE_COUNT")) : 20000;
+        static bool on = false;
+        static std::FILE *out = std::getenv("PS2_PROBE_OUT") ? std::fopen(std::getenv("PS2_PROBE_OUT"), "w") : stderr;
+        if (frame_count() != frame || left <= 0) return;
+        if (!on && (start == 0 || pc == start)) on = true;
+        if (!on) return;
+        --left;
+        auto fl = [](std::uint32_t x) { float v; std::memcpy(&v, &x, 4); return static_cast<double>(v); };
+        std::fprintf(out, "%06X a0 %08X a1 %08X a2 %08X a3 %08X t0 %08X ra %08X v0 %08X sp %08X f0 %g f12 %g f13 %g f14 %g\n", pc,
+                     c.r[4].w[0], c.r[5].w[0], c.r[6].w[0], c.r[7].w[0], c.r[8].w[0], c.r[31].w[0], c.r[2].w[0], c.r[29].w[0],
+                     fl(c.f[0]), fl(c.f[12]), fl(c.f[13]), fl(c.f[14]));
+        return;
+    }
     std::fprintf(stderr, "[probe] 0x%08X a0 %08X a1 %08X a2 %08X a3 %08X ra %08X v0 %08X\n", pc, c.r[4].w[0], c.r[5].w[0], c.r[6].w[0],
                  c.r[7].w[0], c.r[31].w[0], c.r[2].w[0]);
 }

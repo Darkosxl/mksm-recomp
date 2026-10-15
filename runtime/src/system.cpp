@@ -31,6 +31,8 @@
 #include <cstdlib>
 #include <iterator>
 #include <stdexcept>
+#include <string>
+#include <vector>
 
 namespace ps2 {
 
@@ -146,9 +148,97 @@ void time_frames() {
     }
 }
 
+// Debug: PS2_WATCH="addr,len[;*ptr+off,len]..." logs EE RAM words every PS2_WATCH_EVERY frames (default 1) from
+// PS2_WATCH_FROM to PS2_WATCH_OUT (default stderr). PS2_DUMP_AT="f1,f2,...:prefix" writes raw EE RAM at those frames.
+void watch_frame() {
+    struct Item { bool deref; std::uint32_t at, off, len; };
+    static std::vector<Item> items;
+    static std::vector<std::uint64_t> dump_at;
+    static std::string dump_prefix;
+    static std::FILE *out = nullptr;
+    static std::uint64_t every = 1, from = 0;
+    static bool init = false;
+    if (!init) {
+        init = true;
+        if (const char *spec = std::getenv("PS2_WATCH")) {
+            std::string s = spec;
+            for (std::size_t p = 0; p < s.size();) {
+                std::size_t e = s.find(';', p);
+                if (e == std::string::npos) e = s.size();
+                const std::string t = s.substr(p, e - p);
+                Item it{};
+                if (!t.empty() && t[0] == '*') {
+                    it.deref = true;
+                    std::sscanf(t.c_str() + 1, "%x+%x,%x", &it.at, &it.off, &it.len);
+                } else std::sscanf(t.c_str(), "%x,%x", &it.at, &it.len);
+                if (it.len) items.push_back(it);
+                p = e + 1;
+            }
+            const char *path = std::getenv("PS2_WATCH_OUT");
+            out = path ? std::fopen(path, "w") : stderr;
+            if (const char *v = std::getenv("PS2_WATCH_EVERY")) every = std::max<std::uint64_t>(1, std::strtoull(v, nullptr, 10));
+            if (const char *v = std::getenv("PS2_WATCH_FROM")) from = std::strtoull(v, nullptr, 10);
+        }
+        if (const char *spec = std::getenv("PS2_DUMP_AT")) {
+            std::string s = spec;
+            const auto colon = s.find(':');
+            dump_prefix = colon == std::string::npos ? "dump" : s.substr(colon + 1);
+            for (char *p = s.data(); *p && *p != ':';) {
+                dump_at.push_back(std::strtoull(p, &p, 10));
+                if (*p == ',') ++p;
+                else break;
+            }
+        }
+    }
+    if (out && g_frames >= from && g_frames % every == 0) {
+        std::fprintf(out, "%llu", static_cast<unsigned long long>(g_frames));
+        for (const Item &it : items) {
+            std::uint32_t base = it.at;
+            if (it.deref) base = (ld32(it.at) & 0x1FFFFFFu) + it.off;
+            std::fprintf(out, " |");
+            for (std::uint32_t j = 0; j < it.len; j += 4) std::fprintf(out, " %08X", (base & 0x1FFFFFFu) + j < kRamSize ? ld32((base & 0x1FFFFFFu) + j) : 0u);
+        }
+        std::fprintf(out, "\n");
+        std::fflush(out);
+    }
+    // PS2_PATCH="frame:file:lo-hi[,lo-hi...]" copies those EE RAM byte ranges from a raw RAM image at that frame.
+    static const char *patch = std::getenv("PS2_PATCH");
+    if (patch) {
+        unsigned long long pf = 0;
+        char path[512] = {};
+        int used = 0;
+        if (std::sscanf(patch, "%llu:%511[^:]:%n", &pf, path, &used) >= 2 && pf == g_frames) {
+            if (std::FILE *img = std::fopen(path, "rb")) {
+                for (const char *p = patch + used; *p;) {
+                    unsigned lo = 0, hi = 0;
+                    int n = 0;
+                    if (std::sscanf(p, "%x-%x%n", &lo, &hi, &n) != 2) break;
+                    if (hi > lo && hi <= kRamSize) {
+                        std::fseek(img, lo, SEEK_SET);
+                        const std::size_t got = std::fread(g_ram + lo, 1, hi - lo, img);
+                        std::fprintf(stderr, "[patch] frame %llu %08X-%08X (%zu bytes)\n", pf, lo, hi, got);
+                    }
+                    p += n;
+                    if (*p == ',') ++p;
+                }
+                std::fclose(img);
+            }
+        }
+    }
+    for (std::uint64_t f : dump_at)
+        if (f == g_frames) {
+            const std::string path = dump_prefix + "_" + std::to_string(f) + ".bin";
+            if (std::FILE *d = std::fopen(path.c_str(), "wb")) {
+                std::fwrite(g_ram, 1, kRamSize, d);
+                std::fclose(d);
+            }
+        }
+}
+
 void vblank() {
     ++g_frames;
     time_frames();
+    watch_frame();
     apply_presses();
     if (g_options.on_vblank) g_options.on_vblank();
     iop::sio2::flush_cards();
