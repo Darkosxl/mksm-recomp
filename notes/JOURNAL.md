@@ -56,3 +56,12 @@
 - Boot DUALSHOCK race fixed with a DVD drive timing model (0b2ef98). Raspberry Pi 5 (16 GB) added as headless test runner
   (software GS, ~20 fps headless). 108-map sweep: bosses + level starts all clean (0 halts/misses).
 - New track: online co-op via host-authoritative streaming (WebRTC, browser client, P2 input over DataChannel).
+
+## 2026-10-15 — M5 sweep: every map loads and plays
+- 107 maps (all valid ids), 125 runs, 529k emulated frames, warp + mash: 0 crashes/halts/timeouts, 0 missing code,
+  0 unmapped/unhandled accesses, 0 new coverage misses. Static coverage is complete for everything reachable.
+- 53 distinct VU1 microprograms seen (12 new beyond the front-end/level-1 set).
+- Open: 16 maps fade the 3D scene to black mid-run (HUD alive) → agent on it; GS texture mixups (font glyphs, map panel shows
+  font sheet, particles as squares, double LOADING) → font agent. Goro black screen = pit death blocked by the no-damage poke (benign).
+- Disc finding: the ISO's ELF is a modded unlock-all build (CRC 5C8A2D7F, retail 455DD546) whose patch breaks Ko-op even on
+  hardware; we apply a documented 1-byte fix (tools/scripts/patch_koop.py). Online co-op (WebRTC, browser P2) merged.
