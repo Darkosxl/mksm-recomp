@@ -37,3 +37,15 @@
 - Total game-specific code so far: still zero. Runtime fixes: 1 (SPR DMA).
 - Coverage loop (tools/scripts/explore_from.sh) from gameplay state: 23,100 frames of seeded-random mashing → 0 misses,
   0 unmapped accesses, 0 unhandled syscalls/imports. Static analysis (eerecomp + prologue seeds) is holding. VU1 programs: 41.
+
+## 2026-10-15 — accuracy wave merged (mksm @ 90647f6, private repo github.com/Darkosxl/mksm-recomp)
+- GS "white light shafts" were NOT a GS bug: VU1 program 0x7F8 writes ST/XYZ, then the game streams RGBA into the
+  same GIF packet via a masked VIF1 UNPACK *after* MSCNT. We XGKICKed synchronously → every batch used the previous
+  batch's vertex colours. Fix: defer XGKICK packets until the VIF syncs (5473763). Fixed god rays, lighting, black floor tris.
+  Before/after: notes/media/m6-lightshaft-before.png / -after.png.
+- SPU2: real routing (VMIX/MMIX/AVOL/MVOL), ADMA stop, STATX state machine, reverb (the game programs "Studio Large"
+  exactly), Gaussian interpolation, full one-shots. Clips: notes/media/audio-*.ogg.
+- Syscalls/IOP: 0x56/0x80/0x82, CDVDSTM as HLE module, real IOP hard timers.
+- Debug facilities found statically (notes/debug-facilities.md): warp to any of 108 maps, P1 invulnerability, TCRF debug menu,
+  unlock flags — all data pokes, tested in the recomp via savestate patching (tools/scripts/poke_state.py).
+- User priority: playable first, performance later (15–25 fps windowed while agents were hammering the CPU).
