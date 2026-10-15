@@ -1,9 +1,0 @@
-# allowlist: only our tooling + notes. No ISO, ELF, generated code, BIOS, savestates, Ghidra install/project, logs.
-/*
-!/.gitignore
-!/README.md
-!/tools/
-/tools/*
-!/tools/scripts/
-!/tools/ghidra-scripts/
-!/notes/
