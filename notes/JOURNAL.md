@@ -49,3 +49,10 @@
 - Debug facilities found statically (notes/debug-facilities.md): warp to any of 108 maps, P1 invulnerability, TCRF debug menu,
   unlock flags — all data pokes, tested in the recomp via savestate patching (tools/scripts/poke_state.py).
 - User priority: playable first, performance later (15–25 fps windowed while agents were hammering the CPU).
+
+## 2026-10-15 — after reboot
+- User reports windowed fps is very good once the machine isn't saturated: the earlier 15–25 fps was CPU/RAM contention
+  (5 agents building + headless runs, 4 GB tmpfs /tmp, swap thrash → OOM killed everything). /tmp moved to disk.
+- Boot DUALSHOCK race fixed with a DVD drive timing model (0b2ef98). Raspberry Pi 5 (16 GB) added as headless test runner
+  (software GS, ~20 fps headless). 108-map sweep: bosses + level starts all clean (0 halts/misses).
+- New track: online co-op via host-authoritative streaming (WebRTC, browser client, P2 input over DataChannel).

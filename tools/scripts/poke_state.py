@@ -1,6 +1,6 @@
 # poke_state.py <in.state> <out.state> addr=value[:w|:h|:b] ...   (EE RAM pokes into a ps2-web-recomp state file)
-import sys,struct
-E='/home/darkwarro/Documents/Twitter/PS2_REA/analysis/elf/SLUS_210.87'
+import os,sys,struct
+E=os.environ.get('PS2_ELF','/home/darkwarro/Documents/Twitter/PS2_REA/analysis/elf/SLUS_210.87')
 elf=open(E,'rb').read()
 st=bytearray(open(sys.argv[1],'rb').read())
 sig=elf[0x1000+0x10000:0x1000+0x10040]
