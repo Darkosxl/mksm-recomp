@@ -65,3 +65,15 @@
   font sheet, particles as squares, double LOADING) → font agent. Goro black screen = pit death blocked by the no-damage poke (benign).
 - Disc finding: the ISO's ELF is a modded unlock-all build (CRC 5C8A2D7F, retail 455DD546) whose patch breaks Ko-op even on
   hardware; we apply a documented 1-byte fix (tools/scripts/patch_koop.py). Online co-op (WebRTC, browser P2) merged.
+
+## 2026-10-15 — end of day 1
+- Repo restructured: private github.com/Darkosxl/mksm-recomp `main` = runtime + `mksm/` (generated game C++, build.sh from ISO,
+  tooling, notes). build.sh verified: ISO → ps2run → boots.
+- Font garble / square particles: already fixed by DIV.S round-to-nearest; stale savestates were replaying old FPU results.
+  States regenerated (logs/states), stale ones archived.
+- Multiplayer: local Versus + Ko-op verified (Ko-op needs a 1-byte fix of the modded ELF); online co-op works on loopback
+  (browser joins as P2 over WebRTC, ~22 ms input→screen).
+- OPEN, top priority: on ~12 maps Havok's ground raycast finds no floor in the recomp (PCSX2 finds it, same RAM) → player
+  falls into the void. Emulation bug inside the MOPP ray walker (0x3C9B80); suspects VU0 multiply-accumulate ops,
+  FPU divide/compare of zero directions, cvt.s.w. Handoff: mksm/notes/black-maps.md, WIP probes on fix/black-maps (9f2972f).
+- Pi: visual re-sweep of all 107 maps on HEAD running overnight (~/mksm/runs/sweep2).

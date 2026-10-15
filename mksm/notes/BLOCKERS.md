@@ -33,7 +33,8 @@
 ## 2026-10-15 late
 - [x] Garbled menu font + square particles: NOT a current bug — fixed by DIV.S round-to-nearest (30e6276). Stale savestates
       (saved before it) carried TEX0 TW/TH computed with chopped DIV.S. States regenerated → logs/states/; stale archived.
-- [ ] 16 maps fade 3D to black (0C 40 47 48 62 92 93 A2 A4 A5 A6 A7 BC E3 E9 EB) — re-testing on fresh states + HEAD (agent).
+- [ ] **TOP: Havok ground raycast misses in the recomp** (maps 40 0C 48 92 A2 A4 A6 A7 BC E3 E9 EB still black on HEAD + fresh state).
+      Emulation bug in MOPP ray walker 0x3C9B80 (PCSX2 RAM copied in → still misses). See notes/black-maps.md; WIP probes fix/black-maps 9f2972f.
 - [ ] Re-run sweep visual verdicts on a post-30e6276 binary (Pi rebuild in progress).
 - [?] Map 0x14 pause-menu panel shows font sheet ~25 frames after L1/R1 tab mashing (game writes that TEX0 itself; needs PCSX2 check).
 - [?] Netherrealm loading: "LOADING" baked into art + drawn again on top (ZTST ALWAYS) — likely authentic; needs PCSX2 check.
