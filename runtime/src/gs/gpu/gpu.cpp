@@ -35,7 +35,7 @@ constexpr std::uint32_t kParamStride = 256;
 constexpr std::uint32_t kClutSlots = 2048;
 constexpr std::uint32_t kClutEntries = 512;
 constexpr std::uint32_t kPrimWords = 28;
-constexpr std::uint32_t kSetupWords = 25;
+constexpr std::uint32_t kSetupWords = 32;
 constexpr std::uint32_t kDecodedWords = 4u << 20;
 constexpr std::uint32_t kDecodePrims = 64;
 
@@ -115,7 +115,7 @@ struct Arena {
     std::uint32_t *data() { return words.get(); }
     std::uint32_t &operator[](std::size_t i) { return words[i]; }
 } g_arena;
-std::uint32_t g_clut_slot = 0, g_clut_loads = 0, g_texflushes = 0;
+std::uint32_t g_clut_slot = 0, g_clut_loads = 0;
 
 struct Image {
     bool active = false;
@@ -141,7 +141,7 @@ struct Batch {
     int minx = 1 << 30, miny = 1 << 30, maxx = -1, maxy = -1;
     std::uint32_t fbp = 0, fbw = 0, fpsm = 0, zbp = 0, zpsm = 0;
     bool zte = false, zwrite = false;
-    std::uint32_t texflushes = 0;
+    std::size_t run_start = 0;
     int rx0 = 0, ry0 = 0, rx1 = -2, ry1 = -2;
     Range fb_range, z_range;
 } g_batch;
@@ -153,6 +153,8 @@ struct SetupCache {
     std::uint32_t flags = 0;
     std::uint64_t key = 0;
     Range tex;
+    Range levels[7];
+    std::uint32_t mips = 0;
 } g_setup_cache;
 
 struct PreOp {
@@ -208,6 +210,21 @@ Range region(std::uint32_t bp, std::uint32_t bw, std::uint32_t psm, int x0, int 
     Range r;
     r.add(std::min(page(x0, y0), static_cast<std::uint64_t>(bp) * 256), page(x1, y1) + 8192);
     return r;
+}
+
+// Highest mipmap level a setup can sample: MXL when MMIN selects a *_MIPMAP_* filter, else 0.
+std::uint32_t mip_levels(const std::uint32_t *w) {
+    const std::uint32_t mmin = (w[25] >> 4) & 7u;
+    return mmin >= 2 && mmin <= 5 ? (w[25] >> 1) & 7u : 0u;
+}
+
+// GS memory a mipmap level occupies (level 0 included), as far as the CLAMP mode lets coordinates reach.
+Range level_range(const std::uint32_t *w, std::uint32_t n) {
+    const std::uint32_t tw = w[15] & 0xFFu, th = w[15] >> 8;
+    const int lw = 1 << (tw > n ? tw - n : 0), lh = 1 << (th > n ? th - n : 0);
+    const int tex_w = std::max(lw, static_cast<int>((w[18] >> 16) >> n) + 1), tex_h = std::max(lh, static_cast<int>((w[19] >> 16) >> n) + 1);
+    if (!n) return region(w[12], w[13], w[14], 0, 0, tex_w - 1, tex_h - 1);
+    return region(w[25 + n] & 0x3FFFu, w[25 + n] >> 16, w[14], 0, 0, tex_w - 1, tex_h - 1);
 }
 
 std::uint32_t z_max(std::uint32_t psm) {
@@ -502,6 +519,11 @@ std::uint32_t snapshot_batch(std::uint32_t prims, std::uint32_t &lo, std::uint32
         const Range t = read_range(rec, setup, region(setup[12], setup[13], setup[14], 0, 0, tw - 1, th - 1));
         for (const Range *w : {&fb, b.zwrite ? &z : nullptr})
             if (w && t.overlaps(w->lo, w->hi)) shared.add(std::max(t.lo, w->lo), std::min(t.hi, w->hi));
+        for (std::uint32_t n = 1; n <= mip_levels(setup); ++n) {
+            const Range m = level_range(setup, n);
+            for (const Range *w : {&fb, b.zwrite ? &z : nullptr})
+                if (w && m.overlaps(w->lo, w->hi)) shared.add(std::max(m.lo, w->lo), std::min(m.hi, w->hi));
+        }
     }
     if (shared.lo >= shared.hi) return 0;
     lo = static_cast<std::uint32_t>(std::min<std::uint64_t>(shared.lo, kMemorySize) / 4);
@@ -1011,6 +1033,15 @@ std::uint32_t make_setup(const State &st, std::uint64_t attr, std::uint32_t *w) 
     w[22] = g_clut_slot;
     w[23] = z_max(zpsm);
     w[24] = 0xFFFFFFFFu;
+    // Mipmapping (TEX1.MXL > 0): LCM | MXL << 1 | MMIN << 4 | L << 7 | K << 16, then TBP | TBW << 16 for levels 1-6.
+    const std::uint32_t mxl = std::min<std::uint32_t>(static_cast<std::uint32_t>(c.tex1 >> 2) & 7u, 6u);
+    w[25] = mxl ? (static_cast<std::uint32_t>(c.tex1) & 1u) | (mxl << 1) | ((static_cast<std::uint32_t>(c.tex1 >> 6) & 7u) << 4) |
+                      ((static_cast<std::uint32_t>(c.tex1 >> 19) & 3u) << 7) | ((static_cast<std::uint32_t>(c.tex1 >> 32) & 0xFFFu) << 16)
+                : 0u;
+    for (std::uint32_t n = 1; n < 7; ++n) {
+        const std::uint64_t m = n < 4 ? c.miptbp1 >> ((n - 1) * 20) : c.miptbp2 >> ((n - 4) * 20);
+        w[25 + n] = mip_levels(w) >= n ? (static_cast<std::uint32_t>(m) & 0x3FFFu) | ((static_cast<std::uint32_t>(m >> 14) & 0x3Fu) << 16) : 0u;
+    }
     return flags;
 }
 
@@ -1071,9 +1102,11 @@ bool shares_frame(const std::uint32_t *setup, const Batch &b) {
     return setup[12] == b.fbp && setup[13] == b.fbw && (setup[14] == b.fpsm || (wide(setup[14]) && wide(b.fpsm)));
 }
 
-bool drawn_under(const Batch &b, const int rect[4]) {
+// Whether any of the batch's first `limit` primitives drew over the texel rectangle.
+bool drawn_under(const Batch &b, const int rect[4], std::size_t limit = ~std::size_t{0}) {
     const auto hits = [&](int x0, int y0, int x1, int y1) { return rect[0] <= x1 && x0 <= rect[2] && rect[1] <= y1 && y0 <= rect[3]; };
-    const std::size_t prims = b.boxes.size() / 2;
+    const std::size_t prims = std::min(limit, b.boxes.size() / 2);
+    if (!prims) return false;
     if (prims > 64) return hits(b.minx, b.miny, b.maxx, b.maxy);
     for (std::size_t i = 0; i < prims; ++i) {
         const std::uint32_t lo = b.boxes[i * 2], hi = b.boxes[i * 2 + 1];
@@ -1243,7 +1276,7 @@ bool init(Mode m) {
     return true;
 }
 
-void draw(const State &st, const Vertex *v, int count) {
+void draw(const State &st, const Vertex *v, int count, texcache::Run run) {
     if (g_image.active && !g_image.pending.empty()) flush_image();
     std::uint64_t attr = st.prim;
     if (!(st.prmodecont & 1u)) attr = (st.prim & 7u) | (st.prmode & ~7ull);
@@ -1258,10 +1291,11 @@ void draw(const State &st, const Vertex *v, int count) {
         cache.flags = make_setup(st, attr, cache.setup);
         cache.key = static_cast<std::uint64_t>(w[1]) | (static_cast<std::uint64_t>(w[2]) << 14) | (static_cast<std::uint64_t>(w[3]) << 20) |
                     (static_cast<std::uint64_t>(w[5]) << 26) | (static_cast<std::uint64_t>(w[6]) << 40);
+        cache.mips = 0;
         if (cache.flags & 2u) {
-            const std::uint32_t tw = w[15] & 0xFFu, th = w[15] >> 8;
-            const int tex_w = std::max(1 << tw, static_cast<int>(w[18] >> 16) + 1), tex_h = std::max(1 << th, static_cast<int>(w[19] >> 16) + 1);
-            cache.tex = region(w[12], w[13], w[14], 0, 0, tex_w - 1, tex_h - 1);
+            cache.tex = level_range(w, 0);
+            cache.mips = mip_levels(w);
+            for (std::uint32_t n = 1; n <= cache.mips; ++n) cache.levels[n] = level_range(w, n);
         }
     }
     const std::uint32_t *setup = cache.setup;
@@ -1373,17 +1407,21 @@ void draw(const State &st, const Vertex *v, int count) {
                 if (!texel_rect(setup, v, count, prim, fst, rect)) {
                     emit_all();
                 } else {
+                    // Within a texcache run the texture reads the run's starting state: only primitives batched before
+                    // the run began must have landed first.
                     const Range used = region(setup[12], setup[13], setup[14], rect[0], rect[1], rect[2], rect[3]);
-                    const bool small = rect[2] - rect[0] < 64 && rect[3] - rect[1] < 64;
-                    const bool cached = b.texflushes == g_texflushes && small && shares_frame(setup, b);
-                    const bool frame = !cached && (shares_frame(setup, b) ? drawn_under(b, rect) : used.overlaps(b.fb_range.lo, b.fb_range.hi));
+                    const bool cached = run == texcache::Run::same;
+                    const bool frame = shares_frame(setup, b) ? drawn_under(b, rect, cached ? b.run_start : ~std::size_t{0})
+                                                              : !cached && used.overlaps(b.fb_range.lo, b.fb_range.hi);
                     if (frame || (b.zwrite && used.overlaps(b.z_range.lo, b.z_range.hi))) emit_all();
                 }
             }
+            for (std::uint32_t n = 1; n <= cache.mips && !b.prims.empty(); ++n)
+                if (written(cache.levels[n])) emit_all();
         }
     }
     if (b.prims.empty()) {
-        b.texflushes = g_texflushes;
+        b.run_start = 0;
         b.key = key;
         b.fbp = setup[1];
         b.fbw = setup[2];
@@ -1405,12 +1443,15 @@ void draw(const State &st, const Vertex *v, int count) {
         b.setups.insert(b.setups.end(), setup, setup + kSetupWords);
     }
     if (flags & 2u) {
-        if (g_batch_reads.empty() || g_batch_reads.back().lo != tex.lo || g_batch_reads.back().hi != tex.hi) {
+        for (std::uint32_t n = 0; n <= cache.mips; ++n) {
+            const Range &t = n ? cache.levels[n] : tex;
+            if (!g_batch_reads.empty() && g_batch_reads.back().lo == t.lo && g_batch_reads.back().hi == t.hi) continue;
             bool known = false;
-            for (const Range &t : g_batch_reads) known = known || (t.lo <= tex.lo && tex.hi <= t.hi);
-            if (!known) g_batch_reads.push_back(tex);
+            for (const Range &r : g_batch_reads) known = known || (r.lo <= t.lo && t.hi <= r.hi);
+            if (!known) g_batch_reads.push_back(t);
         }
     }
+    if (run != texcache::Run::same) b.run_start = b.boxes.size() / 2;
     rec[0] = setup_index;
     rec[2] = static_cast<std::uint32_t>(minx) | (static_cast<std::uint32_t>(miny) << 16);
     rec[3] = static_cast<std::uint32_t>(maxx) | (static_cast<std::uint32_t>(maxy) << 16);
@@ -1495,7 +1536,6 @@ void load_clut(std::uint64_t tex0, std::uint64_t texclut) {
     ++g_clut_loads;
 }
 
-void texflush() { ++g_texflushes; }
 
 void flush() {
     if (g_mode == Mode::off) return;

@@ -438,6 +438,8 @@ struct Setup {
     clut: u32,
     zmax: u32,
     dec: u32,
+    mip: u32,
+    mip_at: u32,
     tf: Fmt,
     ff: Fmt,
     zf: Fmt,
@@ -493,6 +495,8 @@ fn load_setup(at: u32) -> Setup {
     s.clut = data[at + 22u];
     s.zmax = data[at + 23u];
     s.dec = data[at + 24u];
+    s.mip = data[at + 25u];
+    s.mip_at = at + 26u;
     s.tf = fmt_of(s.tpsm, s.tbp, s.tbw);
     s.ff = fmt_of(s.fpsm, s.fbp, s.fbw);
     s.zf = fmt_of(s.zpsm, s.zbp, s.fbw);
@@ -541,12 +545,33 @@ fn wrap_coord(v: i32, size: i32, m: u32, mn: u32, mx: u32) -> i32 {
     }
 }
 
-fn texel_x(s: Setup, xi: i32) -> u32 {
-    return u32(wrap_coord(xi, 1 << s.tw, mode(s, 24u, 2u), s.minu, s.maxu));
+// One mipmap level: where it lives, its log2 size, and the CLAMP region scaled to it.
+struct Level {
+    f: Fmt,
+    tw: u32,
+    th: u32,
+    minu: u32,
+    maxu: u32,
+    minv: u32,
+    maxv: u32,
+    dec: u32,
 }
 
-fn texel_y(s: Setup, yi: i32) -> u32 {
-    return u32(wrap_coord(yi, 1 << s.th, mode(s, 26u, 2u), s.minv, s.maxv));
+fn level(s: Setup, n: u32) -> Level {
+    if (n == 0u) {
+        return Level(s.tf, s.tw, s.th, s.minu, s.maxu, s.minv, s.maxv, s.dec);
+    }
+    let w = data[s.mip_at + n - 1u];
+    return Level(fmt_of(s.tpsm, w & 0x3FFFu, (w >> 16u) & 0x3Fu), select(0u, s.tw - n, s.tw > n), select(0u, s.th - n, s.th > n),
+                 s.minu >> n, s.maxu >> n, s.minv >> n, s.maxv >> n, 0xFFFFFFFFu);
+}
+
+fn texel_x(s: Setup, l: Level, xi: i32) -> u32 {
+    return u32(wrap_coord(xi, 1 << l.tw, mode(s, 24u, 2u), l.minu, l.maxu));
+}
+
+fn texel_y(s: Setup, l: Level, yi: i32) -> u32 {
+    return u32(wrap_coord(yi, 1 << l.th, mode(s, 26u, 2u), l.minv, l.maxv));
 }
 
 var<private> snapshot_lo: u32 = 0u;
@@ -559,13 +584,13 @@ fn load_texel(l: Loc, k: u32) -> u32 {
     return load_at(l, k);
 }
 
-fn fetch(s: Setup, xi: i32, yi: i32, k: u32) -> u32 {
-    let x = texel_x(s, xi);
-    let y = texel_y(s, yi);
-    if (s.dec != 0xFFFFFFFFu) {
-        return decoded[s.dec + (y << s.tw) + x];
+fn fetch(s: Setup, l: Level, xi: i32, yi: i32, k: u32) -> u32 {
+    let x = texel_x(s, l, xi);
+    let y = texel_y(s, l, yi);
+    if (l.dec != 0xFFFFFFFFu) {
+        return decoded[l.dec + (y << l.tw) + x];
     }
-    return convert(s, load_texel(addr(s.tf, x, y), k));
+    return convert(s, load_texel(addr(l.f, x, y), k));
 }
 
 fn convert(s: Setup, raw: u32) -> u32 {
@@ -603,15 +628,60 @@ fn convert(s: Setup, raw: u32) -> u32 {
     }
 }
 
-fn sample(s: Setup, uin: f32, vin: f32, k: u32) -> u32 {
-    if (!has(s, F_BILINEAR)) {
-        return fetch(s, i32(floor(uin)), i32(floor(vin)), k);
+fn sample(s: Setup, l: Level, uin: f32, vin: f32, k: u32, linear: bool) -> u32 {
+    if (!linear) {
+        return fetch(s, l, i32(floor(uin)), i32(floor(vin)), k);
     }
     let u = uin - 0.5;
     let v = vin - 0.5;
     let x0 = i32(floor(u));
     let y0 = i32(floor(v));
-    return blend4(fetch(s, x0, y0, k), fetch(s, x0 + 1, y0, k), fetch(s, x0, y0 + 1, k), fetch(s, x0 + 1, y0 + 1, k), u - f32(x0), v - f32(y0));
+    return blend4(fetch(s, l, x0, y0, k), fetch(s, l, x0 + 1, y0, k), fetch(s, l, x0, y0 + 1, k), fetch(s, l, x0 + 1, y0 + 1, k), u - f32(x0), v - f32(y0));
+}
+
+// GS texture LOD: K when LCM=1 or the coordinates are UV (no per-pixel Q), else log2(1/|Q|) * 2^L + K.
+fn texture_lod(s: Setup, q: f32) -> f32 {
+    let k = f32(i32(s.mip << 4u) >> 20u) / 16.0;
+    if ((s.mip & 1u) != 0u || has(s, F_FST)) {
+        return k;
+    }
+    return -log2(abs(q)) * f32(1u << ((s.mip >> 7u) & 3u)) + k;
+}
+
+// MXL=0 always filters with MMAG on level 0. Otherwise LOD <= 0 magnifies (MMAG, level 0) and LOD > 0 minifies with MMIN:
+// NEAREST/LINEAR stay on level 0, *_MIPMAP_NEAREST rounds the LOD to a level, *_MIPMAP_LINEAR blends floor(LOD) and the next level.
+fn texture(s: Setup, u: f32, v: f32, q: f32, k: u32) -> u32 {
+    let mxl = (s.mip >> 1u) & 7u;
+    if (mxl == 0u) {
+        return sample(s, level(s, 0u), u, v, k, has(s, F_BILINEAR));
+    }
+    let lod = texture_lod(s, q);
+    if (!(lod > 0.0)) {
+        return sample(s, level(s, 0u), u, v, k, has(s, F_BILINEAR));
+    }
+    let mmin = (s.mip >> 4u) & 7u;
+    let linear = mmin == 1u || (mmin & 4u) != 0u;
+    if (mmin < 2u || mmin > 5u) {
+        return sample(s, level(s, 0u), u, v, k, linear);
+    }
+    let l = min(lod, f32(mxl));
+    if ((mmin & 1u) == 0u) {
+        let n = min(u32(floor(l + 0.5)), mxl);
+        let scale = 1.0 / f32(1u << n);
+        return sample(s, level(s, n), u * scale, v * scale, k, linear);
+    }
+    let n = min(u32(floor(l)), mxl - 1u);
+    let f = clamp(l - f32(n), 0.0, 1.0);
+    let scale = 1.0 / f32(1u << n);
+    let c0 = sample(s, level(s, n), u * scale, v * scale, k, linear);
+    let c1 = sample(s, level(s, n + 1u), u * scale * 0.5, v * scale * 0.5, k, linear);
+    var out = 0u;
+    for (var ch = 0u; ch < 32u; ch = ch + 8u) {
+        let a = f32((c0 >> ch) & 0xFFu);
+        let b = f32((c1 >> ch) & 0xFFu);
+        out = out | (u32(clamp(floor(a + (b - a) * f), 0.0, 255.0)) << ch);
+    }
+    return out;
 }
 
 fn blend4(c00: u32, c10: u32, c01: u32, c11: u32, fx: f32, fy: f32) -> u32 {
@@ -743,18 +813,19 @@ fn plot(s: Setup, x: i32, y: i32, k: u32, at: Attr) {
     if (has(s, F_TME)) {
         var u: f32;
         var v: f32;
+        var q = 1.0;
         if (has(s, F_FST)) {
             u = at.s / 16.0;
             v = at.t / 16.0;
         } else {
-            var q = at.q;
+            q = at.q;
             if (q == 0.0) {
                 q = 1.0;
             }
             u = at.s / q * f32(1u << s.tw);
             v = at.t / q * f32(1u << s.th);
         }
-        let t = sample(s, u, v, k);
+        let t = texture(s, u, v, q, k);
         let tr = i32(t & 0xFFu);
         let tg = i32((t >> 8u) & 0xFFu);
         let tb = i32((t >> 16u) & 0xFFu);
@@ -923,7 +994,7 @@ fn plot(s: Setup, x: i32, y: i32, k: u32, at: Attr) {
 }
 
 const PRIM_WORDS: u32 = 28u;
-const SETUP_WORDS: u32 = 25u;
+const SETUP_WORDS: u32 = 32u;
 
 fn fat(i: u32) -> f32 {
     return bitcast<f32>(data[i]);
