@@ -2,6 +2,8 @@
 
 #include <algorithm>
 #include <cmath>
+#include <cstdio>
+#include <cstdlib>
 #include <cstring>
 
 namespace ps2::gs::raster {
@@ -38,6 +40,27 @@ struct Attr {
 };
 
 int clamp255(int v) { return v < 0 ? 0 : v > 255 ? 255 : v; }
+
+// PS2_RTRACE=frame[,x,y]: log every primitive the software rasterizer draws during that frame,
+// and the history (destination before, value written) of pixel (x,y) in any buffer.
+// PS2_RTRACE_DUMP=n also writes the decoded texture of traced primitive n to rtex_n.pam and
+// prints the first 32 CLUT entries; PS2_RSKIP_TBP=hex drops every textured draw from that TBP0.
+struct Trace {
+    bool on = false;
+    std::uint64_t frame = 0;
+    int x = -1, y = -1;
+    std::uint64_t prim = 0;
+    Trace() {
+        if (const char *e = std::getenv("PS2_RTRACE")) {
+            on = true;
+            unsigned long long f = 0;
+            std::sscanf(e, "%llu,%d,%d", &f, &x, &y);
+            frame = f;
+        }
+    }
+} g_trace;
+
+bool tracing() { return g_trace.on && ps2::frame_count() == g_trace.frame; }
 
 std::uint32_t expand16(std::uint32_t c, const Setup &s) {
     const std::uint32_t r = (c & 0x1Fu) << 3, g = ((c >> 5) & 0x1Fu) << 3, b = ((c >> 10) & 0x1Fu) << 3;
@@ -265,6 +288,11 @@ void plot(const Setup &s, int x, int y, const Attr &at) {
         if (s.fba) out_a |= 0x80u;
         std::uint32_t mask = s.fbmsk;
         if (!write_alpha) mask |= 0xFF000000u;
+        if (x == g_trace.x && y == g_trace.y && tracing()) {
+            const std::uint32_t before = read_frame(s, x, y);
+            std::fprintf(stderr, "[px] prim %llu fbp %x dst %08x -> %08x (a %d mask %08x)\n", static_cast<unsigned long long>(g_trace.prim), s.fbp, before,
+                         static_cast<std::uint32_t>(r) | (static_cast<std::uint32_t>(g) << 8) | (static_cast<std::uint32_t>(b) << 16) | (out_a << 24), a, mask);
+        }
         write_frame(s, x, y, static_cast<std::uint32_t>(r) | (static_cast<std::uint32_t>(g) << 8) | (static_cast<std::uint32_t>(b) << 16) | (out_a << 24), mask);
     }
     if (write_z && s.zte) {
@@ -457,6 +485,46 @@ void reset() {}
 
 void draw(const State &st, const Vertex *v, int count) {
     const Setup s = make_setup(st);
+    static const long skip_tbp = std::getenv("PS2_RSKIP_TBP") ? std::strtol(std::getenv("PS2_RSKIP_TBP"), nullptr, 16) : -1;
+    if (s.tme && static_cast<long>(s.tbp) == skip_tbp) return;
+    if (tracing()) {
+        ++g_trace.prim;
+        const Context &c = st.ctx[(((st.prmodecont & 1u) ? st.prim : st.prmode) >> 9) & 1u];
+        std::fprintf(stderr, "[rt] prim %llu type %llu iip%d tme%d fge%d abe%d fst%d | frame fbp %x fbw %u psm %x msk %08x | z %x psm %x msk %d | "
+                     "test %llx alpha %d%d%d%d fix %u pabe %d fba %d clamp %d | tex0 tbp %x tbw %u psm %x %ux%u tcc %d tfx %d cbp %llx cpsm %x csm %llu csa %u cld %llu | "
+                     "tex1 %llx clamp %llx texa %u/%u aem %d fogcol %06x | ofs %d,%d sc %d-%d,%d-%d\n",
+                     static_cast<unsigned long long>(g_trace.prim), static_cast<unsigned long long>(st.prim & 7u), s.iip, s.tme, s.fge, s.abe, s.fst, s.fbp, s.fbw, s.fpsm, s.fbmsk,
+                     s.zbp, s.zpsm, s.zmsk, static_cast<unsigned long long>(c.test), s.a, s.b, s.c, s.d, s.fix, s.pabe, s.fba, s.colclamp, s.tbp, s.tbw, s.tpsm, 1u << s.tw,
+                     1u << s.th, s.tcc, s.tfx, static_cast<unsigned long long>((c.tex0 >> 37) & 0x3FFFu), s.cpsm, static_cast<unsigned long long>((c.tex0 >> 55) & 1u), s.csa,
+                     static_cast<unsigned long long>(c.tex0 >> 61), static_cast<unsigned long long>(c.tex1), static_cast<unsigned long long>(c.clamp), s.ta0, s.ta1, s.aem,
+                     s.fogcol, s.ofx / 16, s.ofy / 16, s.scax0, s.scax1, s.scay0, s.scay1);
+        static const long dump_at = std::getenv("PS2_RTRACE_DUMP") ? std::atol(std::getenv("PS2_RTRACE_DUMP")) : -1;
+        if (s.tme && static_cast<long>(g_trace.prim) == dump_at) {
+            char name[64];
+            std::snprintf(name, sizeof name, "rtex_%llu.pam", static_cast<unsigned long long>(g_trace.prim));
+            if (std::FILE *f = std::fopen(name, "wb")) {
+                std::fprintf(f, "P7\nWIDTH %u\nHEIGHT %u\nDEPTH 4\nMAXVAL 255\nTUPLTYPE RGB_ALPHA\nENDHDR\n", 1u << s.tw, 1u << s.th);
+                for (int y = 0; y < (1 << s.th); ++y)
+                    for (int x = 0; x < (1 << s.tw); ++x) {
+                        const std::uint32_t t = fetch(s, x, y);
+                        std::fwrite(&t, 4, 1, f);
+                    }
+                std::fclose(f);
+            }
+            std::fprintf(stderr, "[rt] clut:");
+            for (int i = 0; i < 32; ++i) std::fprintf(stderr, " %08x", st.clut[i]);
+            std::fprintf(stderr, "\n");
+        }
+        std::fprintf(stderr, "[rt]   raw prim %llx prmodecont %llx prmode %llx | alpha %llx/%llx test %llx/%llx tex0 %llx/%llx frame %llx/%llx texa %llx\n",
+                     static_cast<unsigned long long>(st.prim), static_cast<unsigned long long>(st.prmodecont), static_cast<unsigned long long>(st.prmode),
+                     static_cast<unsigned long long>(st.ctx[0].alpha), static_cast<unsigned long long>(st.ctx[1].alpha), static_cast<unsigned long long>(st.ctx[0].test),
+                     static_cast<unsigned long long>(st.ctx[1].test), static_cast<unsigned long long>(st.ctx[0].tex0), static_cast<unsigned long long>(st.ctx[1].tex0),
+                     static_cast<unsigned long long>(st.ctx[0].frame), static_cast<unsigned long long>(st.ctx[1].frame), static_cast<unsigned long long>(st.texa));
+        const int n = (st.prim & 7u) == 6 ? 2 : (st.prim & 7u) >= 3 ? 3 : (st.prim & 7u) == 0 ? 1 : 2;
+        for (int i = 0; i < n; ++i)
+            std::fprintf(stderr, "[rt]   v%d xy %.2f,%.2f z %u rgba %02x%02x%02x%02x stq %g,%g,%g uv %u,%u f %u\n", i, (static_cast<float>(v[i].x) - s.ofx) / 16.0f,
+                         (static_cast<float>(v[i].y) - s.ofy) / 16.0f, v[i].z, v[i].r, v[i].g, v[i].b, v[i].a, v[i].s, v[i].t, v[i].q, v[i].u, v[i].v, v[i].f);
+    }
     switch (st.prim & 7u) {
     case 0: {
         const Attr a = attr_of(s, v[0]);

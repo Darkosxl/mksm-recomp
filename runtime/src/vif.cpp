@@ -7,8 +7,11 @@
 #include "vu_micro.hpp"
 
 #include "ps2/state.hpp"
+#include "ps2/system.hpp"
 
+#include <algorithm>
 #include <cstdio>
+#include <cstdlib>
 #include <cstring>
 #include <vector>
 
@@ -62,6 +65,7 @@ void run_vu(int unit, std::uint32_t address) {
         u.dbf = !u.dbf;
         u.tops = u.base + (u.dbf ? u.ofst : 0);
         if (shadow(unit)) return;
+        vu::flush_kicks();
         vu::set_tops(u.top, u.itop);
     } else {
         u.itop = u.itops;
@@ -153,8 +157,17 @@ void unpack(int unit, std::uint32_t cmd, const std::uint32_t *data) {
     std::uint32_t cycle = 0;
     std::uint8_t *mem = dry ? g_dry_run : vu_data(unit);
     const std::uint32_t wrap = vu_qwords(unit);
+    const bool reach_kicks = unit == 1 && !dry && vu::kicks_pending();
     if (!masked && u.mode == 0 && !(wl > cl) && !(vn == 3 && vl == 3)) {
         kFastUnpack[vl][vn][usn ? 1 : 0](mem, wrap - 1, addr, wl, cl - wl, reinterpret_cast<const std::uint8_t *>(data), num);
+        for (std::uint32_t n = 0, cycle = 0; reach_kicks && n < num; ++n) {
+            vu::vif_wrote(addr, 0xFu);
+            ++addr;
+            if (++cycle >= wl) {
+                addr += cl - wl;
+                cycle = 0;
+            }
+        }
         u.num = 0;
         return;
     }
@@ -176,11 +189,13 @@ void unpack(int unit, std::uint32_t cmd, const std::uint32_t *data) {
         }
         std::uint8_t *q = mem + (addr % wrap) * 16;
         const std::uint32_t mrow = std::min<std::uint32_t>(cycle, 3u);
+        std::uint32_t lanes = 0;
         for (std::uint32_t j = 0; j < 4; ++j) {
             std::uint32_t m = masked ? (u.mask >> ((mrow * 4 + j) * 2)) & 3u : 0u;
             if (fill && m == 0) m = 1;
             std::uint32_t out;
             if (m == 3) continue;
+            lanes |= 1u << j;
             if (m == 1) out = u.row[j];
             else if (m == 2) out = u.col[mrow];
             else if (u.mode == 1) out = value[j] + u.row[j];
@@ -188,6 +203,7 @@ void unpack(int unit, std::uint32_t cmd, const std::uint32_t *data) {
             else out = value[j];
             std::memcpy(q + j * 4, &out, 4);
         }
+        if (reach_kicks) vu::vif_wrote(addr % wrap, lanes);
         ++addr;
         ++cycle;
         if (cl >= wl) {
@@ -222,6 +238,17 @@ void execute(int unit, std::uint32_t cmd, const std::uint32_t *data) {
     const std::uint32_t op = (cmd >> 24) & 0x7Fu, imm = cmd & 0xFFFFu, num = (cmd >> 16) & 0xFFu;
     u.code = cmd;
     if (!on_vu_thread()) ++g_commands[unit][op];
+    static const long long trace_frame = std::getenv("PS2_TRACE_GSFRAME") ? std::atoll(std::getenv("PS2_TRACE_GSFRAME")) : -1;
+    if (unit == 1 && !shadow(unit) && trace_frame >= 0 && static_cast<long long>(ps2::frame_count()) == trace_frame && op != 0x50 && op != 0x51) {
+        std::fprintf(stderr, "[vif] cmd %08x cycle %04x mode %u mask %08x tops %03x", cmd, u.cycle, u.mode, u.mask, u.tops);
+        if ((op & 0x60u) == 0x60u) {
+            std::fprintf(stderr, " unpack vn%u vl%u num %u addr %03x%s%s%s |", (cmd >> 26) & 3u, (cmd >> 24) & 3u, num ? num : 256u, cmd & 0x3FFu,
+                         (cmd >> 14) & 1u ? " usn" : "", (cmd >> 15) & 1u ? " +tops" : "", (cmd >> 28) & 1u ? " masked" : "");
+            const std::uint32_t words = std::min<std::uint32_t>(unpack_words(cmd, u, num ? num : 256u), 12u);
+            for (std::uint32_t i = 0; i < words; ++i) std::fprintf(stderr, " %08x", data[i]);
+        }
+        std::fprintf(stderr, "\n");
+    }
     switch (op) {
     case 0x00: break;
     case 0x01: u.cycle = imm; break;
@@ -231,7 +258,9 @@ void execute(int unit, std::uint32_t cmd, const std::uint32_t *data) {
     case 0x05: u.mode = imm & 3u; break;
     case 0x06: gif::set_path3_masked((imm >> 15) & 1u); break;
     case 0x07: u.mark = imm; break;
-    case 0x10: case 0x11: case 0x13: break;
+    case 0x10: case 0x11: case 0x13:
+        if (unit == 1 && !shadow(unit)) vu::flush_kicks();
+        break;
     case 0x14: case 0x15: run_vu(unit, imm * 8u); break;
     case 0x17: run_vu(unit, shadow(unit) ? 0u : vu::tpc(unit)); break;
     case 0x20: u.mask = data[0]; break;
@@ -239,6 +268,7 @@ void execute(int unit, std::uint32_t cmd, const std::uint32_t *data) {
     case 0x31: std::memcpy(u.col, data, 16); break;
     case 0x4A: {
         if (shadow(unit)) break;
+        if (unit == 1) vu::flush_kicks();
         std::uint8_t *code = unit ? g_vu1_code : g_vu0_code;
         const std::uint32_t size = unit ? 16384u : 4096u;
         const std::uint32_t count = num ? num : 256u;

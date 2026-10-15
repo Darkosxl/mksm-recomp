@@ -19,5 +19,11 @@ void set_tops(std::uint32_t top, std::uint32_t itop);
 void code_changed(int unit);
 Vu0Regs &regs(int unit);
 std::uint64_t interpreted_calls();
+// VU1 XGKICK packets wait until the VIF has to sync with VU1 (MSCAL/MSCNT/MPG/FLUSH*, DIRECT,
+// another GIF path, the end of a VIF1 DMA chain, vblank); VIF writes into their source
+// qwords before then reach the packet, as they would while the program runs on hardware.
+void flush_kicks();
+bool kicks_pending();
+void vif_wrote(std::uint32_t qword, std::uint32_t lanes);
 
 }

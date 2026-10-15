@@ -21,6 +21,7 @@
 #include <string>
 #include <unordered_map>
 #include <unordered_set>
+#include <vector>
 
 namespace ps2::vu {
 
@@ -440,6 +441,19 @@ float u2f(std::uint32_t v) {
     return f;
 }
 
+// A VU1 XGKICK is held here until the VIF next has to wait for VU1. On hardware the VIF keeps
+// streaming while a microprogram runs, so data it unpacks into an output buffer after MSCAL or
+// MSCNT lands before the program's XGKICK reads that buffer. Mortal Kombat: Shaolin Monks
+// relies on it: each batch's vertex colours arrive by a masked V4-8 UNPACK straight into the
+// RGBA slots of the GIF packet, after the MSCNT that fills in the rest of it.
+struct PendingKick {
+    std::uint32_t start, count;
+    std::vector<std::uint8_t> data;
+};
+std::vector<PendingKick> g_pending_kicks;
+
+bool vu1_on_this_thread() { return !gs::queue::vu_active() || gs::queue::role() == gs::queue::Role::Vu; }
+
 void xgkick(Unit &u, std::uint32_t address) {
     std::uint8_t buffer[16 * 1024 + 16];
     std::uint32_t q = address & (u.data_qwords - 1), count = 0;
@@ -459,6 +473,10 @@ void xgkick(Unit &u, std::uint32_t address) {
         for (std::uint32_t i = 0; i < body && count < u.data_qwords; ++i, ++q, ++count)
             std::memcpy(buffer + count * 16, qword(u, q), 16);
         done = eop;
+    }
+    if (u.regs == &g_vu1) {
+        g_pending_kicks.push_back(PendingKick{address & (u.data_qwords - 1), count, std::vector<std::uint8_t>(buffer, buffer + count * 16)});
+        return;
     }
     gif::transfer(1, buffer, count);
 }
@@ -661,11 +679,31 @@ void lower(Unit &u, std::uint32_t w, std::uint32_t pc, std::uint32_t &npc, bool 
 
 }
 
+void flush_kicks() {
+    if (g_pending_kicks.empty() || !vu1_on_this_thread()) return;
+    std::vector<PendingKick> kicks;
+    kicks.swap(g_pending_kicks);
+    for (const PendingKick &k : kicks) gif::transfer(1, k.data.data(), k.count);
+}
+
+bool kicks_pending() { return !g_pending_kicks.empty(); }
+
+void vif_wrote(std::uint32_t qword, std::uint32_t lanes) {
+    qword &= 1023u;
+    for (PendingKick &k : g_pending_kicks) {
+        const std::uint32_t at = (qword - k.start) & 1023u;
+        if (at >= k.count) continue;
+        for (std::uint32_t j = 0; j < 4; ++j)
+            if (lanes & (1u << j)) std::memcpy(k.data.data() + at * 16 + j * 4, g_vu1_mem + qword * 16 + j * 4, 4);
+    }
+}
+
 void reset() {
     if (gs::queue::vu_active() && gs::queue::role() != gs::queue::Role::Vu) {
         gs::queue::vu().post(gs::queue::kVuReset, 0, 0, nullptr, 0);
         return;
     }
+    flush_kicks();
     std::memset(&g_vu1, 0, sizeof g_vu1);
     g_vu1.vf[0].w[3] = fp::kOne;
     g_top = g_itop = 0;
@@ -1029,6 +1067,8 @@ namespace ps2::vu {
 
 void state(ps2::state::Stream &s) {
     s.tag("vu");
+    if (s.saving()) flush_kicks();
+    else g_pending_kicks.clear();
     s.pod(g_vu1);
     s.pod(g_top);
     s.pod(g_itop);
