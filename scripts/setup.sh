@@ -21,5 +21,5 @@ fi
 
 . "$ROOT/scripts/cxx.sh"
 cmake -S "$ROOT" -B "$ROOT/build/tools" -G Ninja -DCMAKE_BUILD_TYPE=Release "${cxx_flags[@]}" > /dev/null
-ninja -C "$ROOT/build/tools" eerecomp vurecomp
+ninja -j"${PS2_JOBS:-4}" -C "$ROOT/build/tools" eerecomp vurecomp
 echo "== ready"
