@@ -15,11 +15,14 @@ namespace ps2::state {
 
 class Stream {
 public:
-    explicit Stream(bool saving) : saving_(saving) {}
+    explicit Stream(bool saving, bool hashing = false) : saving_(saving), hashing_(hashing) {}
     virtual ~Stream() = default;
     bool saving() const { return saving_; }
     bool loading() const { return !saving_; }
+    // A hashing stream saves without side effects: no flushing, no refusal at unsafe points (PS2_HASH_LOG).
+    bool hashing() const { return hashing_; }
     virtual void bytes(void *data, std::size_t size) = 0;
+    virtual void section(const char *) {}
 
     template <typename T>
     void pod(T &v) {
@@ -36,6 +39,7 @@ public:
     void tag(const char *name) {
         char text[8] = {};
         std::strncpy(text, name, sizeof text);
+        section(name);
         char got[8];
         std::memcpy(got, text, sizeof got);
         bytes(got, sizeof got);
@@ -146,6 +150,7 @@ public:
 
 private:
     bool saving_;
+    bool hashing_;
 };
 
 class Writer : public Stream {

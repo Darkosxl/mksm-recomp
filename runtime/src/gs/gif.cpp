@@ -213,6 +213,10 @@ namespace ps2::gif {
 
 void state(ps2::state::Stream &s) {
     s.tag("gif");
+    if (s.hashing()) {  // g_paths/g_tags belong to the render thread while it runs
+        s.pod(g_stat);
+        return;
+    }
     s.pod(g_paths);
     s.pod(g_stat);
     s.pod(g_tags);

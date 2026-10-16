@@ -1,4 +1,6 @@
+#include "debug.hpp"
 #include "dmac.hpp"
+#include "hash64.hpp"
 #include "gs/gif.hpp"
 #include "vif.hpp"
 #include "vu_micro.hpp"
@@ -27,9 +29,12 @@
 #include <chrono>
 #include <cstdio>
 #include <cstring>
+#include <ctime>
 #include <fstream>
 #include <cstdlib>
 #include <iterator>
+#include <random>
+#include <thread>
 #include <stdexcept>
 #include <string>
 #include <vector>
@@ -57,6 +62,7 @@ std::string g_halt_reason;
 std::uint64_t g_frames = 0;
 std::uint64_t g_iop_synced = 0;
 bool g_state_request = false;
+bool g_load_request = false;
 bool g_resumed = false;
 std::string g_elf_path;
 std::vector<std::string> g_boot_args;
@@ -235,8 +241,12 @@ void watch_frame() {
         }
 }
 
+void hash_frame();
+
 void vblank() {
     ++g_frames;
+    debug::jitter(4);
+    hash_frame();
     time_frames();
     watch_frame();
     apply_presses();
@@ -250,6 +260,10 @@ void vblank() {
     kernel::on_vblank_start();
     if (g_options.max_frames && g_frames >= g_options.max_frames) halt("frame limit reached");
     if (g_options.save_state_frame && g_frames == g_options.save_state_frame) g_state_request = true;
+    // Debug: PS2_LOAD_AT="frame:file" loads a state in-process at that vblank (after a --save-state of the same frame),
+    // the way a lockstep host reloads its own join snapshot.
+    static const char *load_at = std::getenv("PS2_LOAD_AT");
+    if (load_at && std::strtoull(load_at, nullptr, 10) == g_frames) g_load_request = true;
     schedule(hw::kEventVblank, now() + frame_cycles(), vblank);
 }
 
@@ -292,6 +306,12 @@ void load_context(Cpu &c, const ThreadContext &t) {
 
 std::uint64_t now() { return g_base + static_cast<std::uint64_t>(g_given - g_cpu.budget); }
 
+std::int64_t rtc_time() {
+    static const char *epoch = std::getenv("PS2_RTC");
+    if (!epoch) return static_cast<std::int64_t>(std::time(nullptr));
+    return std::strtoll(epoch, nullptr, 10) + static_cast<std::int64_t>(now() / kEeClock);
+}
+
 std::uint64_t hblank_cycles() { return frame_cycles() * 2u / (g_options.pal ? 625u : 525u); }
 
 void set_budget(Cpu &c, std::int64_t cycles) {
@@ -314,7 +334,7 @@ std::uint64_t scheduled_at(int event) {
 bool preempt(Cpu &c) {
     run_due_events();
     refill(c);
-    return g_halted || g_state_request || g_reboot_request || kernel::must_unwind();
+    return g_halted || g_state_request || g_load_request || g_reboot_request || kernel::must_unwind();
 }
 
 void halt(const std::string &reason) {
@@ -340,10 +360,11 @@ std::function<void()> event_action(int id, std::uint64_t at) {
 
 std::atomic<std::uint32_t> g_vu_fence{0};
 
-void sync_vu_thread() {
+// flush=false waits for the VU thread without sending its pending XGKICK packets on (PS2_HASH_LOG must not perturb).
+void sync_vu_thread(bool flush = true) {
     if (!gs::queue::vu_active()) return;
     const std::uint32_t seen = g_vu_fence.load();
-    gs::queue::vu().post(gs::queue::kVuFence, 0, 0, nullptr, 0);
+    gs::queue::vu().post(gs::queue::kVuFence, flush ? 0u : 1u, 0, nullptr, 0);
     while (g_vu_fence.load() == seen) gs::queue::wait(g_vu_fence, seen);
 }
 
@@ -382,6 +403,104 @@ void machine_state(state::Stream &s) {
     sif::state(s);
     if (version >= 3) sif::timing_state(s);
     s.tag("end");
+}
+
+// PS2_HASH_LOG=file writes "frame hash" at every vblank (PS2_HASH_LOG_EVERY=n: every n-th frame), hashing the
+// guest-visible machine: EE CPU/RAM/scratchpad, the event queue, every device's savestate section (VU0/VU1 memory
+// and registers, IOP CPU/RAM, SPU2 RAM, ...), but not GS local memory, which depends on the GPU. PS2_HASH_SPLIT=1
+// adds one "section=hash" per state section, to bisect a divergence to a component.
+class HashStream final : public state::Stream {
+public:
+    HashStream() : Stream(true, true) {}
+    void bytes(void *data, std::size_t size) override { part_.update(data, size); }
+    void section(const char *name) override {
+        close();
+        name_ = name;
+    }
+    void close() {
+        if (name_) parts.emplace_back(name_, part_.digest());
+        part_.reset();
+        name_ = nullptr;
+    }
+    std::vector<std::pair<const char *, std::uint64_t>> parts;
+
+private:
+    Hash64 part_;
+    const char *name_ = nullptr;
+};
+
+struct HashLog {
+    std::FILE *out = nullptr;
+    std::uint64_t every = 1;
+    bool split = false;
+    std::uint64_t hashed = 0;
+    double total_ms = 0.0, max_ms = 0.0;
+};
+
+HashLog &hash_log() {
+    static HashLog log = [] {
+        HashLog l;
+        if (const char *path = std::getenv("PS2_HASH_LOG")) {
+            l.out = std::fopen(path, "w");
+            if (!l.out) std::fprintf(stderr, "[hash] cannot write %s\n", path);
+        }
+        if (const char *v = std::getenv("PS2_HASH_LOG_EVERY")) l.every = std::max<std::uint64_t>(1, std::strtoull(v, nullptr, 10));
+        l.split = std::getenv("PS2_HASH_SPLIT") != nullptr;
+        return l;
+    }();
+    return log;
+}
+
+void hash_frame() {
+    HashLog &log = hash_log();
+    if (!log.out || g_frames % log.every) return;
+    const auto start = std::chrono::steady_clock::now();
+    HashStream h;
+    h.tag("eecpu");
+    h.pod(g_cpu);
+    h.tag("eeram");
+    h.bytes(g_ram, kRamSize);
+    h.tag("spr");
+    h.bytes(g_spr, kScratchpadSize);
+    h.tag("sched");
+    h.pod(g_base);
+    h.pod(g_given);
+    h.pod(g_frames);
+    h.pod(g_iop_synced);
+    for (Event &e : g_events) {
+        h.pod(e.id);
+        h.pod(e.at);
+    }
+    kernel::state(h);
+    hw::state(h);
+    dmac::state(h);
+    sync_vu_thread(false);
+    vif::state(h);
+    vu::state(h);
+    ipu::state(h);
+    h.tag("gspriv");
+    for (std::uint32_t a : {0x12001000u, 0x12001010u, 0x12001040u, 0x12001080u}) {
+        std::uint64_t v = gs::read_privileged(a);
+        h.pod(v);
+    }
+    gif::state(h);
+    iop::state(h);
+    sif::state(h);
+    sif::timing_state(h);
+    h.close();
+    Hash64 all;
+    for (const auto &part : h.parts) all.update(&part.second, sizeof part.second);
+    std::fprintf(log.out, "%llu %016llx", static_cast<unsigned long long>(g_frames), static_cast<unsigned long long>(all.digest()));
+    if (log.split)
+        for (const auto &[name, value] : h.parts) std::fprintf(log.out, " %s=%016llx", name, static_cast<unsigned long long>(value));
+    std::fputc('\n', log.out);
+    std::fflush(log.out);
+    const double ms = std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - start).count();
+    log.total_ms += ms;
+    log.max_ms = std::max(log.max_ms, ms);
+    if (++log.hashed % 1000 == 0)
+        std::fprintf(stderr, "[hash] %llu frames hashed, %.3f ms average, %.3f ms max\n", static_cast<unsigned long long>(log.hashed),
+                     log.total_ms / static_cast<double>(log.hashed), log.max_ms);
 }
 
 }
@@ -534,6 +653,11 @@ int run() {
             g_state_request = false;
             save_state(g_options.save_state_path);
         }
+        if (g_load_request) {
+            g_load_request = false;
+            const char *spec = std::getenv("PS2_LOAD_AT");
+            if (!load_state(std::string(std::strchr(spec, ':') ? std::strchr(spec, ':') + 1 : ""))) halt("PS2_LOAD_AT failed");
+        }
         c.pc &= ~kUnwind;
         run_due_events();
         kernel::service(c);
@@ -565,6 +689,11 @@ int run() {
             std::fclose(f);
         }
     }
+    debug::print_census();
+    debug::print_jitter();
+    if (hash_log().hashed)
+        std::fprintf(stderr, "[hash] %llu frames hashed, %.3f ms average, %.3f ms max\n", static_cast<unsigned long long>(hash_log().hashed),
+                     hash_log().total_ms / static_cast<double>(hash_log().hashed), hash_log().max_ms);
     gs::stats();
     ipu::stats();
     if (const char *path = std::getenv("PS2_DUMP_AUDIO")) iop::spu2::dump_audio(path);
@@ -597,6 +726,7 @@ void run_vu_thread() {
         gs::queue::Header h;
         const std::uint8_t *payload = nullptr;
         while (in.peek(h, payload)) {
+            debug::jitter(2);
             switch (h.type) {
             case gs::queue::kVif1: vif::transfer(1, payload, h.arg0); break;
             case gs::queue::kVif1Write: vif::write(1, h.arg0, h.arg1); break;
@@ -605,7 +735,8 @@ void run_vu_thread() {
                 vu::reset();
                 break;
             case gs::queue::kVuFence:
-                vu::flush_kicks();
+                if (!h.arg0 && vu::kicks_pending()) std::fprintf(stderr, "[state] a VU1 fence (save/reboot) sends pending XGKICK packets early\n");
+                if (!h.arg0) vu::flush_kicks();
                 g_vu_fence.fetch_add(1);
                 gs::queue::notify(g_vu_fence);
                 break;
@@ -720,6 +851,111 @@ bool parse_stick(const std::string &spec, Press &press) {
 }
 
 double gpu_busy_ms() { return gs::gpu_busy_ms(); }
+
+namespace debug {
+
+bool g_census = std::getenv("PS2_CENSUS") != nullptr;
+
+namespace {
+
+constexpr const char *kCensusNames[kCensusCount] = {
+    "gs_download_dma", "gs_download_vif1fifo", "gs_download_qwords", "gs_download_cached", "gs_download_wait", "gs_csr_read",
+    "gs_priv_read", "vu1_mem_read", "vu1_mem_write", "vu1_code_read", "vu1_code_write", "vu0_mem_read", "rtc_read", "gs_signal"};
+
+struct Counter {
+    std::uint64_t count = 0, first = 0, last = 0, frames = 0;
+    std::uint32_t pc[8] = {};
+    std::uint64_t pc_count[8] = {};
+};
+
+Counter g_counters[kCensusCount];
+
+}
+
+void count_slow(Census what, std::uint64_t n) {
+    Counter &c = g_counters[what];
+    if (!c.count || c.last != g_frames) {
+        if (!c.count) c.first = g_frames;
+        c.last = g_frames;
+        ++c.frames;
+    }
+    c.count += n;
+    const std::uint32_t pc = g_cpu.pc & ~kUnwind;
+    for (int i = 0; i < 8; ++i)
+        if (c.pc_count[i] == 0 || c.pc[i] == pc) {
+            c.pc[i] = pc;
+            c.pc_count[i] += n;
+            break;
+        }
+}
+
+void print_census() {
+    if (!g_census) return;
+    for (int i = 0; i < kCensusCount; ++i) {
+        const Counter &c = g_counters[i];
+        std::fprintf(stderr, "[census] %s count=%llu", kCensusNames[i], static_cast<unsigned long long>(c.count));
+        if (c.count) {
+            std::fprintf(stderr, " frames=%llu first=%llu last=%llu pcs", static_cast<unsigned long long>(c.frames),
+                         static_cast<unsigned long long>(c.first), static_cast<unsigned long long>(c.last));
+            for (int j = 0; j < 8 && c.pc_count[j]; ++j) std::fprintf(stderr, " %08X:%llu", c.pc[j], static_cast<unsigned long long>(c.pc_count[j]));
+        }
+        std::fprintf(stderr, "\n");
+    }
+}
+
+namespace {
+
+struct JitterConfig {
+    std::uint64_t seed = 0;
+    std::uint32_t ppm = 2000;
+    bool on = false;
+};
+
+const JitterConfig &jitter_config() {
+    static const JitterConfig config = [] {
+        JitterConfig c;
+        if (const char *spec = std::getenv("PS2_JITTER")) {
+            char *end = nullptr;
+            c.seed = std::strtoull(spec, &end, 10);
+            if (end && *end == ',') c.ppm = static_cast<std::uint32_t>(std::strtoul(end + 1, nullptr, 10));
+            c.on = true;
+            std::fprintf(stderr, "[jitter] seed %llu: %u ppm of hand-offs sleep 0-2 ms\n", static_cast<unsigned long long>(c.seed), c.ppm);
+        }
+        return c;
+    }();
+    return config;
+}
+
+constexpr int kJitterSites = 8;
+std::atomic<std::uint64_t> g_jitter_calls[kJitterSites], g_jitter_sleeps[kJitterSites], g_jitter_us{0};
+
+}
+
+bool g_jitter = std::getenv("PS2_JITTER") != nullptr;
+
+void jitter_slow(int site) {
+    const JitterConfig &config = jitter_config();
+    thread_local std::mt19937_64 rng(config.seed * 0x9E3779B97F4A7C15ull ^ std::hash<std::thread::id>{}(std::this_thread::get_id()) ^ static_cast<std::uint64_t>(site) << 56);
+    const std::uint64_t r = rng();
+    site &= kJitterSites - 1;
+    g_jitter_calls[site].fetch_add(1, std::memory_order_relaxed);
+    if (r % 1000000 >= config.ppm) return;
+    const std::uint64_t us = (r >> 24) % 2001;
+    std::this_thread::sleep_for(std::chrono::microseconds(us));
+    g_jitter_sleeps[site].fetch_add(1, std::memory_order_relaxed);
+    g_jitter_us.fetch_add(us, std::memory_order_relaxed);
+}
+
+void print_jitter() {
+    if (!g_jitter) return;
+    std::fprintf(stderr, "[jitter] slept %.1f s; calls/sleeps per site:", static_cast<double>(g_jitter_us.load()) / 1e6);
+    for (int i = 0; i < kJitterSites; ++i)
+        if (g_jitter_calls[i].load())
+            std::fprintf(stderr, " %d:%llu/%llu", i, static_cast<unsigned long long>(g_jitter_calls[i].load()), static_cast<unsigned long long>(g_jitter_sleeps[i].load()));
+    std::fprintf(stderr, "\n");
+}
+
+}
 
 #ifdef __EMSCRIPTEN__
 EM_ASYNC_JS(void, ps2_browser_yield, (), {

@@ -1,4 +1,5 @@
 #include "hw.hpp"
+#include "debug.hpp"
 
 #include "dmac.hpp"
 #include "gs/gif.hpp"
@@ -270,6 +271,7 @@ void write64(std::uint32_t a, std::uint64_t v) {
 void read128(std::uint32_t a, Reg128 &out) {
     std::memset(&out, 0, sizeof out);
     if (a >= 0x10005000u && a < 0x10006000u) {
+        debug::count(debug::kGsDownloadFifo);
         gs::read_image(reinterpret_cast<std::uint8_t *>(&out), 1);
         return;
     }
@@ -307,6 +309,8 @@ void state(ps2::state::Stream &s) {
     s.map(g_regs);
     s.pod(g_crt);
     s.pod(g_timers);
+    if (s.hashing()) s.pod(g_intc_latched);  // guest-visible but not in the savestate format
+    if (s.loading()) g_intc_latched = 0;      // as in a fresh process, so an in-process load matches one
 }
 
 }

@@ -722,9 +722,9 @@ namespace ps2::iop::kernel {
 
 void state(ps2::state::Stream &s) {
     s.tag("iopkern");
-    if (s.saving() && g_nesting) throw std::runtime_error("the IOP is inside a guest call");
+    if (s.saving() && !s.hashing() && g_nesting) throw std::runtime_error("the IOP is inside a guest call");
     s.map(g_threads, [&s](Thread &t) {
-        if (s.saving() && t.on_exit) throw std::runtime_error("an IOP module is still starting");
+        if (s.saving() && !s.hashing() && t.on_exit) throw std::runtime_error("an IOP module is still starting");
         s.pod(t.id);
         s.pod(t.status);
         s.pod(t.priority);
@@ -763,7 +763,10 @@ void state(ps2::state::Stream &s) {
     if (s.saving()) {
         auto pending = g_events;
         for (; !pending.empty(); pending.pop()) {
-            if (!pending.top().job.kind) throw std::runtime_error("an IOP event cannot be saved");
+            if (!pending.top().job.kind) {
+                if (s.hashing()) continue;
+                throw std::runtime_error("an IOP event cannot be saved");
+            }
             events.push_back(pending.top());
         }
     }

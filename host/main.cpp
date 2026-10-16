@@ -10,17 +10,45 @@
 #include "netplay.hpp"
 #endif
 
+#include <atomic>
 #include <cctype>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
+#include <functional>
 #include <string>
+#include <thread>
 #include <vector>
 
 void register_generated_code();
 void register_generated_vu();
 
 namespace {
+
+// PS2_THREADS=1 (debug): headless run with the browser's thread layout (render thread on main, VU1 thread unless
+// PS2_NO_VU_THREAD, emulation on its own thread), unpaced, so thread-timing determinism can be tested without a window.
+int run_threaded_headless(const std::function<int()> &emulate) {
+    ps2::init_graphics();
+    ps2::g_options.on_vblank = [] { ps2::post_present(); };
+    ps2::start_render_thread();
+    if (!std::getenv("PS2_NO_VU_THREAD")) {
+        ps2::start_vu_thread();
+        std::thread(ps2::run_vu_thread).detach();
+    }
+    std::atomic<bool> done{false};
+    int result = 0;
+    std::thread emulation([&] {
+        result = emulate();
+        done.store(true);
+        ps2::wake_render_thread();
+    });
+    const std::function<void(const std::uint32_t *, std::uint32_t, std::uint32_t)> none;
+    while (!done.load())
+        if (ps2::render_pending(false, none, nullptr, 8.0) == ps2::Rendered::idle) ps2::wait_render_work(4);
+    emulation.join();
+    std::fflush(nullptr);
+    std::_Exit(result);
+}
 
 int usage() {
     std::fprintf(stderr,
@@ -146,5 +174,6 @@ int main(int argc, char **argv) {
 #ifdef PS2_NETPLAY
     if (host) return run_netplay_headless(emulate);
 #endif
+    if (std::getenv("PS2_THREADS")) return run_threaded_headless(emulate);
     return emulate();
 }

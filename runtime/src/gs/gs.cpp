@@ -4,6 +4,7 @@
 #include "queue.hpp"
 #include "raster.hpp"
 #include "texcache.hpp"
+#include "../debug.hpp"
 #include "../hw.hpp"
 #include "../vu_micro.hpp"
 #ifdef PS2_GPU
@@ -678,6 +679,7 @@ void write(std::uint32_t reg, std::uint64_t value) {
 }
 
 void signal(std::uint32_t reg, std::uint64_t value) {
+    debug::count(debug::kGsSignal);
     const std::uint32_t mask = static_cast<std::uint32_t>(value >> 32), id = static_cast<std::uint32_t>(value);
     switch (reg) {
     case 0x60:
@@ -738,6 +740,7 @@ void write_image(const std::uint8_t *data, std::uint32_t qwords) { feed_image(da
 std::atomic<std::uint32_t> g_downloads{0};
 
 void read_image(std::uint8_t *data, std::uint32_t qwords) {
+    debug::count(debug::kGsDownloadQwords, qwords);
     if (!queue::active()) {
         render_read_image(data, qwords);
         return;
@@ -750,12 +753,14 @@ void read_image(std::uint8_t *data, std::uint32_t qwords) {
         std::lock_guard lock(g_cache_mutex);
         const auto it = std::find_if(g_download_cache.begin(), g_download_cache.end(), [&](const CachedDownload &c) { return c.key == key; });
         if (it != g_download_cache.end() && it->data.size() == bytes) {
+            debug::count(debug::kGsDownloadCached);
             std::memcpy(data, it->data.data(), bytes);
             it->used = ++g_cache_clock;
             queue::post(queue::kDownloadAsync, qwords, 0, &key, sizeof key);
             return;
         }
     }
+    debug::count(debug::kGsDownloadWait);
     const std::uint32_t seen = g_downloads.load();
     const std::uintptr_t target = reinterpret_cast<std::uintptr_t>(data);
     queue::post(queue::kDownload, qwords, 0, &target, sizeof target);
@@ -811,6 +816,7 @@ void render_read_image(std::uint8_t *data, std::uint32_t qwords) {
 }
 
 std::uint64_t read_privileged(std::uint32_t address) {
+    debug::count((address & 0x1FFFu) == 0x1000 ? debug::kGsCsrRead : debug::kGsPrivRead);
     switch (address & 0x1FFFu) {
     case 0x1000: return g_csr | (g_odd_field ? 0x2000u : 0u);
     case 0x1010: return g_imr;
@@ -1034,6 +1040,7 @@ Rendered render_pending(const std::function<void(const DisplayRegs &)> &on_prese
     const std::uint8_t *payload = nullptr;
     const auto start = std::chrono::steady_clock::now();
     for (std::uint32_t n = 1; queue::render().peek(h, payload); ++n) {
+        debug::jitter(3);
         if (!(n & 7u) && std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - start).count() > budget_ms) return Rendered::busy;
         bool presented = false;
         switch (h.type) {
@@ -1127,6 +1134,12 @@ std::string g_state_error;
 
 void render_state(ps2::state::Stream &s) {
     flush_and_wait();
+#ifdef PS2_GPU
+    if (s.loading()) {
+        g_seen_ranges.clear();
+        g_transfer_stale = false;
+    }
+#endif
     s.pod(g_state);
     ++g_setup_generation;
     s.pod(g_pmode);
@@ -1192,6 +1205,11 @@ void serve_state(const void *payload) {
 
 void state(ps2::state::Stream &s) {
     s.tag("gs");
+    if (s.loading()) {  // downloads cached before a load belong to another timeline (and their keys to g_shadow, not saved)
+        g_shadow = DownloadKey{};
+        std::lock_guard lock(g_cache_mutex);
+        g_download_cache.clear();
+    }
     if (!queue::active()) {
         render_state(s);
         return;
