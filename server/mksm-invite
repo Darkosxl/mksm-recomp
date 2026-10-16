@@ -1,0 +1,6 @@
+#!/bin/sh
+# Mints an invite link on the VPS and prints it as JSON. usage: sudo mksm-invite [uses] [note]
+set -eu
+. /etc/mksm/signal.env
+curl -fsS -X POST --get --data-urlencode "uses=${1:-1}" --data-urlencode "note=${2:-}" \
+    -H "Authorization: Bearer $ADMIN_SECRET" "http://127.0.0.1:${PORT:-8787}/admin/invite"

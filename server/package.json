@@ -1,0 +1,17 @@
+{
+  "name": "mksm-signal",
+  "private": true,
+  "description": "Invites, cookie auth, 2-player WebRTC signalling rooms and TURN credentials for the MKSM site",
+  "type": "module",
+  "main": "signal.mjs",
+  "engines": {
+    "node": ">=20"
+  },
+  "scripts": {
+    "start": "node signal.mjs",
+    "test": "node test.mjs"
+  },
+  "dependencies": {
+    "ws": "^8.18.0"
+  }
+}
