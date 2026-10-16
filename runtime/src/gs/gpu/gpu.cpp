@@ -1162,7 +1162,8 @@ bool init(Mode m) {
     }
     WGPUAdapterInfo info = WGPU_ADAPTER_INFO_INIT;
     if (wgpuAdapterGetInfo(adapter, &info) == WGPUStatus_Success) {
-        std::fprintf(stderr, "[gpu] %.*s (%.*s)\n", static_cast<int>(info.device.length), info.device.data, static_cast<int>(info.description.length), info.description.data);
+        std::fprintf(stderr, "[gpu] %.*s (%.*s) %.*s %.*s\n", static_cast<int>(info.device.length), info.device.data, static_cast<int>(info.description.length), info.description.data,
+                     static_cast<int>(info.vendor.length), info.vendor.data, static_cast<int>(info.architecture.length), info.architecture.data);
         wgpuAdapterInfoFreeMembers(info);
     }
     WGPULimits supported = WGPU_LIMITS_INIT;

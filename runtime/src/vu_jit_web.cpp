@@ -2,6 +2,8 @@
 
 #include "vu_jit.hpp"
 
+#include "ps2/system.hpp"
+
 #include <cstdlib>
 #include <cstring>
 
@@ -18,6 +20,8 @@ std::vector<std::uint32_t> *g_kicks = nullptr;
 int mode() {
     static const int value = [] {
 #ifdef __EMSCRIPTEN__
+        // lockstep peers must agree on one mode, and check mode (3) rewrites VU1 memory while it compares
+        if (ps2::g_options.lockstep) return 1;
         const char *env = std::getenv("PS2_VU_JIT");
         if (!env) return 1;
         if (std::strcmp(env, "all") == 0) return 2;

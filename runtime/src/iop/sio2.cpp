@@ -336,6 +336,16 @@ void flush_cards() {
     if (g_options.on_memcard_saved) g_options.on_memcard_saved();
 }
 
+std::vector<std::uint8_t> card_image() { return g_card.present ? g_card.data : std::vector<std::uint8_t>{}; }
+
+void set_card_image(const std::uint8_t *data, std::size_t size) {
+    g_card.present = size != 0;
+    g_card.data.assign(kCardBytes, 0xFF);
+    if (size) std::memcpy(g_card.data.data(), data, std::min(size, kCardBytes));
+    g_card.dirty = false;
+    g_card.quiet = 0;
+}
+
 std::uint32_t read(std::uint32_t a) {
     if (a >= 0x1F808200u && a < 0x1F808240u) return g_send3[(a - 0x1F808200u) / 4];
     if (a >= 0x1F808240u && a < 0x1F808260u) {

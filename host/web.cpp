@@ -1,4 +1,5 @@
 #include "ps2/disc.hpp"
+#include "ps2/memory.hpp"
 #include "ps2/system.hpp"
 
 #include <emscripten.h>
@@ -8,7 +9,9 @@
 
 #include <algorithm>
 #include <atomic>
+#include <climits>
 #include <cmath>
+#include <cstddef>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
@@ -149,7 +152,53 @@ struct AudioRing {
     std::int16_t samples[kAudioFrames * 2];
 };
 
+// Deterministic lockstep (web/lockstep.md). The first 2088 bytes are the W3 interface shared with web/lockstep.js;
+// the rest is the W4 extension (snapshot/load commands, stats, desync bisection).
+struct LockstepShared {
+    std::atomic<std::int32_t> emu_frame{-1};
+    std::atomic<std::int32_t> seq{0};
+    std::atomic<std::int32_t> delay{0};
+    std::atomic<std::int32_t> active{0};
+    std::atomic<std::int32_t> flags{0};
+    std::atomic<std::int32_t> local_slot{0};
+    std::atomic<std::int32_t> have[2][64];
+    std::uint8_t input[2][64][12];
+    std::atomic<std::int32_t> hash_frame{-1};
+    std::atomic<std::int32_t> slow_ms{0};
+    std::uint64_t hash = 0;
+    // ---- W4 extension ----
+    std::atomic<std::int32_t> cmd{0};          // JS: kCmdSnapshot / kCmdLoad (the emulator takes it and writes 0)
+    std::atomic<std::int32_t> held_frame{-1};  // emu: the frame it is held at by kFlagHold, else -1
+    std::int32_t load_ptr = 0, load_size = 0, load_frame = 0;
+    std::int32_t card_ptr = 0, card_size = -1;  // card to install with the load; size -1 keeps the current card
+    std::atomic<std::int32_t> snap_state{0};   // emu: kSnap*
+    std::int32_t snap_ptr = 0, snap_size = 0, snap_frame = 0;
+    std::int32_t card_out_ptr = 0, card_out_size = 0;
+    std::int32_t pad0 = 0;
+    std::uint64_t load_hash = 0;               // full state hash right after a load (or a snapshot)
+    std::atomic<std::int32_t> loaded_frame{-1};
+    std::atomic<std::int32_t> disc_wait{0};    // ms the emulation thread has waited on the current disc fetch
+    std::atomic<std::int32_t> stall_frames{0};
+    std::atomic<std::int32_t> stall_ms{0};
+    std::atomic<std::int32_t> paused_frames{0};
+    std::atomic<std::int32_t> game_frame{0};
+    std::int64_t rtc = 0;                      // JS: guest RTC epoch, installed with the next load when rtc_set
+    std::int32_t rtc_set = 0;
+    std::int32_t pad1 = 0;
+    std::uint64_t slices[32] = {};             // emu: the per-part hashes behind the last published hash
+};
+static_assert(offsetof(LockstepShared, have) == 24 && offsetof(LockstepShared, input) == 536);
+static_assert(offsetof(LockstepShared, hash_frame) == 2072 && offsetof(LockstepShared, slow_ms) == 2076);
+static_assert(offsetof(LockstepShared, hash) == 2080 && offsetof(LockstepShared, cmd) == 2088);
+static_assert(offsetof(LockstepShared, load_hash) == 2144 && offsetof(LockstepShared, rtc) == 2176);
+static_assert(offsetof(LockstepShared, slices) == 2192 && sizeof(LockstepShared) == 2448);
+
+enum : std::int32_t { kFlagPaused = 1, kFlagResync = 2, kFlagHold = 4 };
+enum : std::int32_t { kCmdSnapshot = 1, kCmdLoad = 2 };
+enum : std::int32_t { kSnapIdle, kSnapReady, kSnapRetry, kSnapLoaded, kSnapFailed };
+
 AudioRing g_audio;
+LockstepShared g_ls;
 Slot g_slots[kSlots];
 std::uint64_t g_disc_size = 0, g_use_clock = 0, g_last_chunk = ~0ull, g_run = 0;
 char *g_disc_url = nullptr;
@@ -193,7 +242,52 @@ void read_ahead(std::uint64_t index) {
     for (std::uint64_t k = 1; k <= std::min(g_run * 2, kReadAhead); ++k) want(index + k);
 }
 
+bool lockstep() { return ps2::g_options.lockstep; }
+
+void note_disc_wait(double since) {
+    const double waited = emscripten_get_now() - since;
+    if (waited > 250.0) g_ls.disc_wait.store(static_cast<std::int32_t>(waited));
+}
+
+// Lockstep: a cache miss blocks the emulation thread until the bytes arrive, retrying a failed fetch forever, so
+// guest timing never depends on the network (no emulated retry, no zero-fill).
+const Slot *chunk_blocking(std::uint64_t index) {
+    const double since = emscripten_get_now();
+    int failures = 0;
+    bool first = true;
+    for (;;) {
+        Slot *s = want(index);
+        if (first) {
+            first = false;
+            advance(index);
+            read_ahead(std::max(index, g_last_chunk));
+        }
+        if (!s) {  // every slot is being fetched: wait for one to finish
+            usleep(2000);
+            note_disc_wait(since);
+            continue;
+        }
+        const std::uint32_t state = s->state.load(std::memory_order_acquire);
+        if (state == kReady) {
+            s->used = ++g_use_clock;
+            if (g_ls.disc_wait.load()) g_ls.disc_wait.store(0);
+            return s;
+        }
+        if (state == kFailed) {
+            ++failures;
+            std::fprintf(stderr, "[web] disc chunk %llu failed %d times, retrying\n", static_cast<unsigned long long>(index), failures);
+            usleep(static_cast<useconds_t>(std::min(2000, 100 << std::min(failures, 5)) * 1000));
+            s->state.store(kWanted, std::memory_order_release);
+            ps2::wake_render_thread();
+        } else {
+            emscripten_futex_wait(&s->state, state, 100);
+        }
+        note_disc_wait(since);
+    }
+}
+
 const Slot *chunk(std::uint64_t index) {
+    if (lockstep()) return chunk_blocking(index);
     Slot *s = want(index);
     advance(index);
     read_ahead(std::max(index, g_last_chunk));
@@ -225,7 +319,8 @@ bool disc_ready(std::uint64_t offset, std::size_t size) {
         advance(index);
     }
     read_ahead(std::max(last, g_last_chunk));
-    return ready;
+    // lockstep: the read itself blocks until the chunks arrive, so the guest always sees a ready drive
+    return ready || lockstep();
 }
 
 std::size_t read_disc(std::uint64_t offset, void *out, std::size_t size) {
@@ -287,6 +382,200 @@ void on_vblank() {
     g_emulation_idle.store(g_emulation_idle.load() + emscripten_get_now() - start);
 }
 
+// ---- lockstep: the emulator side of web/lockstep.md ----
+
+std::int32_t g_ls_frame = 0;          // lockstep frame: vblanks plus consumed paused frames, the same on both peers
+std::int32_t g_ls_hash_from = 0;      // first frame of a hash window that lies entirely after the last load
+std::int32_t g_ls_snap_at = 0, g_ls_load_frame = 0;
+bool g_ls_snap_retry = false;
+std::uint64_t g_ls_parts[32];
+double g_ls_next = 0.0;
+std::vector<std::uint8_t> g_ls_snapshot, g_ls_card;
+
+void ls_notify(std::atomic<std::int32_t> &word) { emscripten_futex_wake(&word, INT_MAX); }
+
+std::uint64_t combine_parts(const std::uint64_t *parts) { return ps2::hash_bytes(parts, 32 * sizeof *parts); }
+
+void ls_set_pad(int pad, const std::uint8_t *in) {
+    ps2::set_pad_buttons(static_cast<std::uint16_t>(in[0] | in[1] << 8), pad);
+    ps2::set_pad_axis(0, in[4], pad);
+    ps2::set_pad_axis(1, in[5], pad);
+    ps2::set_pad_axis(2, in[2], pad);
+    ps2::set_pad_axis(3, in[3], pad);
+    // pressure is guest-visible: 255 for every pressed button, the struct's L2/R2 pressure when the pad has one
+    for (int i = 0; i < 16; ++i) ps2::set_pad_pressure(i, 255, pad);
+    ps2::set_pad_pressure(8, in[6] ? in[6] : 255, pad);
+    ps2::set_pad_pressure(9, in[7] ? in[7] : 255, pad);
+}
+
+// 59.94 Hz clock (+ slow_ms from the time sync), nudged by at most 0.2% to keep the audio ring near 80 ms; after a
+// stall longer than a frame the clock restarts instead of catching up.
+void ls_pace(bool paused) {
+    double period = ps2::g_options.pal ? 20.0 : 1000.0 / 59.94;
+    if (!paused && g_audio.active.load()) period *= 1.0 + 0.002 * std::clamp((audio_queued_ms() - 80.0) / 40.0, -1.0, 1.0);
+    period += g_ls.slow_ms.load();
+    const double now = emscripten_get_now();
+    if (g_ls_next == 0.0 || now - g_ls_next > period) g_ls_next = now;
+    g_ls_next += period;
+    if (g_ls_next > now) usleep(static_cast<useconds_t>((g_ls_next - now) * 1000.0));
+}
+
+// Part (frame & 31) of the state hash every frame; the window's 32 parts are published at the frame ending in 31.
+void ls_hash(std::int32_t frame) {
+    const unsigned k = static_cast<unsigned>(frame) & 31u;
+    g_ls_parts[k] = ps2::hash_part(k);
+    if (k != 31 || frame - 31 < g_ls_hash_from) return;
+    std::memcpy(g_ls.slices, g_ls_parts, sizeof g_ls_parts);
+    g_ls.hash = combine_parts(g_ls_parts);
+    g_ls.hash_frame.store(frame);
+}
+
+std::uint64_t ls_full_hash() {
+    std::uint64_t parts[32];
+    for (unsigned k = 0; k < 32; ++k) parts[k] = ps2::hash_part(k);
+    return combine_parts(parts);
+}
+
+void ls_take_load() {
+    if (g_ls.card_size >= 0) {
+        const auto *card = reinterpret_cast<const std::uint8_t *>(static_cast<std::uintptr_t>(g_ls.card_ptr));
+        ps2::set_memcard_image(card, static_cast<std::size_t>(g_ls.card_size));
+        // the session card lives in memory only: the guest's own card in IndexedDB stays untouched
+        ps2::g_options.memcard_path = g_ls.card_size ? "/session/Mcd001.ps2" : "";
+        ps2::g_options.on_memcard_saved = nullptr;
+    }
+    if (g_ls.rtc_set) ps2::set_rtc_epoch(g_ls.rtc);
+    g_ls_load_frame = g_ls.load_frame;
+    ps2::request_load_state(reinterpret_cast<const std::uint8_t *>(static_cast<std::uintptr_t>(g_ls.load_ptr)), static_cast<std::size_t>(g_ls.load_size));
+}
+
+enum class LsWait { run, solo, command };
+
+// Waits at vblank `frame` until both inputs exist, holding while JS sets kFlagHold, and takes snapshot/load commands.
+LsWait ls_wait(std::int32_t frame) {
+    const double start = emscripten_get_now();
+    bool stalled = false;
+    for (;;) {
+        const std::int32_t seq = g_ls.seq.load();
+        const std::int32_t cmd = g_ls.cmd.exchange(0);
+        if (g_ls_snap_retry || cmd == kCmdSnapshot) {
+            g_ls_snap_retry = false;
+            g_ls_snap_at = frame;
+            g_ls.held_frame.store(-1);
+            ps2::request_snapshot();
+            return LsWait::command;
+        }
+        if (cmd == kCmdLoad) {
+            g_ls.held_frame.store(-1);
+            ls_take_load();
+            return LsWait::command;
+        }
+        const std::int32_t flags = g_ls.flags.load();
+        if (flags & kFlagHold) {
+            if (g_ls.held_frame.exchange(frame) != frame) ls_notify(g_ls.held_frame);
+            emscripten_futex_wait(&g_ls.seq, seq, 250);
+            continue;
+        }
+        if (g_ls.held_frame.load() != -1) {
+            g_ls.held_frame.store(-1);
+            ls_notify(g_ls.held_frame);
+        }
+        if (!g_ls.active.load()) return LsWait::solo;
+        const int at = frame & 63;
+        if (g_ls.have[0][at].load() == frame && g_ls.have[1][at].load() == frame) {
+            if (stalled) g_ls.stall_ms.fetch_add(static_cast<std::int32_t>(emscripten_get_now() - start + 0.5));
+            return LsWait::run;
+        }
+        if (!stalled && !(flags & kFlagPaused)) {
+            stalled = true;
+            g_ls.stall_frames.fetch_add(1);
+        }
+        emscripten_futex_wait(&g_ls.seq, seq, 250);
+    }
+}
+
+void lockstep_vblank() {
+    const double start = emscripten_get_now();
+    ps2::post_present();
+    for (;;) {
+        const std::int32_t frame = ++g_ls_frame;
+        g_ls.game_frame.store(static_cast<std::int32_t>(ps2::frame_count()));
+        g_ls.emu_frame.store(frame);
+        ls_notify(g_ls.emu_frame);
+        ls_hash(frame);
+        const LsWait got = ls_wait(frame);
+        if (got == LsWait::command) break;  // this frame's inputs are not applied: a snapshot or a load comes first
+        if (got == LsWait::solo) {
+            ls_pace(false);
+            break;
+        }
+        const std::uint8_t *in0 = g_ls.input[0][frame & 63], *in1 = g_ls.input[1][frame & 63];
+        if ((in0[8] | in1[8]) & 1) {  // a paused frame: consumed at 60 Hz, the game does not run
+            g_ls.paused_frames.fetch_add(1);
+            ls_pace(true);
+            continue;
+        }
+        ls_set_pad(0, in0);
+        ls_set_pad(1, in1);
+        ls_pace(false);
+        break;
+    }
+    g_emulation_idle.store(g_emulation_idle.load() + emscripten_get_now() - start);
+}
+
+// Run-loop top after request_snapshot(): publish the state (and card) and hold until JS sends the load that both
+// peers run (the host reloads its own bytes, so the saver and the loader continue from identical memory).
+void lockstep_snapshot(const std::vector<std::uint8_t> *state) {
+    if (!state) {
+        g_ls_snap_retry = true;  // not at a safe point: snapshot again at the next vblank
+        g_ls.snap_state.store(kSnapRetry);
+        ls_notify(g_ls.snap_state);
+        return;
+    }
+    g_ls_snapshot = *state;
+    g_ls_card = ps2::memcard_image();
+    g_ls.snap_ptr = static_cast<std::int32_t>(reinterpret_cast<std::uintptr_t>(g_ls_snapshot.data()));
+    g_ls.snap_size = static_cast<std::int32_t>(g_ls_snapshot.size());
+    g_ls.snap_frame = g_ls_snap_at;
+    g_ls.card_out_ptr = static_cast<std::int32_t>(reinterpret_cast<std::uintptr_t>(g_ls_card.data()));
+    g_ls.card_out_size = static_cast<std::int32_t>(g_ls_card.size());
+    g_ls.snap_state.store(kSnapReady);
+    ls_notify(g_ls.snap_state);
+    std::fprintf(stderr, "[lockstep] snapshot of frame %d: %d KB, card %d KB\n", g_ls_snap_at, g_ls.snap_size >> 10, g_ls.card_out_size >> 10);
+    for (;;) {
+        const std::int32_t seq = g_ls.seq.load();
+        if (g_ls.cmd.load() == kCmdLoad) {
+            g_ls.cmd.store(0);
+            ls_take_load();
+            return;
+        }
+        emscripten_futex_wait(&g_ls.seq, seq, 250);
+    }
+}
+
+void lockstep_loaded(bool ok) {
+    if (!ok) {
+        g_ls.snap_state.store(kSnapFailed);
+        ls_notify(g_ls.snap_state);
+        return;
+    }
+    g_ls_frame = g_ls_load_frame;
+    g_ls_hash_from = g_ls_load_frame + 1;
+    g_ls_next = 0.0;
+    // the pads' pressure is outside the state: both peers restart it from the same values
+    for (int pad = 0; pad < 2; ++pad)
+        for (int i = 0; i < 16; ++i) ps2::set_pad_pressure(i, 255, pad);
+    g_ls.load_hash = ls_full_hash();
+    g_ls.loaded_frame.store(g_ls_load_frame);
+    g_ls_snapshot.clear();
+    g_ls_snapshot.shrink_to_fit();
+    g_ls_card.clear();
+    g_ls.snap_state.store(kSnapLoaded);
+    ls_notify(g_ls.snap_state);
+    std::fprintf(stderr, "[lockstep] loaded frame %d (game frame %llu), hash %016llx\n", g_ls_load_frame,
+                 static_cast<unsigned long long>(ps2::frame_count()), static_cast<unsigned long long>(g_ls.load_hash));
+}
+
 struct Launch {
     std::vector<std::string> args;
 };
@@ -314,7 +603,11 @@ void *emulate(void *data) {
 
 }
 
+// while a lockstep session runs, both pads come from the input ring only
+bool direct_pads() { return !(ps2::g_options.lockstep && g_ls.active.load()); }
+
 extern "C" EMSCRIPTEN_KEEPALIVE void ps2web_pad(int pad, int buttons, int lx, int ly, int rx, int ry) {
+    if (!direct_pads()) return;
     ps2::set_pad_buttons(static_cast<std::uint16_t>(buttons), pad);
     ps2::set_pad_axis(0, static_cast<std::uint8_t>(rx), pad);
     ps2::set_pad_axis(1, static_cast<std::uint8_t>(ry), pad);
@@ -322,9 +615,13 @@ extern "C" EMSCRIPTEN_KEEPALIVE void ps2web_pad(int pad, int buttons, int lx, in
     ps2::set_pad_axis(3, static_cast<std::uint8_t>(ly), pad);
 }
 
-extern "C" EMSCRIPTEN_KEEPALIVE void ps2web_pad_connected(int pad, int connected) { ps2::set_pad_connected(pad, connected != 0); }
+extern "C" EMSCRIPTEN_KEEPALIVE void ps2web_pad_connected(int pad, int connected) {
+    if (ps2::g_options.lockstep) return;  // both ports stay plugged from boot
+    ps2::set_pad_connected(pad, connected != 0);
+}
 
 extern "C" EMSCRIPTEN_KEEPALIVE void ps2web_pressure(int pad, int a, int b, int c, int d) {
+    if (!direct_pads()) return;
     const int packed[4] = {a, b, c, d};
     for (int i = 0; i < 16; ++i) ps2::set_pad_pressure(i, static_cast<std::uint8_t>(static_cast<unsigned>(packed[i / 4]) >> (i % 4 * 8)), pad);
 }
@@ -339,6 +636,11 @@ extern "C" EMSCRIPTEN_KEEPALIVE double ps2web_gpu_ms() { return ps2::gpu_busy_ms
 extern "C" EMSCRIPTEN_KEEPALIVE double ps2web_frames() { return static_cast<double>(ps2::frames_run()); }
 extern "C" EMSCRIPTEN_KEEPALIVE double ps2web_primitives() { return static_cast<double>(ps2::primitives_drawn()); }
 extern "C" EMSCRIPTEN_KEEPALIVE void *ps2web_audio_ring() { return &g_audio; }
+extern "C" EMSCRIPTEN_KEEPALIVE void *ps2web_lockstep() { return &g_ls; }
+extern "C" EMSCRIPTEN_KEEPALIVE void *ps2web_alloc(int size) { return std::malloc(static_cast<std::size_t>(size)); }
+extern "C" EMSCRIPTEN_KEEPALIVE void ps2web_free(void *p) { std::free(p); }
+// test hook for the forced-desync test: flips one byte of EE RAM on this peer only
+extern "C" EMSCRIPTEN_KEEPALIVE void ps2web_debug_corrupt(int offset) { ps2::g_ram[static_cast<std::uint32_t>(offset) & (ps2::kRamSize - 1)] ^= 0x5A; }
 extern "C" EMSCRIPTEN_KEEPALIVE double ps2web_audio_queued_ms() { return audio_queued_ms(); }
 extern "C" EMSCRIPTEN_KEEPALIVE double ps2web_vu_interpreted() { return static_cast<double>(ps2::vu1_interpreted_calls()); }
 extern "C" EMSCRIPTEN_KEEPALIVE double ps2web_idle_ms(int which) {
@@ -376,7 +678,20 @@ int main(int argc, char **argv) {
     g_disc_size = static_cast<std::uint64_t>(ps2web_disc_size());
     g_disc_url = ps2web_disc_url();
     g_state_url = ps2web_state_url();
-    ps2::g_options.on_vblank = on_vblank;
+    ps2::g_options.lockstep = EM_ASM_INT({ return Module.lockstep ? 1 : 0; }) != 0;
+    if (ps2::g_options.lockstep) {
+        for (auto &row : g_ls.have)
+            for (auto &h : row) h.store(-1);
+        ps2::g_options.on_vblank = lockstep_vblank;
+        ps2::g_options.on_snapshot = lockstep_snapshot;
+        ps2::g_options.on_state_loaded = lockstep_loaded;
+        ps2::set_pad_connected(1, true);  // both ports plugged from boot, on both peers
+        const double epoch = EM_ASM_DOUBLE({ return Module.rtcEpoch || 0; });
+        if (epoch > 0) ps2::set_rtc_epoch(static_cast<std::int64_t>(epoch));
+        std::fprintf(stderr, "[lockstep] lockstep mode, RTC epoch %.0f, VU1 %s\n", epoch, std::getenv("PS2_NO_VU_THREAD") ? "on the emulation thread" : "thread");
+    } else {
+        ps2::g_options.on_vblank = on_vblank;
+    }
     ps2::g_options.on_vu_program = [](const std::string &name, const std::uint8_t *code, std::size_t size) {
         static bool unsupported = false;
         if (unsupported) return;

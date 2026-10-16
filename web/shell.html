@@ -185,6 +185,17 @@ importInput.addEventListener('change', async () => {
 const statsEl = document.getElementById('stats');
 const canvas = document.getElementById('canvas');
 const params = new URLSearchParams(location.search);
+// ?room=<id> joins a 2-player lockstep session (?room=new or an empty value creates one): the first player in the
+// room is the host (P1), whose game the guest (P2) drops into. Test knobs: lsinput=<args file> (scripted input in
+// the native --press/--stick format, applied by lockstep frame to the local player's lines), lsrtc=<epoch>,
+// lsvu=0 (VU1 on the emulation thread; both peers must agree), lsdrop=<0..1> (drop input packets),
+// lsdelay=<ms> (delay every send), lsstall=<ms>,<every ms> (block the main thread).
+const room = params.get('room');
+const lockstepMode = room !== null;
+const lsConfig = { lockstep: 1, vuThread: params.get('lsvu') === '0' ? 0 : 1, gs: 'gpu', vuJit: 1 };
+// the only PS2_* parameters a lockstep peer keeps: they change how frames look, never what the guest sees
+const RENDER_ONLY = new Set(['PS2_SCALE', 'PS2_NO_DEINTERLACE', 'PS2_DECODE', 'PS2_GPU_FALLBACK', 'PS2_GPU_LOW_POWER']);
+let session = null, lsStatus = '', lsScript = null;
 
 function missingFeatures() {
   const header = [0, 97, 115, 109, 1, 0, 0, 0, 1, 4, 1, 96, 0, 0, 3, 2, 1, 0, 10];
@@ -398,15 +409,8 @@ const axis = (v) => Math.max(0, Math.min(255, Math.round((v + 1) * 127.5)));
 // the keyboard and touch controls are player 1 along with the first gamepad, a second gamepad is player 2
 const players = [0, 1].map(() => ({ plugged: false, pad: -1, pressure: '', strong: 0, weak: 0, rumbleAt: 0 }));
 const motorStrength = (v) => v < 16 ? 0 : Math.sqrt(v / 255);
-function pollPlayer(port, gamepad, own) {
-  const player = players[port];
-  const plugged = port === 0 || !!gamepad;
-  if (plugged !== player.plugged) {
-    player.plugged = plugged;
-    Module._ps2web_pad_connected(port, plugged ? 1 : 0);
-  }
-  if (!plugged) return;
-  let buttons = 0, lx = 128, ly = 128, rx = 128, ry = 128;
+function readLocal(gamepad, own) {
+  let buttons = 0, lx = 128, ly = 128, rx = 128, ry = 128, l2 = 0, r2 = 0;
   const pressure = new Array(16).fill(255);
   if (own) {
     buttons |= touchPad.buttons;
@@ -428,6 +432,8 @@ function pollPlayer(port, gamepad, own) {
       buttons |= 1 << bit;
       if (!(full & (1 << bit))) pressure[bit] = Math.max(1, Math.round((b.value > 0 ? b.value : 1) * 255));
     }
+    l2 = buttons & 0x100 ? pressure[8] : 0;
+    r2 = buttons & 0x200 ? pressure[9] : 0;
     if (gamepad.axes.length >= 4) {
       if (lx === 128) lx = axis(gamepad.axes[0]);
       if (ly === 128) ly = axis(gamepad.axes[1]);
@@ -435,6 +441,12 @@ function pollPlayer(port, gamepad, own) {
       ry = axis(gamepad.axes[3]);
     }
   }
+  return { buttons, lx, ly, rx, ry, l2, r2, pressure };
+}
+const NEUTRAL_PAD = { buttons: 0, lx: 128, ly: 128, rx: 128, ry: 128, l2: 0, r2: 0, pressure: new Array(16).fill(255) };
+function sendPad(port, pad) {
+  const player = players[port];
+  const { buttons, lx, ly, rx, ry, pressure } = pad;
   const state = buttons + lx * 65536 + ly * 16777216 + rx * 4294967296 + ry * 1099511627776;
   if (state !== player.pad) {
     player.pad = state;
@@ -445,6 +457,16 @@ function pollPlayer(port, gamepad, own) {
     player.pressure = packed.join();
     Module._ps2web_pressure(port, packed[0], packed[1], packed[2], packed[3]);
   }
+}
+function pollPlayer(port, gamepad, own) {
+  const player = players[port];
+  const plugged = port === 0 || !!gamepad;
+  if (plugged !== player.plugged) {
+    player.plugged = plugged;
+    Module._ps2web_pad_connected(port, plugged ? 1 : 0);
+  }
+  if (!plugged) return;
+  sendPad(port, readLocal(gamepad, own));
   const rumble = Module._ps2web_rumble(port), now = performance.now();
   const strong = motorStrength(rumble >> 8), weak = rumble & 1;
   const actuator = gamepad && gamepad.vibrationActuator;
@@ -456,8 +478,51 @@ function pollPlayer(port, gamepad, own) {
     if (done && done.catch) done.catch(() => {});
   }
 }
+// Lockstep: the scripted input (lsinput) entries of the local player, in the native --press/--stick format.
+function parseScript(text) {
+  const names = ['select', 'l3', 'r3', 'start', 'up', 'right', 'down', 'left', 'l2', 'r2', 'l1', 'r1', 'triangle', 'circle', 'cross', 'square'];
+  const entries = [];
+  for (const line of text.split('\n')) {
+    const m = line.trim().match(/^--(press|stick)(2?)\s+(\d+):(?:p([12]):)?([^:\s]+)(?::(\d+))?$/);
+    if (!m) continue;
+    const e = { frame: Number(m[3]), frames: m[6] ? Number(m[6]) : 6, pad: m[2] === '2' || m[4] === '2' ? 1 : 0, stick: m[1] === 'stick', buttons: 0, lx: 128, ly: 128 };
+    if (e.stick) [e.lx, e.ly] = m[5].split(',').map(Number);
+    else for (const n of m[5].split('+')) if (names.includes(n)) e.buttons |= 1 << names.indexOf(n);
+    entries.push(e);
+  }
+  return entries;
+}
+function applyScript(pad, frame, port) {
+  let drives = false, stick = false, mask = 0, lx = 128, ly = 128;
+  for (const e of lsScript) {
+    if (e.pad !== port) continue;
+    if (e.stick) stick = true; else drives = true;
+    if (frame < e.frame || frame >= e.frame + e.frames) continue;
+    if (e.stick) { lx = e.lx; ly = e.ly; } else mask |= e.buttons;
+  }
+  if (drives) pad.buttons |= mask;
+  if (stick && pad.lx === 128 && pad.ly === 128) { pad.lx = lx; pad.ly = ly; }
+  return pad;
+}
+// lockstep.js samples the local pad once per frame, for frame N+D
+function readPad(frame) {
+  const pads = [...(navigator.getGamepads ? navigator.getGamepads() : [])].filter((pad) => pad);
+  const pad = readLocal(pads[0] || null, true);
+  const slot = session && session.ls ? session.ls.slot : 0;
+  return lsScript ? applyScript(pad, frame, slot) : pad;
+}
 function pollInput() {
   const pads = [...(navigator.getGamepads ? navigator.getGamepads() : [])].filter((pad) => pad);
+  if (lockstepMode) {
+    // in a running session both ports come from the input ring; before it (the host waiting for a guest) and after
+    // it (solo) the local player drives their own port and the other stays neutral
+    const ls = session && session.ls;
+    if (ls && ls.running) return;
+    const slot = ls && ls.slot >= 0 ? ls.slot : 0;
+    sendPad(slot, readLocal(pads[0] || null, true));
+    sendPad(1 - slot, NEUTRAL_PAD);
+    return;
+  }
   pollPlayer(0, pads[0] || null, true);
   pollPlayer(1, pads[1] || null, false);
 }
@@ -549,6 +614,8 @@ const countShown = () => {
 requestAnimationFrame(countShown);
 var Module = {
   canvas,
+  lockstep: lockstepMode,
+  rtcEpoch: lockstepMode ? Number(params.get('lsrtc')) || Math.floor(Date.now() / 1000) : 0,
   arguments: ['/game/core.elf'].concat(params.has('arg') ? ['--arg', params.get('arg')] : [], params.getAll('press').flatMap((p) => p.split(',').flatMap((x) => ['--press', x]))),
   discUrl: params.get('disc') || 'disc.iso',
   stateUrl: params.get('state'),
@@ -582,7 +649,14 @@ var Module = {
         console.warn('memory card: browser storage is not available', e);
       }
     }
-    for (const [key, value] of params) if (key.startsWith('PS2_')) Module.ENV[key] = value;
+    if (lockstepMode) {
+      // pinned config: the handshake compares lsConfig, and nothing else from the URL may change emulation
+      for (const [key, value] of params) if (RENDER_ONLY.has(key)) Module.ENV[key] = value;
+      if (!lsConfig.vuThread) Module.ENV.PS2_NO_VU_THREAD = '1';
+      try { FS.mkdir('/session'); } catch (e) {}
+    } else {
+      for (const [key, value] of params) if (key.startsWith('PS2_')) Module.ENV[key] = value;
+    }
     Module.ENV.PS2_SCALE = scale;
     Module.addRunDependency('disc');
     Promise.all([fetch(Module.discUrl, { method: 'HEAD' }), chooseGpu().catch((e) => 'GPU check failed: ' + e)]).then(([r, gpu]) => {
@@ -613,7 +687,8 @@ var Module = {
                             '%   idle emu ' + ((emuIdle - lastEmuIdle) / span * 100).toFixed(0) + '% vu ' + ((vuIdle - lastVuIdle) / span * 100).toFixed(0) +
                             '% gs ' + ((renderIdle - lastRenderIdle) / span * 100).toFixed(0) +
                             '%   heap ' + memory + ' MB   audio ' + Module.audioQueuedMs().toFixed(0) + ' ms' +
-                            (interpreted > lastInterpreted ? '   vu1 interpreted ' + Math.round((interpreted - lastInterpreted) * 1000 / span) + '/s' : '');
+                            (interpreted > lastInterpreted ? '   vu1 interpreted ' + Math.round((interpreted - lastInterpreted) * 1000 / span) + '/s' : '') +
+                            (session ? '   ' + lockstepStats() : '');
       lastInterpreted = interpreted;
       lastEmuIdle = emuIdle;
       lastRenderIdle = renderIdle;
@@ -626,6 +701,45 @@ var Module = {
   },
   noInitialRun: true,
 };
+
+function lockstepStats() {
+  const s = session.snapshot(), l = s.ls || {};
+  return 'net ' + (lsStatus || l.status || '') + (l.D ? '  D ' + l.D + '  rtt ' + (l.rttP50 || 0).toFixed(1) + ' ms' : '') +
+         '  stalls ' + s.emu.stallFrames + '  hashes ' + (l.hashesOk || 0) + '  desyncs ' + (l.desyncs || 0) + '  resyncs ' + s.resyncs;
+}
+
+async function startSession() {
+  const mod = await import('./lockstep-emu.js');
+  const build = await mod.buildId();
+  let id = room;
+  if (!id || id === 'new') {
+    id = await mod.Lockstep.createRoom({ build });
+    const url = new URL(location.href);
+    url.searchParams.set('room', id);
+    history.replaceState(null, '', url);
+  }
+  if (params.get('lsinput')) lsScript = parseScript(await (await fetch(params.get('lsinput'), { cache: 'no-store' })).text());
+  const disc = await mod.discIdOf(Module.discUrl, Module.discSize);
+  const test = { dropIn: Number(params.get('lsdrop')) || 0, delayMs: Number(params.get('lsdelay')) || 0 };
+  const s = new mod.Session({
+    Module, room: id, build, disc, config: lsConfig, rtc: Module.rtcEpoch, readPad, test,
+    log: (...a) => console.log(...a),
+    onStatus: (text) => {
+      lsStatus = text;
+      if (s.isHost && text === 'waiting for the other player') {
+        const invite = new URL(location.href);
+        for (const k of [...invite.searchParams.keys()]) if (k !== 'room') invite.searchParams.delete(k);
+        statusEl.textContent = 'Playing alone. Invite a player: ' + invite.href;
+      }
+    },
+  });
+  await s.join();
+  if (params.get('lsstall')) {
+    const [ms, every] = params.get('lsstall').split(',').map(Number);
+    setInterval(() => { const t = performance.now(); while (performance.now() - t < ms); }, every || 1000);
+  }
+  return s;
+}
 
 updateControls();
 if (missing.length) {
@@ -641,8 +755,19 @@ document.getElementById('start').addEventListener('click', async () => {
   fitCanvas();
   await startAudio();
   statusEl.textContent = 'Running, ' + Module.gpuInfo;
+  if (lockstepMode) {
+    try {
+      session = await startSession();
+      window.lsSession = session;
+    } catch (e) {
+      console.warn('lockstep:', e);
+      statusEl.textContent = 'Could not join the session: ' + e.message;
+      return;
+    }
+  }
   Module.running = true;
   Module.callMain(Module.arguments);
+  if (session) session.run();
 });
 </script>
 {{{ SCRIPT }}}

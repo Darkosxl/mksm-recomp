@@ -8,9 +8,15 @@ namespace ps2::state {
 class Stream;
 }
 
+namespace ps2 {
+class Hash64;
+}
+
 namespace ps2::vu {
 
 void state(ps2::state::Stream &s);
+// lockstep hash: VU0/VU1 code and data memory, TOP/ITOP and pending XGKICK packets (VU1 registers: regs(1))
+void hash(ps2::Hash64 &h);
 
 void reset();
 void run(int unit, std::uint32_t address);

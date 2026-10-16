@@ -18,7 +18,7 @@ The struct is 2088 bytes, little-endian. It lives in a `SharedArrayBuffer`: the 
 | 4 | `seq` | JS | The futex word. JS increments it and notifies after writing any input or flag. |
 | 8 | `delay` | JS | The input delay D. It is informational for the emulator. |
 | 12 | `active` | JS | 1 = lockstep on. 0 = the emulator runs free on its local pad path, and the remote slot is neutral. |
-| 16 | `flags` | JS | bit0 paused-by-protocol: JS is waiting on the network (lost connection) or a resync. The emulator should not count that wait as a stall and may mute audio. bit1 resync requested: set while a resync runs, reserved for the W4 snapshot. |
+| 16 | `flags` | JS | bit0 paused-by-protocol: JS is waiting on the network (lost connection) or a resync. The emulator should not count that wait as a stall and may mute audio. bit1 resync requested: set while a D resync runs (play continues). bit2 **hold** (W4): the emulator stops at its next vblank, or at once if it is waiting for input, runs no frame while the bit is set, and takes snapshot/load commands meanwhile. `begin()` clears it only after `active=1`, so a held emulator never runs a free frame. |
 | 20 | `local_slot` | JS | 0 = I am P1 (host), 1 = I am P2 (guest). |
 | 24 | `have[2][64]` | JS | The frame number stored in slot `frame & 63` for player p, or -1 when the slot is empty. Index = `p*64 + (f&63)`. |
 | 536 | `input[2][64]` | JS | 12 bytes each, at `536 + (p*64 + (f&63))*12`, plain bytes. Layout: `u16 buttons` (PS2 bitmask, active-high, 1 = pressed), then `u8 lx, ly, rx, ry` (128 = centre), `u8 l2, r2` pressure, `u8 flags` (bit0 = pause), then 3 bytes of padding. |
@@ -27,6 +27,26 @@ The struct is 2088 bytes, little-endian. It lives in a `SharedArrayBuffer`: the 
 | 2080 | `hash` | emu | u64, the state hash for `hash_frame`. Written before `hash_frame`, as a plain 8-byte store. |
 
 Memory ordering: JS writes the 12 input bytes, then does `Atomics.store` of `have[p][f&63] = f`, then `Atomics.add(seq)` and `Atomics.notify(seq)`. An emulator that reads `have` with `Atomics.load` (or `__atomic_load_n(..., SEQ_CST)`) sees the bytes.
+
+### W4 extension (2088–2447)
+
+The real emulator (`host/web.cpp` `LockstepShared`) appends a W4 block after the W3 struct; the mock does not use
+it. `web/lockstep-emu.js` drives it.
+
+| Off | Field | Writer | Meaning |
+|---|---|---|---|
+| 2088 | `cmd` | JS | 1 = snapshot, 2 = load. JS writes the arguments, then `cmd`, then bumps `seq`. The emulator takes the command (writes 0) at a held vblank. |
+| 2092 | `held_frame` | emu | The frame the emulator is held at (bit2), else -1. Notified on change. |
+| 2096 | `load_ptr`, `load_size`, `load_frame` | JS | The state to load (heap pointer and size) and its lockstep frame F. After the load the emulator's next frame is F+1. |
+| 2108 | `card_ptr`, `card_size` | JS | The memory card to install with the load (size 0 = no card), or `card_size = -1` to keep the current one. A guest's session card lives in MEMFS (`/session`), so its own card in IndexedDB stays untouched. |
+| 2116 | `snap_state` | emu | 0 idle, 1 snapshot ready, 2 not at a safe point (the emulator retries at the next vblank by itself), 3 loaded, 4 load failed. |
+| 2120 | `snap_ptr`, `snap_size`, `snap_frame` | emu | The snapshot (no upscaled VRAM), valid until the load command. |
+| 2132 | `card_out_ptr`, `card_out_size` | emu | The memory card at the snapshot (size 0 = no card). |
+| 2144 | `load_hash` | emu | u64, the full state hash right after a load; `loaded_frame` (2152) is written after it. |
+| 2156 | `disc_wait` | emu | Milliseconds the emulation thread has been blocked on the current disc fetch (0 = not blocked; set after 250 ms). |
+| 2160 | `stall_frames`, `stall_ms`, `paused_frames`, `game_frame` | emu | Counters: frames that waited for an input (not counting holds or `flags & 1`), the time spent waiting, consumed paused frames, and the emulated vblank count. |
+| 2176 | `rtc` (i64), `rtc_set` | JS | The guest RTC epoch to install with the next load (the host's, from the snapshot metadata). |
+| 2192 | `slices[32]` | emu | u64 each: the 32 part hashes behind the last published `hash`, sent with it to name the differing parts on a desync. |
 
 ### Emulator side
 
@@ -54,7 +74,7 @@ pace to 59.94 Hz + atomic_load(&s->slow_ms) ms; after a stall longer than a fram
 - **Pause** is an input bit. If either player's input for frame N has bit0 set, frame N is a paused frame. The emulator consumes it, leaves the game state alone, stays at 60 Hz, and moves on to N+1. Lockstep frames keep ticking and inputs keep flowing, so both peers freeze on the same frame and resume on the same frame. Only the pause bit of a paused frame matters.
 - **Frame numbering:** JS assumes the session starts at `firstFrame` (default 0). Before setting `active=1`, it pre-fills frames `F..F+D-1` with neutral input for both players, so frames start at F with no network round trip. For W4 (join at a snapshot of frame F), pass `firstFrame: F+1`.
 - **`active=0`** means no waiting. The emulator uses its normal local pad path and keeps the remote player neutral. JS sets it 15 s after packets stop. It never sets it back during the same session, because a rejoin goes through W4.
-- **Hash:** the emulator publishes a 64-bit hash of its state every 32 frames, after running frame N. For W4 this should be the 1/32-per-frame slice hash. JS sends `{t:'hash'}` on ctl and compares it with the peer's.
+- **Hash:** the emulator publishes a 64-bit hash of its state every 32 frames. The real emulator hashes part `N & 31` at vblank N (1 MB of EE RAM, plus the EE CPU/scratchpad/events on part 0, IOP RAM/CPU on 8, SPU2 RAM on 16, VU memory/registers on 24; raw memory and named fields only, never GS memory or padded structs) and publishes XXH64 of the 32 part hashes at the frame ending in 31, once the whole window lies after the last load. JS sends `{t:'hash', f, h, x}` on ctl (`x` = the part hashes, `opts.hashExtra`) and compares it with the peer's.
 
 ## Protocol (lockstep.js)
 
@@ -75,6 +95,12 @@ ctl messages: `hello`, `refuse`, `ping`/`pong` (`i=-1` for the periodic ones), `
 
 ### API
 
+W4 additions used by `lockstep-emu.js`: `join()` joins the signalling room only (the role is known before the
+emulator boots); `opts.sync(ls, isHost)` runs between the handshake and the first frame (on the host it returns the
+first frame, sent in `start`); `startAt(frame)` / `awaitStart()` restart a session after a resync; `suspend()` stops
+sampling, sending and the disconnect watchdog and holds the emulator; `opts.earlyTypes` lists session messages that
+may arrive before their `waitCtl`; any other unknown ctl message goes to `onMessage`.
+
 ```js
 import { Lockstep, OFF, Ring, discId, inputDelay } from './lockstep.js';
 const room = await Lockstep.createRoom({ build });           // host page, once; share /play/<room>
@@ -91,6 +117,10 @@ ls.setPaused(true); await ls.resync(); await ls.sendBlob(bytes, meta); ls.snapsh
 ```
 
 ## Test
+
+With the real emulator (two browsers, NVIDIA host + Intel iGPU guest, drop-in, faults, forced desync, rejoin):
+`node scripts/lockstep_emu_test.mjs --input <args> --join-at <frame> --minutes N ...`; results and options in
+`mksm/notes/web-lockstep.md`. The mock tests below cover the protocol alone.
 
 ```sh
 (cd server && npm install)          # ws for signal.mjs

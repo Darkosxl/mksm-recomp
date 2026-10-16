@@ -69,6 +69,12 @@ std::vector<std::string> g_boot_args;
 bool g_disc_open = false;
 bool g_reboot_request = false;
 std::vector<std::string> g_reboot_args;
+// lockstep: in-memory snapshot / load requested by the host (request_snapshot, request_load_state)
+bool g_snapshot_request = false;
+const std::uint8_t *g_load_data = nullptr;
+std::size_t g_load_size = 0;
+std::atomic<bool> g_rtc_pinned{false};
+std::atomic<std::int64_t> g_rtc_epoch{0};
 
 std::uint64_t next_event_time() {
     std::uint64_t t = UINT64_MAX;
@@ -306,7 +312,13 @@ void load_context(Cpu &c, const ThreadContext &t) {
 
 std::uint64_t now() { return g_base + static_cast<std::uint64_t>(g_given - g_cpu.budget); }
 
+void set_rtc_epoch(std::int64_t epoch) {
+    g_rtc_epoch.store(epoch);
+    g_rtc_pinned.store(true);
+}
+
 std::int64_t rtc_time() {
+    if (g_rtc_pinned.load()) return g_rtc_epoch.load() + static_cast<std::int64_t>(now() / kEeClock);
     static const char *epoch = std::getenv("PS2_RTC");
     if (!epoch) return static_cast<std::int64_t>(std::time(nullptr));
     return std::strtoll(epoch, nullptr, 10) + static_cast<std::int64_t>(now() / kEeClock);
@@ -334,7 +346,7 @@ std::uint64_t scheduled_at(int event) {
 bool preempt(Cpu &c) {
     run_due_events();
     refill(c);
-    return g_halted || g_state_request || g_load_request || g_reboot_request || kernel::must_unwind();
+    return g_halted || g_state_request || g_snapshot_request || g_load_request || g_reboot_request || kernel::must_unwind();
 }
 
 void halt(const std::string &reason) {
@@ -505,6 +517,61 @@ void hash_frame() {
 
 }
 
+namespace {
+
+void hash_vu0regs(Hash64 &h, const Vu0Regs &v) {
+    h.update(v.vf, sizeof v.vf);
+    h.update(&v.acc, sizeof v.acc);
+    h.update(v.vi, sizeof v.vi);
+    const std::uint32_t words[9] = {v.q, v.p, v.i, v.r, v.mac, v.status, v.clip, v.cmsar0, v.tpc};
+    h.update(words, sizeof words);
+}
+
+}
+
+std::uint64_t hash_bytes(const void *data, std::size_t size) {
+    Hash64 h;
+    h.update(data, size);
+    return h.digest();
+}
+
+std::uint64_t hash_part(unsigned k, unsigned n) {
+    Hash64 h;
+    const std::size_t span = kRamSize / n;
+    h.update(g_ram + static_cast<std::size_t>(k) * span, span);
+    if (k == 0) {
+        const Cpu &c = g_cpu;
+        h.update(c.r, sizeof c.r);
+        h.update(&c.hi, sizeof c.hi);
+        h.update(&c.lo, sizeof c.lo);
+        const std::uint32_t words[4] = {c.sa, c.pc & ~kUnwind, c.facc, c.fcr31};
+        h.update(words, sizeof words);
+        h.update(c.f, sizeof c.f);
+        hash_vu0regs(h, c.vu0);
+        h.update(c.cop0, sizeof c.cop0);
+        h.update(g_spr, kScratchpadSize);
+        const std::uint64_t sched[4] = {now(), g_frames, g_iop_synced, g_events.size()};
+        h.update(sched, sizeof sched);
+        for (const Event &e : g_events) {
+            const std::uint64_t ev[2] = {static_cast<std::uint64_t>(static_cast<std::int64_t>(e.id)), e.at};
+            h.update(ev, sizeof ev);
+        }
+    } else if (k == n / 4) {
+        h.update(iop::ram_ptr(0), iop::kRamSize);
+        const iop::Cpu &c = iop::g_cpu;
+        h.update(c.r, sizeof c.r);
+        const std::uint32_t words[7] = {c.hi, c.lo, c.pc, c.npc, c.status, c.cause, c.epc};
+        h.update(words, sizeof words);
+    } else if (k == n / 2) {
+        h.update(iop::spu2::ram(), 2u << 20);
+    } else if (k == n * 3 / 4) {
+        sync_vu_thread(false);
+        hash_vu0regs(h, vu::regs(1));
+        vu::hash(h);
+    }
+    return h.digest();
+}
+
 bool save_state(const std::string &path) {
     try {
         state::Writer w;
@@ -519,6 +586,32 @@ bool save_state(const std::string &path) {
         return false;
     }
 }
+
+bool save_state(std::vector<std::uint8_t> &out, bool vram) {
+    gs::set_state_vram(vram);
+    try {
+        state::Writer w;
+        machine_state(w);
+        gs::set_state_vram(true);
+        out = std::move(w.out);
+        return true;
+    } catch (const std::exception &e) {
+        gs::set_state_vram(true);
+        std::fprintf(stderr, "[state] cannot save frame %llu: %s\n", static_cast<unsigned long long>(g_frames), e.what());
+        return false;
+    }
+}
+
+void request_snapshot() { g_snapshot_request = true; }
+
+void request_load_state(const std::uint8_t *data, std::size_t size) {
+    g_load_data = data;
+    g_load_size = size;
+    g_load_request = true;
+}
+
+std::vector<std::uint8_t> memcard_image() { return iop::sio2::card_image(); }
+void set_memcard_image(const std::uint8_t *data, std::size_t size) { iop::sio2::set_card_image(data, size); }
 
 bool load_state(const std::uint8_t *data, std::size_t size) {
     try {
@@ -652,6 +745,20 @@ int run() {
         if (g_state_request) {
             g_state_request = false;
             save_state(g_options.save_state_path);
+        }
+        if (g_snapshot_request) {
+            g_snapshot_request = false;
+            std::vector<std::uint8_t> snapshot;
+            const bool saved = save_state(snapshot, false);
+            if (g_options.on_snapshot) g_options.on_snapshot(saved ? &snapshot : nullptr);
+        }
+        if (g_load_request && g_load_data) {
+            g_load_request = false;
+            const std::uint8_t *data = g_load_data;
+            g_load_data = nullptr;
+            const bool loaded = load_state(data, g_load_size);
+            if (g_options.on_state_loaded) g_options.on_state_loaded(loaded);
+            if (!loaded) halt("lockstep state load failed");
         }
         if (g_load_request) {
             g_load_request = false;

@@ -1132,6 +1132,8 @@ namespace {
 std::atomic<std::uint32_t> g_state_done{0};
 std::string g_state_error;
 
+std::atomic<bool> g_state_vram{true};
+
 void render_state(ps2::state::Stream &s) {
     flush_and_wait();
 #ifdef PS2_GPU
@@ -1169,7 +1171,7 @@ void render_state(ps2::state::Stream &s) {
 #ifdef PS2_GPU
     if (s.saving() && gpu_on()) {
         gpu::download(g_memory);
-        gpu::read_state(vram, scale, clut);
+        if (g_state_vram.load()) gpu::read_state(vram, scale, clut);
     }
 #endif
     s.bytes(g_memory, kMemorySize);
@@ -1202,6 +1204,8 @@ void serve_state(const void *payload) {
     g_state_done.fetch_add(1);
     queue::notify(g_state_done);
 }
+
+void set_state_vram(bool on) { g_state_vram.store(on); }
 
 void state(ps2::state::Stream &s) {
     s.tag("gs");
