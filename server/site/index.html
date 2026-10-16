@@ -1,0 +1,161 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="robots" content="noindex, nofollow">
+<title>Shaolin Monks</title>
+<style>
+  :root { color-scheme: light dark; --bg: #f5f3ee; --fg: #1c1b18; --muted: #6a665d; --line: #d8d3c6; --field: #fff; --accent: #a8231b; --accent-fg: #fff; }
+  @media (prefers-color-scheme: dark) {
+    :root { --bg: #131210; --fg: #ebe7de; --muted: #9b968b; --line: #36322b; --field: #1d1b17; --accent: #d9463d; --accent-fg: #fff; }
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--fg); font: 16px/1.5 system-ui, -apple-system, "Segoe UI", sans-serif; }
+  main { max-width: 34rem; margin: 0 auto; padding: 3rem 1rem; }
+  h1 { margin: 0 0 .25rem; font-size: 1.75rem; letter-spacing: -.01em; }
+  .muted { color: var(--muted); margin-top: 0; }
+  section { margin-top: 2rem; }
+  .row { display: flex; gap: .5rem; margin: .75rem 0; }
+  input { flex: 1; min-width: 0; padding: .6rem .75rem; font: inherit; color: var(--fg); background: var(--field); border: 1px solid var(--line); border-radius: 6px; }
+  button { padding: .6rem 1rem; font: inherit; font-weight: 600; color: var(--fg); background: var(--field); border: 1px solid var(--line); border-radius: 6px; cursor: pointer; }
+  button.primary { color: var(--accent-fg); background: var(--accent); border-color: var(--accent); }
+  button:disabled { opacity: .5; cursor: default; }
+  a { color: var(--accent); }
+  code { font-size: 1.05em; }
+  .note { padding: .6rem .75rem; border: 1px solid var(--accent); border-radius: 6px; }
+  #status:empty { display: none; }
+</style>
+</head>
+<body>
+<main>
+  <h1>Shaolin Monks</h1>
+  <p class="muted">Two players per room. Desktop Chrome or Edge.</p>
+  <p id="warn" class="note" hidden></p>
+
+  <section id="home">
+    <button id="create" class="primary">Create room</button>
+    <form id="join" class="row">
+      <input id="link" placeholder="Paste a room link" aria-label="Room link" autocomplete="off">
+      <button>Join</button>
+    </form>
+    <p><a id="solo" href="#">Play alone</a></p>
+  </section>
+
+  <section id="room" hidden>
+    <p>Room <code id="room-id"></code> <span id="room-state" class="muted"></span></p>
+    <div class="row">
+      <input id="room-link" readonly aria-label="Room link to share">
+      <button id="copy">Copy</button>
+    </div>
+    <p class="muted">Send this link to the other player. Either of you can start first; the second one drops in.</p>
+    <button id="play" class="primary" disabled>Start game</button>
+    <p><a href="/">Back</a></p>
+  </section>
+
+  <p id="status" class="note" role="status"></p>
+</main>
+<script>
+'use strict';
+const $ = (id) => document.getElementById(id);
+const say = (text) => { $('status').textContent = text; };
+const ROOM = /^[a-z2-9]{12}$/;
+const ERRORS = {
+  'not-found': 'This room has expired. Create a new one.',
+  full: 'This room already has two players.',
+  busy: 'The server has too many rooms open. Try again later.',
+};
+
+// One request/response over a short-lived signalling socket (protocol: server/README.md).
+function signal(msg) {
+  return new Promise((resolve, reject) => {
+    const ws = new WebSocket((location.protocol === 'https:' ? 'wss://' : 'ws://') + location.host + '/ws');
+    const timer = setTimeout(() => { ws.close(); reject(new Error('The signalling server did not answer.')); }, 5000);
+    ws.onopen = () => ws.send(JSON.stringify(msg));
+    ws.onmessage = (e) => {
+      clearTimeout(timer);
+      ws.close();
+      const reply = JSON.parse(e.data);
+      if (reply.type === 'error') reject(new Error(ERRORS[reply.error] || 'Server error: ' + reply.error));
+      else resolve(reply);
+    };
+    ws.onerror = () => { clearTimeout(timer); reject(new Error('Cannot reach the signalling server.')); };
+  });
+}
+
+async function currentBuild() {
+  const res = await fetch('/current.json', { cache: 'no-store' });
+  if (!res.ok) throw new Error('No game build is deployed yet.');
+  return (await res.json()).build;
+}
+
+// The game page lives in its immutable build directory, so the disc path is absolute.
+function gameUrl(build, room) {
+  const query = new URLSearchParams({ disc: '/disc.iso' });
+  if (room) query.set('room', room);
+  return '/v/' + encodeURIComponent(build) + '/ps2web.html?' + query;
+}
+
+async function showRoom(room) {
+  $('home').hidden = true;
+  $('room').hidden = false;
+  $('room-id').textContent = room;
+  $('room-link').value = location.origin + '/play/' + room;
+  try {
+    // A room is pinned to the build it was created with, so both players load identical wasm.
+    const info = await signal({ type: 'info', room });
+    const build = info.build || await currentBuild();
+    $('room-state').textContent = ['(empty)', '(1 player in)', '(full)'][info.peers];
+    $('play').disabled = info.peers >= 2;
+    $('play').onclick = () => { location.href = gameUrl(build, room); };
+  } catch (e) {
+    say(e.message);
+  }
+}
+
+$('create').onclick = async () => {
+  $('create').disabled = true;
+  try {
+    const { room } = await signal({ type: 'create', build: await currentBuild() });
+    location.href = '/play/' + room;
+  } catch (e) {
+    say(e.message);
+    $('create').disabled = false;
+  }
+};
+
+$('join').onsubmit = (e) => {
+  e.preventDefault();
+  const text = $('link').value.trim().replace(/\/+$/, '');
+  const room = text.slice(text.lastIndexOf('/') + 1).split(/[?#]/)[0].toLowerCase();
+  if (!ROOM.test(room)) return say('That does not look like a room link.');
+  location.href = '/play/' + room;
+};
+
+$('solo').onclick = async (e) => {
+  e.preventDefault();
+  try { location.href = gameUrl(await currentBuild()); } catch (err) { say(err.message); }
+};
+
+$('copy').onclick = async () => {
+  try {
+    await navigator.clipboard.writeText($('room-link').value);
+    $('copy').textContent = 'Copied';
+  } catch {
+    $('room-link').select();
+  }
+};
+
+if (!('gpu' in navigator)) {
+  $('warn').hidden = false;
+  $('warn').textContent = 'This browser has no WebGPU. Use desktop Chrome or Edge (on Linux, enable WebGPU in chrome://flags).';
+}
+
+const path = location.pathname.match(/^\/play\/([^/]+)\/?$/);
+if (path) {
+  if (ROOM.test(path[1])) showRoom(path[1]);
+  else say('That does not look like a room link.');
+}
+</script>
+</body>
+</html>

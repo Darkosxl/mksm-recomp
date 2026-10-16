@@ -1,0 +1,61 @@
+# Caddy front for the MKSM site: TLS, the invite-cookie gate, static files and the signalling proxy.
+# Environment (from /etc/mksm/caddy.env on the VPS):
+#   DOMAIN       site address, e.g. mksm.example.com (http://127.0.0.1:8480 for a local test without TLS)
+#   MKSM_ROOT    web root holding index.html, current.json, disc.iso and v/<build hash>/
+#   SIGNAL_ADDR  signal.mjs listen address
+#   CADDY_ADMIN  admin endpoint ("off" for local tests)
+{
+	admin {$CADDY_ADMIN:localhost:2019}
+}
+
+{$DOMAIN} {
+	root * {$MKSM_ROOT:/srv/mksm}
+
+	# Cross-origin isolation (SharedArrayBuffer for the wasm threads) on every response.
+	header {
+		Cross-Origin-Opener-Policy same-origin
+		Cross-Origin-Embedder-Policy require-corp
+		Cross-Origin-Resource-Policy same-origin
+		X-Content-Type-Options nosniff
+		Referrer-Policy no-referrer
+		X-Robots-Tag "noindex, nofollow"
+		Strict-Transport-Security "max-age=31536000"
+		-Server
+	}
+
+	# Builds live in /v/<sha256 of the wasm>/ and never change; the pointer and the landing page always
+	# revalidate. Only successful responses are marked cacheable, so a 401 or 404 is never cached.
+	@build path /v/*
+	header @build Cache-Control "private, max-age=31536000, immutable" {
+		match status 2xx 304
+	}
+	@fresh path / /index.html /play/* /current.json
+	header @fresh Cache-Control "no-cache" {
+		match status 2xx 304
+	}
+	@disc path /disc.iso
+	header @disc Cache-Control "private, max-age=604800" {
+		match status 2xx 304
+	}
+
+	# Every path needs the invite cookie, the disc included. /invite is how the cookie is obtained and
+	# /admin checks its own bearer secret.
+	@gated not path /invite /admin /admin/*
+	forward_auth @gated {$SIGNAL_ADDR:127.0.0.1:8787} {
+		uri /auth
+	}
+
+	@signal path /ws /auth /invite /turn /admin /admin/*
+	handle @signal {
+		reverse_proxy {$SIGNAL_ADDR:127.0.0.1:8787}
+	}
+
+	handle {
+		# /play/<room> is the landing page with a room selected.
+		rewrite /play/* /index.html
+		# Serves ps2web.*.br/.gz when present; disc.iso has no sidecar, so Range requests get raw bytes.
+		file_server {
+			precompressed br gzip
+		}
+	}
+}

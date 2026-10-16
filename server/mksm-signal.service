@@ -1,0 +1,49 @@
+[Unit]
+Description=MKSM signalling server (invites, cookie auth, rooms, TURN credentials)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=mksm
+Group=mksm
+EnvironmentFile=/etc/mksm/signal.env
+Environment=NODE_ENV=production
+WorkingDirectory=/opt/mksm
+ExecStart=/usr/bin/node /opt/mksm/signal.mjs
+# /var/lib/mksm, owned by mksm; DATA_DIR points here.
+StateDirectory=mksm
+StateDirectoryMode=0700
+UMask=0077
+Restart=on-failure
+RestartSec=2
+
+# Hardening. No MemoryDenyWriteExecute: V8's JIT needs W+X pages.
+NoNewPrivileges=yes
+CapabilityBoundingSet=
+AmbientCapabilities=
+ProtectSystem=strict
+ProtectHome=yes
+PrivateTmp=yes
+PrivateDevices=yes
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectKernelLogs=yes
+ProtectControlGroups=yes
+ProtectClock=yes
+ProtectHostname=yes
+ProtectProc=invisible
+RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX
+RestrictNamespaces=yes
+RestrictRealtime=yes
+RestrictSUIDSGID=yes
+LockPersonality=yes
+RemoveIPC=yes
+SystemCallArchitectures=native
+SystemCallFilter=@system-service
+SystemCallErrorNumber=EPERM
+MemoryMax=256M
+TasksMax=64
+
+[Install]
+WantedBy=multi-user.target
