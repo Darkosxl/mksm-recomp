@@ -175,5 +175,9 @@ any game that branches on macro-mode flags (`cfc2 vi16/vi17` after an op) was af
 - Offline harness (`tools/scripts/probe_replay.cpp`) on the 0x0C frame-9230 castRay dump: before the fix, no hit (v0 = 0); after the fix, the hit is
   collidable 0xB2B090 with normal (0, −1, 0). PCSX2 reports the same object.
 - No-input 0x0C repro (fresh g7600, frames 7600–9600): `g1` and y = 2027 throughout, the same as PCSX2 (it used to fall at frame ~9205).
-VERIFY_TABLE
+- Mash batch (fresh g7600 warp + sweep inputs, frames 7600–11200, `OUT=$P/logs/black/verify black_batch.sh fx …`, merged with main 470bffe):
+  21/22 maps stay grounded through 11200: 40 0c 48 92 a2 a4 a6 a7 bc e3 eb 0f 87 62 e6 2f a0 2d 14 47 a5
+  (a0's flagged jump at 8050 is a room change, grounded throughout). **e9 still misses** at frame 10850, pos (−36421, −56866):
+  a second, separate gap (fix/raycast-e9).
+- `regress.sh` on the merged build: PASS ×4 (boot, gameplay, koop, versus).
 
