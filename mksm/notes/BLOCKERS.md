@@ -44,5 +44,12 @@
 
 ## 2026-10-16
 - [x] COP1 SQRT.S rounds to nearest, RSQRT rounds root then quotient, as PCSX2 does (merge 470bffe).
-- [ ] In progress: endgame (FMV gallery, final boss, credits; notes/endgame.md), finishers + options (notes/finishers-options.md).
+- [x] FMV gallery 8/8 SFDs, Kontent galleries, LK Shang Tsung + Kintaro fatalities, ending FINAL.SFD → credits → save → title
+      (ending reached via the finalvictory flag poke, not a real Kahn kill). notes/endgame.md.
+- [x] 0x49 dais fall-through (pre-fix build) is gone on the fixed build (endgame.md 2d addendum).
+- [x] Saves round-trip recomp ↔ PCSX2 both ways (notes/pcsx2-crosscheck.md). Options (audio modes, volumes, camera invert,
+      persistence) PASS; no widescreen/vibration/remap options exist in retail (notes/finishers-options.md).
+- [ ] Not finished by script: each LK/KL Fatality/Multality/Brutality (codes decoded, see finishers-options.md), Shao Kahn kill,
+      Kung Lao run, Versus rounds for Kitana/Sub-Zero/Johnny Cage/Reptile/Baraka, Netherrealm LOADING + 0x14 panel vs PCSX2.
+- [?] Map 0x60 Raiden tutorial box froze play ~f9600–11000 and × didn't dismiss it (finishers-options.md; not triaged).
 - [ ] Human-only: online co-op on a second device / over the internet; feel/timing; full Story playthrough.
