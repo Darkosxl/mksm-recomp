@@ -34,3 +34,5 @@ first AWS job, with Cem's ok.
 ## Step log
 ### Step 0 — setup (2026-10-16)
 Branch from `main` f3a80ff, worktree, data dir, venv, these notes, native build check.
+- Native build in the worktree: 2 min 37 s at `-j6` under a 3 GB cap. Headless boot with `story.args` and pinned
+  `PS2_RTC` reaches the title screen ("PRESS START button") at frame 1600 on the RTX 4050, 1700 frames in 5 s.
