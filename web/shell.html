@@ -713,12 +713,8 @@ function lockstepStats() {
 async function showInvite(id) {
   let invite = new URL(location.href);
   for (const k of [...invite.searchParams.keys()]) if (k !== 'room') invite.searchParams.delete(k);
-  const info = await fetch('/host-info?new=1', { cache: 'no-store' }).then((r) => (r.ok ? r.json() : null)).catch(() => null);
-  if (info?.tunnelUrl && info.inviteToken) {
-    invite = new URL('/invite', info.tunnelUrl);
-    invite.searchParams.set('t', info.inviteToken);
-    invite.searchParams.set('room', id);
-  }
+  const info = await fetch('/host-info?new=1&room=' + encodeURIComponent(id), { cache: 'no-store' }).then((r) => (r.ok ? r.json() : null)).catch(() => null);
+  if (info?.inviteUrl) invite = new URL(info.inviteUrl);
   statusEl.textContent = 'Playing alone. Invite a player (click to copy): ' + invite.href;
   statusEl.style.cursor = 'copy';
   statusEl.onclick = () => navigator.clipboard?.writeText(invite.href).then(() => note('Invite link copied'), () => {});
