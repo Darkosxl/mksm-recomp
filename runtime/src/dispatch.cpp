@@ -2,6 +2,7 @@
 #include "ps2/system.hpp"
 
 #include <algorithm>
+#include <cstddef>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
@@ -174,6 +175,28 @@ void probe(Cpu &c, std::uint32_t pc) {
         static bool on = false;
         static std::FILE *out = std::getenv("PS2_PROBE_OUT") ? std::fopen(std::getenv("PS2_PROBE_OUT"), "w") : stderr;
         if (frame_count() != frame || left <= 0) return;
+        // PS2_PROBE_DUMP="pc:first:count:prefix" writes EE RAM + the raw Cpu struct at hits first..first+count-1 of pc
+        // in that frame (prefix_<hit>.bin; header: magic, sizeof(Cpu), offsets of f, vu0.vf, vu0.acc, vu0.vi, vu0.q).
+        static const char *dump = std::getenv("PS2_PROBE_DUMP");
+        if (dump) {
+            static unsigned dpc = 0, first = 0, count = 0, hits = 0;
+            static char prefix[400] = {};
+            static const bool parsed = std::sscanf(dump, "%x:%u:%u:%399s", &dpc, &first, &count, prefix) == 4;
+            if (parsed && pc == dpc && ++hits >= first && hits < first + count) {
+                const std::string path = std::string(prefix) + "_" + std::to_string(hits) + ".bin";
+                if (std::FILE *d = std::fopen(path.c_str(), "wb")) {
+                    const std::uint32_t head[8] = {0x50524F42u, static_cast<std::uint32_t>(sizeof(Cpu)), static_cast<std::uint32_t>(offsetof(Cpu, f)),
+                                                   static_cast<std::uint32_t>(offsetof(Cpu, vu0) + offsetof(Vu0Regs, vf)),
+                                                   static_cast<std::uint32_t>(offsetof(Cpu, vu0) + offsetof(Vu0Regs, acc)),
+                                                   static_cast<std::uint32_t>(offsetof(Cpu, vu0) + offsetof(Vu0Regs, vi)),
+                                                   static_cast<std::uint32_t>(offsetof(Cpu, vu0) + offsetof(Vu0Regs, q)), pc};
+                    std::fwrite(head, sizeof head, 1, d);
+                    std::fwrite(&c, sizeof c, 1, d);
+                    std::fwrite(g_ram, 1, kRamSize, d);
+                    std::fclose(d);
+                }
+            }
+        }
         if (!on && (start == 0 || pc == start)) on = true;
         if (!on) return;
         --left;
