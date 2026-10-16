@@ -128,19 +128,22 @@ inline Result div_nearest(std::uint32_t a, std::uint32_t b) {
     return {from_double_nearest(to_double(a) / to_double(b)), false};
 }
 
-inline std::uint32_t sqrt(std::uint32_t a) {
+// VU SQRT chops. The double root of a 24-bit mantissa is far from any float boundary it could misround across.
+inline std::uint32_t sqrt_chop(std::uint32_t a) {
     a = flush(a) & kAbs;
     if (!a) return 0;
     return from_double(std::sqrt(to_double(a)));
 }
 
-inline Result rsqrt(std::uint32_t a, std::uint32_t b) {
-    a = flush(a);
-    b = flush(b) & kAbs;
-    if (!b) return {(a & kSign) | kAbs, true};
-    if (!(a & kAbs)) return {a & kSign, false};
-    return {from_double(to_double(a) / std::sqrt(to_double(b))), false};
+// EE COP1 SQRT.S rounds to nearest like DIV.S (PCSX2 forces MXCSR to nearest for it).
+inline std::uint32_t sqrt(std::uint32_t a) {
+    a = flush(a) & kAbs;
+    if (!a) return 0;
+    return from_double_nearest(std::sqrt(to_double(a)));
 }
+
+// RSQRT (COP1 and VU) rounds twice, as PCSX2 does: the root chops to a float, then the quotient chops.
+inline Result rsqrt(std::uint32_t a, std::uint32_t b) { return div(a, sqrt_chop(b)); }
 
 inline std::int32_t key(std::uint32_t x) {
     x = flush(x);

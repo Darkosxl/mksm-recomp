@@ -148,7 +148,7 @@ inline void div(Vu0Regs &v, std::uint32_t s, std::uint32_t t) {
     v.q = r.value;
     v.status = (v.status & ~0x30u) | (r.invalid ? 0x20u : 0u);
 }
-inline void sqrt(Vu0Regs &v, std::uint32_t t) { v.q = fp::sqrt(t); }
+inline void sqrt(Vu0Regs &v, std::uint32_t t) { v.q = fp::sqrt_chop(t); }
 inline void rsqrt(Vu0Regs &v, std::uint32_t s, std::uint32_t t) {
     const fp::Result r = fp::rsqrt(s, t);
     v.q = r.value;
