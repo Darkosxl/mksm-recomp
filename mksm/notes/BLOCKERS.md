@@ -35,7 +35,8 @@
       (saved before it) carried TEX0 TW/TH computed with chopped DIV.S. States regenerated → logs/states/; stale archived.
 - [x] Havok ground raycast misses (black maps): VU0 macro ops never set MAC/status flags; hkBoxShape::castRay reads
       `cfc2 vi17` after `vsub vf0,…` (merge d9b856e). 21/22 maps verified grounded. See notes/black-maps.md §7.
-- [ ] Map 0xE9 still loses ground at frame 10850, pos (−36421, −56866): second gap, agent on fix/raycast-e9.
+- [x] Map 0xE9 fall at frame 10850 is authentic: the mash walks through collision-less walls past the floor mesh edge
+      (z ≈ −56550); PCSX2 falls identically when poked there (black-maps.md §8). So 22/22 match PCSX2.
 - [ ] Pi sweep3: all 107 maps on the fixed build (running 2026-10-16, ~9 h). sweep2 (pre-fix): 107/107 no halt, 0 misses.
 - [?] Map 0x14 pause-menu panel shows font sheet ~25 frames after L1/R1 tab mashing (game writes that TEX0 itself; needs PCSX2 check).
 - [?] Netherrealm loading: "LOADING" baked into art + drawn again on top (ZTST ALWAYS) — likely authentic; needs PCSX2 check.
