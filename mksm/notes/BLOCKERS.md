@@ -51,5 +51,7 @@
       persistence) PASS; no widescreen/vibration/remap options exist in retail (notes/finishers-options.md).
 - [ ] Not finished by script: each LK/KL Fatality/Multality/Brutality (codes decoded, see finishers-options.md), Shao Kahn kill,
       Kung Lao run, Versus rounds for Kitana/Sub-Zero/Johnny Cage/Reptile/Baraka, Netherrealm LOADING + 0x14 panel vs PCSX2.
+- [~] Soak (fixed build, g7600 + invuln + gen_mash seed 4242): 88,400 frames (~25 min game time) before the deadline stop;
+      0 halts, 0 unmapped/unhandled, 0 misses, RSS flat 265–287 MB, game live at the end. The full 2 h soak is still open.
 - [?] Map 0x60 Raiden tutorial box froze play ~f9600–11000 and × didn't dismiss it (finishers-options.md; not triaged).
 - [ ] Human-only: online co-op on a second device / over the internet; feel/timing; full Story playthrough.
