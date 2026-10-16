@@ -33,9 +33,15 @@
 ## 2026-10-15 late
 - [x] Garbled menu font + square particles: NOT a current bug — fixed by DIV.S round-to-nearest (30e6276). Stale savestates
       (saved before it) carried TEX0 TW/TH computed with chopped DIV.S. States regenerated → logs/states/; stale archived.
-- [ ] **TOP: Havok ground raycast misses in the recomp** (maps 40 0C 48 92 A2 A4 A6 A7 BC E3 E9 EB still black on HEAD + fresh state).
-      Emulation bug in MOPP ray walker 0x3C9B80 (PCSX2 RAM copied in → still misses). See notes/black-maps.md; WIP probes fix/black-maps 9f2972f.
-- [ ] Re-run sweep visual verdicts on a post-30e6276 binary (Pi rebuild in progress).
+- [x] Havok ground raycast misses (black maps): VU0 macro ops never set MAC/status flags; hkBoxShape::castRay reads
+      `cfc2 vi17` after `vsub vf0,…` (merge d9b856e). 21/22 maps verified grounded. See notes/black-maps.md §7.
+- [ ] Map 0xE9 still loses ground at frame 10850, pos (−36421, −56866): second gap, agent on fix/raycast-e9.
+- [ ] Pi sweep3: all 107 maps on the fixed build (running 2026-10-16, ~9 h). sweep2 (pre-fix): 107/107 no halt, 0 misses.
 - [?] Map 0x14 pause-menu panel shows font sheet ~25 frames after L1/R1 tab mashing (game writes that TEX0 itself; needs PCSX2 check).
 - [?] Netherrealm loading: "LOADING" baked into art + drawn again on top (ZTST ALWAYS) — likely authentic; needs PCSX2 check.
 - [ ] 53 VU1 programs recorded (12 new) — compile with vurecomp (perf, parked).
+
+## 2026-10-16
+- [x] COP1 SQRT.S rounds to nearest, RSQRT rounds root then quotient, as PCSX2 does (merge 470bffe).
+- [ ] In progress: endgame (FMV gallery, final boss, credits; notes/endgame.md), finishers + options (notes/finishers-options.md).
+- [ ] Human-only: online co-op on a second device / over the internet; feel/timing; full Story playthrough.
