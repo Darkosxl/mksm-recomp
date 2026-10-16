@@ -25,35 +25,86 @@ inline void apply_acc(Vu0Regs &v, unsigned dest, F f) {
     v.acc = r;
 }
 
+// MAC/status flags of macro-mode arithmetic (same convention as the micro-mode interpreter in vu_micro.cpp):
+// per written lane Z (exponent 0), S (sign), O (clamped to max); lanes outside dest read 0. Status keeps
+// I/D (bits 4-5) and the sticky bits, sets Z/S/U/O from the MAC and ORs them into the sticky copies.
+// Games read them with CFC2 vi17 right after an op whose result goes to vf0 (Havok's box raycast does).
+inline std::uint32_t mac_lane(std::uint32_t x, int i) {
+    const std::uint32_t bit = 3u - static_cast<std::uint32_t>(i);
+    std::uint32_t m = 0;
+    if (!(x & 0x7F800000u)) m |= 1u << bit;
+    if (x & 0x80000000u) m |= 0x10u << bit;
+    if ((x & 0x7FFFFFFFu) == 0x7FFFFFFFu) m |= 0x1000u << bit;
+    return m;
+}
+
+inline void set_mac(Vu0Regs &v, std::uint32_t mac) {
+    v.mac = mac;
+    std::uint32_t status = v.status & 0xFF0u;
+    if (mac & 0x000Fu) status |= 0x1u;
+    if (mac & 0x00F0u) status |= 0x2u;
+    if (mac & 0x0F00u) status |= 0x4u;
+    if (mac & 0xF000u) status |= 0x8u;
+    status |= (status & 0xFu) << 6;
+    v.status = (status & ~0x30u) | (v.status & 0x30u);
+}
+
+// Arithmetic results: write the enabled lanes of fd (vf0 is read-only) and update the flags.
+template <typename F>
+inline void arith(Vu0Regs &v, unsigned dest, unsigned fd, F f) {
+    Reg128 r = v.vf[fd];
+    std::uint32_t mac = 0;
+    for (int i = 0; i < 4; ++i)
+        if (lane(dest, i)) {
+            r.w[i] = f(i);
+            mac |= mac_lane(r.w[i], i);
+        }
+    if (fd) v.vf[fd] = r;
+    set_mac(v, mac);
+}
+
+template <typename F>
+inline void arith_acc(Vu0Regs &v, unsigned dest, F f) {
+    Reg128 r = v.acc;
+    std::uint32_t mac = 0;
+    for (int i = 0; i < 4; ++i)
+        if (lane(dest, i)) {
+            r.w[i] = f(i);
+            mac |= mac_lane(r.w[i], i);
+        }
+    v.acc = r;
+    set_mac(v, mac);
+}
+
 inline void add(Vu0Regs &v, unsigned dest, unsigned fd, unsigned fs, unsigned ft) {
-    apply(v, dest, fd, [&](int i) { return fp::add(v.vf[fs].w[i], v.vf[ft].w[i]); });
+    arith(v, dest, fd, [&](int i) { return fp::add(v.vf[fs].w[i], v.vf[ft].w[i]); });
 }
 inline void addbc(Vu0Regs &v, unsigned dest, unsigned fd, unsigned fs, std::uint32_t t) {
-    apply(v, dest, fd, [&](int i) { return fp::add(v.vf[fs].w[i], t); });
+    arith(v, dest, fd, [&](int i) { return fp::add(v.vf[fs].w[i], t); });
 }
 inline void sub(Vu0Regs &v, unsigned dest, unsigned fd, unsigned fs, unsigned ft) {
-    apply(v, dest, fd, [&](int i) { return fp::sub(v.vf[fs].w[i], v.vf[ft].w[i]); });
+    arith(v, dest, fd, [&](int i) { return fp::sub(v.vf[fs].w[i], v.vf[ft].w[i]); });
 }
 inline void subbc(Vu0Regs &v, unsigned dest, unsigned fd, unsigned fs, std::uint32_t t) {
-    apply(v, dest, fd, [&](int i) { return fp::sub(v.vf[fs].w[i], t); });
+    arith(v, dest, fd, [&](int i) { return fp::sub(v.vf[fs].w[i], t); });
 }
 inline void mul(Vu0Regs &v, unsigned dest, unsigned fd, unsigned fs, unsigned ft) {
-    apply(v, dest, fd, [&](int i) { return fp::mul(v.vf[fs].w[i], v.vf[ft].w[i]); });
+    arith(v, dest, fd, [&](int i) { return fp::mul(v.vf[fs].w[i], v.vf[ft].w[i]); });
 }
 inline void mulbc(Vu0Regs &v, unsigned dest, unsigned fd, unsigned fs, std::uint32_t t) {
-    apply(v, dest, fd, [&](int i) { return fp::mul(v.vf[fs].w[i], t); });
+    arith(v, dest, fd, [&](int i) { return fp::mul(v.vf[fs].w[i], t); });
 }
 inline void madd(Vu0Regs &v, unsigned dest, unsigned fd, unsigned fs, unsigned ft) {
-    apply(v, dest, fd, [&](int i) { return fp::add(v.acc.w[i], fp::mul(v.vf[fs].w[i], v.vf[ft].w[i])); });
+    arith(v, dest, fd, [&](int i) { return fp::add(v.acc.w[i], fp::mul(v.vf[fs].w[i], v.vf[ft].w[i])); });
 }
 inline void maddbc(Vu0Regs &v, unsigned dest, unsigned fd, unsigned fs, std::uint32_t t) {
-    apply(v, dest, fd, [&](int i) { return fp::add(v.acc.w[i], fp::mul(v.vf[fs].w[i], t)); });
+    arith(v, dest, fd, [&](int i) { return fp::add(v.acc.w[i], fp::mul(v.vf[fs].w[i], t)); });
 }
 inline void msub(Vu0Regs &v, unsigned dest, unsigned fd, unsigned fs, unsigned ft) {
-    apply(v, dest, fd, [&](int i) { return fp::sub(v.acc.w[i], fp::mul(v.vf[fs].w[i], v.vf[ft].w[i])); });
+    arith(v, dest, fd, [&](int i) { return fp::sub(v.acc.w[i], fp::mul(v.vf[fs].w[i], v.vf[ft].w[i])); });
 }
 inline void msubbc(Vu0Regs &v, unsigned dest, unsigned fd, unsigned fs, std::uint32_t t) {
-    apply(v, dest, fd, [&](int i) { return fp::sub(v.acc.w[i], fp::mul(v.vf[fs].w[i], t)); });
+    arith(v, dest, fd, [&](int i) { return fp::sub(v.acc.w[i], fp::mul(v.vf[fs].w[i], t)); });
 }
 inline void max(Vu0Regs &v, unsigned dest, unsigned fd, unsigned fs, unsigned ft) {
     apply(v, dest, fd, [&](int i) { return fp::max(v.vf[fs].w[i], v.vf[ft].w[i]); });
@@ -69,34 +120,34 @@ inline void minibc(Vu0Regs &v, unsigned dest, unsigned fd, unsigned fs, std::uin
 }
 
 inline void adda(Vu0Regs &v, unsigned dest, unsigned fs, unsigned ft) {
-    apply_acc(v, dest, [&](int i) { return fp::add(v.vf[fs].w[i], v.vf[ft].w[i]); });
+    arith_acc(v, dest, [&](int i) { return fp::add(v.vf[fs].w[i], v.vf[ft].w[i]); });
 }
 inline void addabc(Vu0Regs &v, unsigned dest, unsigned fs, std::uint32_t t) {
-    apply_acc(v, dest, [&](int i) { return fp::add(v.vf[fs].w[i], t); });
+    arith_acc(v, dest, [&](int i) { return fp::add(v.vf[fs].w[i], t); });
 }
 inline void suba(Vu0Regs &v, unsigned dest, unsigned fs, unsigned ft) {
-    apply_acc(v, dest, [&](int i) { return fp::sub(v.vf[fs].w[i], v.vf[ft].w[i]); });
+    arith_acc(v, dest, [&](int i) { return fp::sub(v.vf[fs].w[i], v.vf[ft].w[i]); });
 }
 inline void subabc(Vu0Regs &v, unsigned dest, unsigned fs, std::uint32_t t) {
-    apply_acc(v, dest, [&](int i) { return fp::sub(v.vf[fs].w[i], t); });
+    arith_acc(v, dest, [&](int i) { return fp::sub(v.vf[fs].w[i], t); });
 }
 inline void mula(Vu0Regs &v, unsigned dest, unsigned fs, unsigned ft) {
-    apply_acc(v, dest, [&](int i) { return fp::mul(v.vf[fs].w[i], v.vf[ft].w[i]); });
+    arith_acc(v, dest, [&](int i) { return fp::mul(v.vf[fs].w[i], v.vf[ft].w[i]); });
 }
 inline void mulabc(Vu0Regs &v, unsigned dest, unsigned fs, std::uint32_t t) {
-    apply_acc(v, dest, [&](int i) { return fp::mul(v.vf[fs].w[i], t); });
+    arith_acc(v, dest, [&](int i) { return fp::mul(v.vf[fs].w[i], t); });
 }
 inline void madda(Vu0Regs &v, unsigned dest, unsigned fs, unsigned ft) {
-    apply_acc(v, dest, [&](int i) { return fp::add(v.acc.w[i], fp::mul(v.vf[fs].w[i], v.vf[ft].w[i])); });
+    arith_acc(v, dest, [&](int i) { return fp::add(v.acc.w[i], fp::mul(v.vf[fs].w[i], v.vf[ft].w[i])); });
 }
 inline void maddabc(Vu0Regs &v, unsigned dest, unsigned fs, std::uint32_t t) {
-    apply_acc(v, dest, [&](int i) { return fp::add(v.acc.w[i], fp::mul(v.vf[fs].w[i], t)); });
+    arith_acc(v, dest, [&](int i) { return fp::add(v.acc.w[i], fp::mul(v.vf[fs].w[i], t)); });
 }
 inline void msuba(Vu0Regs &v, unsigned dest, unsigned fs, unsigned ft) {
-    apply_acc(v, dest, [&](int i) { return fp::sub(v.acc.w[i], fp::mul(v.vf[fs].w[i], v.vf[ft].w[i])); });
+    arith_acc(v, dest, [&](int i) { return fp::sub(v.acc.w[i], fp::mul(v.vf[fs].w[i], v.vf[ft].w[i])); });
 }
 inline void msubabc(Vu0Regs &v, unsigned dest, unsigned fs, std::uint32_t t) {
-    apply_acc(v, dest, [&](int i) { return fp::sub(v.acc.w[i], fp::mul(v.vf[fs].w[i], t)); });
+    arith_acc(v, dest, [&](int i) { return fp::sub(v.acc.w[i], fp::mul(v.vf[fs].w[i], t)); });
 }
 
 inline void opmula(Vu0Regs &v, unsigned fs, unsigned ft) {
@@ -104,6 +155,7 @@ inline void opmula(Vu0Regs &v, unsigned fs, unsigned ft) {
     v.acc.w[0] = fp::mul(s.w[1], t.w[2]);
     v.acc.w[1] = fp::mul(s.w[2], t.w[0]);
     v.acc.w[2] = fp::mul(s.w[0], t.w[1]);
+    set_mac(v, mac_lane(v.acc.w[0], 0) | mac_lane(v.acc.w[1], 1) | mac_lane(v.acc.w[2], 2));
 }
 
 inline void opmsub(Vu0Regs &v, unsigned fd, unsigned fs, unsigned ft) {
@@ -113,6 +165,7 @@ inline void opmsub(Vu0Regs &v, unsigned fd, unsigned fs, unsigned ft) {
     r.w[1] = fp::sub(v.acc.w[1], fp::mul(s.w[2], t.w[0]));
     r.w[2] = fp::sub(v.acc.w[2], fp::mul(s.w[0], t.w[1]));
     if (fd) v.vf[fd] = r;
+    set_mac(v, mac_lane(r.w[0], 0) | mac_lane(r.w[1], 1) | mac_lane(r.w[2], 2));
 }
 
 inline void abs(Vu0Regs &v, unsigned dest, unsigned ft, unsigned fs) {

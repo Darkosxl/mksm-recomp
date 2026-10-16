@@ -1,7 +1,8 @@
-# Black-screen maps ("dark-fade"): handoff
+# Black-screen maps ("dark-fade")
 
-Date 2026-10-15. Branch `fix/black-maps` (worktree `$P/wt/black`, based on mksm 75cbbde). Status: **emulation bug,
-not fixed yet.** Root cause narrowed to the Havok ground raycast. Next step: an instruction-level trace of the MOPP ray VM.
+Branch `fix/black-maps` (worktree `$P/wt/black`). Status: **fixed** (2026-10-16). Emulation bug: VU0 macro-mode
+instructions never updated the MAC/status flags, so Havok's box raycast read stale flags and missed box-shaped floors.
+§7 has the root cause and the verification. §1–§4 are the day-1 investigation, kept for the method and the tools.
 
 ## 1. Symptom and verdict
 
@@ -111,6 +112,10 @@ states dir, or use the extracted `pc_0c_eeMemory.bin`).
   With `PS2_PROBE_FRAME=N`, probes log only in frame N, starting at the first hit of `PS2_PROBE_START` (hex pc), for at most
   `PS2_PROBE_COUNT` lines, to `PS2_PROBE_OUT`. Each line has pc, a0–a3, t0, ra, v0, sp, f0 and f12–f14. Without the env
   variable the old behaviour stays (print every probe to stderr).
+- `PS2_PROBE_DUMP="pc:first:count:prefix"` (together with `PS2_PROBE_FRAME`) writes `prefix_<hit>.bin` at hits first..first+count−1
+  of probe `pc` in that frame: a 32-byte header (magic `PROB`, sizeof(Cpu), offsets of f/vf/acc/vi/q, pc), then the raw `Cpu`,
+  then 32 MB of EE RAM. `tools/scripts/probe_replay.cpp` loads one dump, links `libps2game.a` + `libps2runtime.a`,
+  dispatches from that pc and prints the result: a whole guest call replayed offline in about 1 s, which can be run under gdb.
 - Probe build recipe. Probes at every Havok-range function entry: `logs/black/probes2.txt`, made from
   `analysis/exports/functions.txt` for 0x320000–0x49A708, 0x2C0000–0x2C2000 and 0x213000–0x215000, plus 3CA9D8/3CAB10.
   ```
@@ -126,40 +131,53 @@ states dir, or use the extracted `pc_0c_eeMemory.bin`).
 gdb hardware write-watch on a guest RAM word (finds which guest function writes it): `tools/scripts/black_gdbwatch.py`.
 For example `WP_ADDR=0x5E6BC4`, which found the pos.y writers `FUN_001c3a78` (gravity) and `FUN_00165418` (0x40 rescue).
 
-## 5. Ranked suspects (all in the castRay → MOPP path)
+## 5. Suspects that were ruled out on day 2
 
-The MOPP VM 0x3C9B80 instruction mix is ld8/ld16/ld32 bytecode reads, `cvt.s.w` (×21), `c.lt.s` (×20), DIV.S (×6),
-ADD/SUB/MUL.S, `lqc2/sqc2/lq/sq`, and VU0 macro `vmulabc`/`vmsubabc`/`vmaddbc`/`vmulbc`/`vsub` (cross products).
-The setup 0x3CA9D8 computes `1/scale` with DIV.S and `scale·2^-16` with MUL.S, and uses vsub/vmulbc.
-1. **VU0 macro multiply-accumulate (`vmula/vmsuba/vmadd` bc forms).** Rounding/clamping of the accumulate, or ACC handling,
-   in `runtime/include/ps2/vu.hpp` / `vu_ops.hpp`. Check ACC and the product→sum order against PCSX2's VU macro
-   semantics (product rounded to float before the add? clamp of ±max? sign of zero?).
-2. **FPU compare/flags on edge values.** `fp::key` flushes denormals and orders −0 == +0. Vertical rays have dx = dz = 0,
-   so 1/0 → ±MAX (sign of the zero matters: −0 gives −MAX) and ±MAX·0 = 0. Check `c.lt.s` with ±MAX and the
-   −0/+0 sign after SUB.S (`fp::add` returns +0 for x − x, as the PS2 does, but check `a & b` for −0 + −0).
-3. **`cvt.s.w` / `cvt.w.s`.** `from_fixed` goes through double and truncates. PS2 CVT.S.W of |int| > 2^24 rounding, and
-   CVT.W.S saturation at exponent ≥ 158.
-4. **`fp::add` guard-bit behaviour on subtraction** (keeps 1 guard bit, drops the rest of the shifted operand).
-   That is ulp-level only, but MOPP compares quantised integers derived from these values.
-5. **128-bit loads/stores (`lq`/`sq`/`lqc2`) with unaligned addresses** (`& ~15`). The MOPP VM keeps its stack of
-   intervals in 16-byte slots.
-Also not yet excluded: the VU0 micro memory / VU0 register state and the scratchpad, since only EE RAM was transplanted.
-The VM uses no `vcallms`, so a micro-memory problem is unlikely.
+Env toggles of FP semantics inside the MOPP VM (unit with alternative ADD/MUL/CVT/−0 handling, `HZ_MODE` in an offline
+harness) changed nothing: the MOPP VM was never the problem. The offline harness replays one world castRay from a probe
+dump (`PS2_PROBE_DUMP`) through the real generated code; tracing its indirect calls showed that the floor under the 0x0C
+spawn point is broadphase node 18. That is collidable 0xB326BC → shape 0xB32840, an **hkTransformShape** (owner 0xB2B090, the
+same object PCSX2 reports as the hit) whose child 0xB32740 is an **hkBoxShape**, ray-tested by 0x3A45F8. The MOPP meshes
+were tested correctly and simply contain no floor at that spot.
 
-## 6. Planned next step
-
-Instruction-level trace of one failing ray. Use the deterministic no-input 0x0C run, frame 9230, ground ray `a1 = 0x5E9830`.
-1. Put probes on **every instruction address** of 0x3C9B80–0x3CA9D8 and 0x3CA9D8–0x3CAB10 (and 0x3A9088 if the MOPP
-   VM returns hits). Extend `probe()` to also dump the touched VF registers/ACC and the FPRs (env-gated).
-2. Re-implement the VM's FP/VU steps offline from that trace in a small independent model of PS2 semantics (Python), and
-   flag the first instruction whose recomp result disagrees. Alternatively, find the first VM decision that rejects a node
-   containing the floor triangle under (−4291, −15155). The floor is at y = 2027, which is 4.054 in Havok units, and the
-   ray goes from +0x2D10 to +0x2D20.
-3. Cheaper bisection first, each one env-gated in vu.hpp/fpu.hpp: toggle candidate semantics one at a time (VU MADD/MSUB
-   with an unrounded product, CVT rounding, −0 handling) and check whether `g` turns 1 on the no-input 0x0C repro
-   (40 s per try). Unlike the mash runs this repro is chaos-free, so a flip is meaningful.
-4. Fix it generically, then verify 0x0C (player stands after the cutscene), 0x40 (no runaway at 8519), the fresh-state batch,
-   and `tools/scripts/regress.sh <ps2run>` (PASS ×4).
+## 6. (superseded) The day-1 plan was an instruction trace of the MOPP VM. The harness above replaced it.
 
 Artifacts: `logs/black/` holds the PCSX2 0x0C state and RAM, the probe lists, the failing-frame probe trace, and the watch logs
 of the fresh-state batch (`traces/fb-<map>.w`).
+
+## 7. Root cause and fix
+
+**Root cause.** `hkBoxShape::castRay` (0x3A45F8, unit_00A9) computes per-axis "which side of the box" masks from the VU0
+MAC flags:
+```
+vsub.xyzw vf0, vf1, vf3      # result discarded (vf0 is read-only); only the flags matter
+cfc2      v1, vi17           # MAC flags
+sra v0, v1, 4 ; or v0, v0, v1 ; andi v0, v0, 0xF   # per-lane sign|zero mask
+```
+A second Havok function at 0x3A4880 does the same with `& 0xF0`. Our macro-mode ops in `runtime/include/ps2/vu.hpp`
+(`apply`/`apply_acc`) wrote the destination lanes but never touched `Vu0Regs::mac` or `status`, so `cfc2 vi17` returned
+whatever the last VU0 micro program or `ctc2` left there. The slab test then rejected the box. Every floor that is a
+box (or a transform of one) became invisible to the ground ray; MOPP triangle meshes still worked. That is why the failure
+was position-dependent: 0x0C's spawn room floor is a box, and on the other maps the misses happened where the probe point
+landed on box-shaped floor pieces (inferred from the fix, not traced per map). With no hit, `FUN_00165418` returns pos.y + 10000, the player falls forever (or, on 0x40/0x96, the up-ray
+rescue teleports them upward every frame), and the camera follows into the distance fog.
+
+**Fix** (`runtime/include/ps2/vu.hpp`). ADD/SUB/MUL/MADD/MSUB in all bc/q/i forms, their ACC variants (ADDA…MSUBA), and
+OPMULA/OPMSUB now set MAC and status, using the same convention as the micro-mode interpreter (`vu_micro.cpp`
+`mac_flags`/`set_flags`):
+- per written lane: Z (exponent 0), S (sign), O (clamped to ±max);
+- lanes outside the dest mask read 0;
+- status gets Z/S/U/O from the MAC plus the sticky copies in bits 6–9, and keeps I/D (bits 4–5).
+A result written to vf0 still sets flags. MAX/MINI/ABS/MOVE/MR32/FTOI/ITOF leave the flags alone, as on hardware. It is generic:
+any game that branches on macro-mode flags (`cfc2 vi16/vi17` after an op) was affected.
+
+**Verification.**
+- Offline harness (`tools/scripts/probe_replay.cpp`) on the 0x0C frame-9230 castRay dump: before the fix, no hit (v0 = 0); after the fix, the hit is
+  collidable 0xB2B090 with normal (0, −1, 0). PCSX2 reports the same object.
+- No-input 0x0C repro (fresh g7600, frames 7600–9600): `g1` and y = 2027 throughout, the same as PCSX2 (it used to fall at frame ~9205).
+- Mash batch (fresh g7600 warp + sweep inputs, frames 7600–11200, `OUT=$P/logs/black/verify black_batch.sh fx …`, merged with main 470bffe):
+  21/22 maps stay grounded through 11200: 40 0c 48 92 a2 a4 a6 a7 bc e3 eb 0f 87 62 e6 2f a0 2d 14 47 a5
+  (a0's flagged jump at 8050 is a room change, grounded throughout). **e9 still misses** at frame 10850, pos (−36421, −56866):
+  a second, separate gap (fix/raycast-e9).
+- `regress.sh` on the merged build: PASS ×4 (boot, gameplay, koop, versus).
+
