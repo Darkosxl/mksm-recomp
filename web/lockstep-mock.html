@@ -1,0 +1,101 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Lockstep mock</title>
+<style>
+  :root { color-scheme: dark; --bg: #0c0c0d; --fg: #ecebe8; --dim: #9b9891; --line: #2a2a30; }
+  body { margin: 0; padding: 16px; background: var(--bg); color: var(--fg); font: 14px/1.45 system-ui, sans-serif; }
+  h1 { font-size: 16px; margin: 0 0 8px; }
+  #stats { white-space: pre; font: 12px/1.4 ui-monospace, monospace; border: 1px solid var(--line); padding: 8px; overflow-x: auto; }
+  #log { white-space: pre-wrap; font: 12px/1.4 ui-monospace, monospace; color: var(--dim); max-height: 40vh; overflow: auto; }
+</style>
+</head>
+<body>
+<h1>Lockstep mock <span id="status"></span></h1>
+<div id="stats"></div>
+<div id="log"></div>
+<script type="module">
+// Test page: lockstep.js driving the mock emulator worker with a seeded random pad instead of a gamepad.
+// ?create=1 (reserve a room and join it) or ?room=<id>; &seed=N &drop=0.2 (drop "in" packets) &lag=40 (ms on
+// every send) &build=<hex> &disc=<id>. Everything a test needs is on window.T.
+import { Lockstep, OFF, Ring } from './lockstep.js';
+
+const q = new URLSearchParams(location.search);
+const $ = (id) => document.getElementById(id);
+const T = (window.T = { emu: {}, hashes: {}, events: [], logs: [] });
+const log = (...a) => {
+  const line = `${(performance.now() / 1000).toFixed(2)} ${a.join(' ')}`;
+  T.logs.push(line);
+  console.log(line);
+  $('log').textContent = T.logs.slice(-40).join('\n');
+};
+
+const sab = new SharedArrayBuffer(OFF.SIZE);
+const ring = (T.ring = new Ring(sab));
+ring.store(OFF.EMU_FRAME, -1);
+ring.store(OFF.HASH_FRAME, -1);
+ring.clear();
+T.ctrl = new Int32Array(new SharedArrayBuffer(8));
+const worker = new Worker('./lockstep-mock-worker.js', { type: 'module' });
+worker.onmessage = ({ data }) => {
+  for (const [f, h] of data.hashes || []) T.hashes[f] = h;
+  T.emu = data;
+};
+worker.onerror = (e) => log('worker error', e.message);
+worker.postMessage({ buffer: sab, ctrl: T.ctrl.buffer });
+
+// Seeded pad: buttons held for a random number of samples, sticks drifting, occasional trigger pressure.
+function pad(seed) {
+  let a = seed >>> 0;
+  const rnd = () => { a = (a + 0x6d2b79f5) | 0; let t = Math.imul(a ^ (a >>> 15), 1 | a); t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t; return ((t ^ (t >>> 14)) >>> 0) / 4294967296; };
+  let p = { buttons: 0, lx: 128, ly: 128, rx: 128, ry: 128, l2: 0, r2: 0 }, hold = 0;
+  return () => {
+    if (--hold <= 0) {
+      hold = 1 + Math.floor(rnd() * 20);
+      p = { buttons: Math.floor(rnd() * 65536) & Math.floor(rnd() * 65536), lx: Math.floor(rnd() * 256), ly: Math.floor(rnd() * 256),
+            rx: 128, ry: 128, l2: rnd() < 0.2 ? Math.floor(rnd() * 256) : 0, r2: 0 };
+    }
+    return p;
+  };
+}
+
+const build = q.get('build') || 'b0b0', disc = q.get('disc') || 'mock-disc';
+let gen = null;
+T.fakeHidden = (hidden) => {
+  Object.defineProperty(document, 'hidden', { configurable: true, get: () => hidden });
+  document.dispatchEvent(new Event('visibilitychange'));
+};
+T.corrupt = () => Atomics.store(T.ctrl, 1, 1);
+T.stopEmu = () => Atomics.store(T.ctrl, 0, 1);
+
+try {
+  T.room = q.get('room') || (await Lockstep.createRoom({ build }));
+  const ls = (T.ls = new Lockstep({
+    buffer: sab, room: T.room, build, disc, config: { mock: 1, lockstep: 1 },
+    readPad: () => (gen ||= pad(Number(q.get('seed') || 1) * 2 + ls.slot))(),
+    test: { dropIn: Number(q.get('drop') || 0), delayMs: Number(q.get('lag') || 0) },
+    log,
+  }));
+  for (const ev of ['status', 'start', 'desync', 'disconnect', 'reconnect', 'solo', 'refused', 'resync', 'blob', 'peerLeft'])
+    ls['on' + ev[0].toUpperCase() + ev.slice(1)] = (d) => {
+      T.events.push({ ev, t: performance.now(), frame: ls.lastFrame, d: ev === 'blob' ? { size: d.bytes.byteLength, ms: d.ms } : d });
+      if (ev === 'status') $('status').textContent = d;
+      else log(ev, JSON.stringify(ev === 'blob' ? { size: d.bytes.byteLength, ms: d.ms } : d));
+    };
+  log('room', T.room);
+  await ls.connect();
+  T.ready = true;
+} catch (e) {
+  T.error = e.message;
+  log('error', e.message);
+}
+
+setInterval(() => {
+  const e = T.emu;
+  $('stats').textContent = T.ls ? JSON.stringify({ ...T.ls.snapshot(), emu: { frame: e.frame, game: e.game, fps: e.fps, stalls: e.stalls, paused: e.paused } }, null, 1) : '';
+}, 500);
+</script>
+</body>
+</html>
