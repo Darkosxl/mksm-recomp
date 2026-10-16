@@ -49,6 +49,8 @@ std::uint8_t *memory();
 
 void init();
 void state(ps2::state::Stream &s);
+// false: the next save leaves out the renderer's (upscaled) VRAM copy; the load rebuilds it from GS memory
+void set_state_vram(bool on);
 void reset();
 void write(std::uint32_t reg, std::uint64_t value);
 void signal(std::uint32_t reg, std::uint64_t value);

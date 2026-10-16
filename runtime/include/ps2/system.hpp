@@ -46,6 +46,14 @@ struct Options {
     std::function<void()> on_memcard_saved;
     std::string save_state_path;
     std::uint64_t save_state_frame = 0;
+    // Deterministic lockstep netplay (web host only; off natively). The host's on_vblank latches both players'
+    // inputs from the shared ring; the runtime pins the config that would otherwise differ between peers.
+    bool lockstep = false;
+    // lockstep snapshots (request_snapshot): called on the emulation thread at the top of the run loop with the
+    // in-memory state, or nullptr when the guest was not at a safe point (retry at the next vblank)
+    std::function<void(const std::vector<std::uint8_t> *state)> on_snapshot;
+    // after a request_load_state() load, on the emulation thread
+    std::function<void(bool ok)> on_state_loaded;
 };
 
 extern Options g_options;
@@ -89,6 +97,24 @@ void halt(const std::string &reason);
 bool save_state(const std::string &path);
 bool load_state(const std::string &path);
 bool load_state(const std::uint8_t *data, std::size_t size);
+// In-memory state for lockstep drop-in and resync. `vram` = false leaves out the renderer's (possibly upscaled)
+// VRAM copy: the load rebuilds it from GS memory, so the bytes do not depend on the peer's resolution scale.
+bool save_state(std::vector<std::uint8_t> &out, bool vram = true);
+// Emulation thread only (e.g. from on_vblank): the guest unwinds and the run loop saves (on_snapshot) or loads
+// (on_state_loaded) at its top, the same safe point as --save-state and PS2_LOAD_AT. `data` must stay valid until then.
+void request_snapshot();
+void request_load_state(const std::uint8_t *data, std::size_t size);
+// 64-bit hash of part `k` of `n` (n = 32) of the guest-visible machine: 1 MB of EE RAM per part, plus the EE CPU,
+// scratchpad and event queue (k=0), IOP RAM and CPU (k=8), SPU2 RAM (k=16) and VU memory/registers (k=24).
+// Raw memory and named fields only: no padded structs, no GS memory, no host pointers.
+std::uint64_t hash_part(unsigned k, unsigned n = 32);
+// XXH64 of a buffer (the same on native and wasm32)
+std::uint64_t hash_bytes(const void *data, std::size_t size);
+// Lockstep: the guest RTC reads epoch + emulated seconds (overrides PS2_RTC)
+void set_rtc_epoch(std::int64_t epoch);
+// Memory card in slot 1 as raw bytes (empty: no card), and replacing it (the lockstep session card)
+std::vector<std::uint8_t> memcard_image();
+void set_memcard_image(const std::uint8_t *data, std::size_t size);
 bool halted();
 std::uint64_t frame_count();
 

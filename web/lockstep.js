@@ -11,6 +11,9 @@ export const OFF = {
 };
 export const RING = 64, INPUT_BYTES = 12, WIRE_BYTES = 10;
 export const FLAG_PAUSED = 1, FLAG_RESYNC = 2; // OFF.FLAGS bits (written by JS)
+// bit2: the emulator holds at its next vblank (or right away if it is waiting for input) and runs no frame until the
+// bit clears; snapshot/load commands are taken while held (W4, lockstep-emu.js). begin() clears it after active=1.
+export const FLAG_HOLD = 4;
 export const INPUT_PAUSE = 1; // input flags bit0
 export const FRAME_MS = 16.68;
 export const PROTOCOL = 1;
@@ -98,6 +101,8 @@ export class Lockstep {
     this.stats = { sent: 0, recv: 0, dropped: 0, needSends: 0, keepalives: 0, written: 0, hashesOk: 0, desyncs: 0, maxGapMs: 0, disconnects: 0 };
     this.localHashes = new Map();
     this.remoteHashes = new Map();
+    this.localExtra = new Map();
+    this.remoteExtra = new Map();
     this.ctlWaiters = new Map();
     this.ctlQueueAt = 0;
     this.blobIn = null;
@@ -115,18 +120,25 @@ export class Lockstep {
   setStatus(text) { this.status = text; this.emit('status', text); }
 
   // ---- connection: signalling, WebRTC, handshake, RTT, start ----
-  async connect() {
+  // Joins the signalling room only: after it, isHost/slot are known (the first in the room is the host, P1).
+  async join() {
+    if (this.joinedMsg) return this.joinedMsg;
     const { signal, room, build } = this.opts;
     this.setStatus('connecting');
     this.ws = await openSocket(signal);
     this.ws.onmessage = (e) => this.onSignal(JSON.parse(e.data));
     this.joined = deferred();
+    this.channelsOpen = deferred();
     this.ws.send(JSON.stringify({ type: 'join', room, build }));
-    const joined = await this.joined;
+    const joined = (this.joinedMsg = await this.joined);
     this.isHost = joined.host;
     this.slot = this.isHost ? 0 : 1;
     this.log(`joined ${room} as ${this.isHost ? 'host' : 'guest'}`);
-    this.channelsOpen = deferred();
+    return joined;
+  }
+
+  async connect() {
+    const joined = await this.join();
     if (joined.peer) await this.startPeer(true); // the newcomer makes the offer (server README)
     else this.setStatus('waiting for the other player');
     await this.channelsOpen;
@@ -196,21 +208,35 @@ export class Lockstep {
       await sleep(200);
       this.refuse(why, true);
     }
+    // opts.sync(ls, isHost) runs between the handshake and the first frame (W4: the host's snapshot is loaded by
+    // both peers); on the host it returns the first frame to run.
     if (this.isHost) {
       const rtt = await this.measureRtt(this.opts.pings);
       this.D = inputDelay(rtt.p95);
-      this.sendCtl({ t: 'start', D: this.D, frame: this.opts.firstFrame, rtt });
       this.log(`rtt p50 ${rtt.p50.toFixed(1)} p95 ${rtt.p95.toFixed(1)} ms -> D=${this.D}`);
       this.rttAtStart = rtt;
-      await sleep(rtt.p50 / 2); // start when the guest gets 'start', so neither begins ahead
+      const frame = this.opts.sync ? await this.opts.sync(this, true) : this.opts.firstFrame;
+      this.startAt(frame);
     } else {
-      const start = await this.waitCtl('start', 30000);
-      this.D = start.D;
-      this.rttAtStart = start.rtt;
-      this.rtts.push(start.rtt.p50); // time sync needs an RTT before our own pings come back
-      this.log(`host set D=${this.D}`);
+      if (this.opts.sync) await this.opts.sync(this, false);
+      await this.awaitStart();
     }
-    this.begin(this.opts.firstFrame);
+  }
+
+  // Host: tells the guest the first frame and D, then starts both sides together.
+  async startAt(frame) {
+    const rtt = this.rttAtStart;
+    this.sendCtl({ t: 'start', D: this.D, frame, rtt });
+    await sleep(rtt.p50 / 2); // start when the guest gets 'start', so neither begins ahead
+    this.begin(frame);
+  }
+  async awaitStart() {
+    const start = await this.waitCtl('start', 60000);
+    this.D = start.D;
+    this.rttAtStart = start.rtt;
+    this.rtts.push(start.rtt.p50); // time sync needs an RTT before our own pings come back
+    this.log(`host set D=${this.D}, first frame ${start.frame}`);
+    this.begin(start.frame);
   }
 
   // Mismatch found here (local) or by the peer: both stop; a pending connect() rejects.
@@ -248,20 +274,28 @@ export class Lockstep {
     r.clear();
     r.store(OFF.DELAY, this.D);
     r.store(OFF.LOCAL_SLOT, this.slot);
-    r.store(OFF.FLAGS, 0);
+    r.store(OFF.FLAGS, r.load(OFF.FLAGS) & FLAG_HOLD); // a hold (W4) lasts until active=1 below
     r.store(OFF.SLOW_MS, 0);
+    this.stalled = false;
+    this.disconnected = 0;
+    this.slowMs = 0;
+    this.localAdv = this.adv = 0;
+    this.localHashes.clear();
+    this.remoteHashes.clear();
     // Frames F..F+D-1 are neutral for both players on both sides, so nothing needs sending for them.
     for (let f = F; f < F + this.D; f++) for (const p of [0, 1]) r.put(p, f, NEUTRAL_WIRE);
     this.localHigh = this.remoteHigh = this.ackedByRemote = F + this.D - 1;
     this.lastFrame = F - 1;
     this.lastRecv = this.lastSend = now();
     this.lastHashFrame = r.load(OFF.HASH_FRAME);
+    this.firstFrame = F;
     r.store(OFF.ACTIVE, 1);
+    r.store(OFF.FLAGS, 0);
     r.bump();
     this.running = true;
     this.startedAt = now();
     this.setStatus('running');
-    if (this.opts.pauseOnHidden && typeof document !== 'undefined') {
+    if (this.opts.pauseOnHidden && typeof document !== 'undefined' && !this.onVisibility) {
       this.onVisibility = () => { this.hiddenPause = document.hidden; };
       document.addEventListener('visibilitychange', this.onVisibility);
       this.onVisibility();
@@ -274,8 +308,8 @@ export class Lockstep {
 
   // Follows emu_frame with Atomics.waitAsync (falls back to polling).
   async watch() {
-    const i32 = this.ring.i32;
-    while (this.running) {
+    const i32 = this.ring.i32, gen = (this.watchGen = (this.watchGen || 0) + 1);
+    while (this.running && gen === this.watchGen) {
       const f = Atomics.load(i32, OFF.EMU_FRAME >> 2);
       if (f !== this.lastFrame) this.onFrame(f);
       if (Atomics.waitAsync) {
@@ -283,6 +317,19 @@ export class Lockstep {
         if (w.async) await w.value;
       } else await sleep(2);
     }
+  }
+
+  // Stops the session machinery (sampling, sending, the disconnect watchdog) and holds the emulator at its next
+  // vblank, e.g. while a W4 snapshot moves; begin() resumes. The data channels stay open.
+  suspend() {
+    const r = this.ring;
+    this.running = false;
+    clearInterval(this.ticker);
+    clearInterval(this.pinger);
+    r.store(OFF.FLAGS, (r.load(OFF.FLAGS) & ~FLAG_PAUSED) | FLAG_HOLD);
+    r.bump();
+    if (this.disconnected) { this.disconnected = 0; this.hideOverlay(); }
+    this.setStatus('suspended');
   }
 
   get paused() { return this.manualPause || this.hiddenPause; }
@@ -314,7 +361,9 @@ export class Lockstep {
         this.lastHashFrame = hf;
         const hs = h.toString(16);
         this.localHashes.set(hf, hs);
-        if (!this.solo) this.sendCtl({ t: 'hash', f: hf, h: hs });
+        const extra = this.opts.hashExtra ? this.opts.hashExtra(hf) : null;
+        if (extra) this.localExtra.set(hf, extra);
+        if (!this.solo) this.sendCtl({ t: 'hash', f: hf, h: hs, x: extra || undefined });
         this.compareHash(hf);
         this.emit('hash', { frame: hf, hash: hs });
       }
@@ -324,18 +373,21 @@ export class Lockstep {
   compareHash(f) {
     const a = this.localHashes.get(f), b = this.remoteHashes.get(f);
     if (a === undefined || b === undefined) {
-      for (const m of [this.localHashes, this.remoteHashes]) if (m.size > 128) m.delete(m.keys().next().value);
+      for (const m of [this.localHashes, this.remoteHashes, this.localExtra, this.remoteExtra]) if (m.size > 128) m.delete(m.keys().next().value);
       return;
     }
     this.localHashes.delete(f);
     this.remoteHashes.delete(f);
+    const localExtra = this.localExtra.get(f), remoteExtra = this.remoteExtra.get(f);
+    this.localExtra.delete(f);
+    this.remoteExtra.delete(f);
     if (a === b) {
       this.stats.hashesOk++;
       this.lastGoodHash = f;
     } else {
       this.stats.desyncs++;
       this.log(`DESYNC at frame ${f}: local ${a} remote ${b}`);
-      this.emit('desync', { frame: f, local: a, remote: b, lastGood: this.lastGoodHash ?? null });
+      this.emit('desync', { frame: f, local: a, remote: b, lastGood: this.lastGoodHash ?? null, localExtra, remoteExtra });
     }
   }
 
@@ -524,7 +576,9 @@ export class Lockstep {
         if (msg.i < 0) { this.rtts.push(now() - msg.ts); if (this.rtts.length > 200) this.rtts.splice(0, 100); return; }
         break;
       case 'hash':
+        if (!this.running || msg.f < (this.firstFrame ?? 0)) return; // from before the last (re)start
         this.remoteHashes.set(msg.f, msg.h);
+        if (msg.x) this.remoteExtra.set(msg.f, msg.x);
         return this.compareHash(msg.f);
       case 'refuse': return this.refuse(msg.reason, false);
       case 'delay': this.setDelay(msg.D); this.rtts.push(msg.rtt.p50); this.emit('resync', { D: msg.D, rtt: msg.rtt }); return this.log(`host set D=${msg.D}`);
@@ -535,7 +589,8 @@ export class Lockstep {
     }
     const waiter = this.ctlWaiters.get(msg.t)?.shift();
     if (waiter) waiter(msg);
-    else if (msg.t === 'hello' || msg.t === 'start') (this.ctlEarly ||= {})[msg.t] = msg; // arrived before we waited
+    else if (msg.t === 'hello' || msg.t === 'start' || this.opts.earlyTypes?.includes(msg.t)) (this.ctlEarly ||= {})[msg.t] = msg; // arrived before we waited
+    else this.emit('message', msg); // session-level messages (lockstep-emu.js)
   }
 
   // ---- W4 hook: chunked gzip blob transfer on ctl with backpressure ----

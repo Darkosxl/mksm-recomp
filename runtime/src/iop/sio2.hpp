@@ -1,6 +1,8 @@
 #pragma once
 
+#include <cstddef>
 #include <cstdint>
+#include <vector>
 
 namespace ps2::state {
 class Stream;
@@ -20,5 +22,9 @@ void set_pressure(int pad, int button, std::uint8_t value);
 void set_connected(int pad, bool connected);
 std::uint16_t rumble(int pad);
 void flush_cards();
+// slot 1 card bytes (empty when no card), and replacing them: the lockstep session card. The new card is not
+// written back to memcard_path until the guest next saves to it.
+std::vector<std::uint8_t> card_image();
+void set_card_image(const std::uint8_t *data, std::size_t size);
 
 }

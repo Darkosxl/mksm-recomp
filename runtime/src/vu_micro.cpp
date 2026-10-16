@@ -1,5 +1,7 @@
 #include "vu_micro.hpp"
 
+#include "hash64.hpp"
+
 #include "gs/gif.hpp"
 #include "gs/queue.hpp"
 #include "vu_jit_web.hpp"
@@ -1064,6 +1066,20 @@ void vcallms(Cpu &, std::uint32_t address) { vu::run(0, address); }
 __attribute__((weak)) void register_generated_vu() {}
 
 namespace ps2::vu {
+
+void hash(ps2::Hash64 &h) {
+    for (const PendingKick &k : g_pending_kicks) {
+        const std::uint32_t head[2] = {k.start, k.count};
+        h.update(head, sizeof head);
+        h.update(k.data.data(), k.data.size());
+    }
+    const std::uint32_t tops[2] = {g_top, g_itop};
+    h.update(tops, sizeof tops);
+    h.update(g_vu0_code, sizeof g_vu0_code);
+    h.update(g_vu0_mem, sizeof g_vu0_mem);
+    h.update(g_vu1_code, sizeof g_vu1_code);
+    h.update(g_vu1_mem, sizeof g_vu1_mem);
+}
 
 void state(ps2::state::Stream &s) {
     s.tag("vu");
