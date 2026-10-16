@@ -102,6 +102,16 @@ Everything else (CMake files, dotfiles, subdirectories, `/admin`) is 404. Every 
 - **Throughput.** The guest's first load (≈7 MB gzip) and its disc reads go up the host's upload link and through
   Cloudflare (measured below). In lockstep a disc cache miss blocks both games until the read arrives, so each miss
   costs about one guest ↔ host round trip.
+- **Guest disc cache** (`web/disc-sw.js`, a service worker, only when the page is not on localhost). Every Range
+  read of `disc.iso` is served from 1 MiB blocks kept in Cache Storage, so a block crosses the tunnel at most once
+  per tunnel URL (the origin changes every run, so the cache does too). After Start the page prefetches the
+  `GAMEDATA.WA*` extents listed in `prefetch.json` (2248 MB, written by `mksm/build.sh --web`) with 4 parallel
+  fetches, pausing whenever the game itself is waiting on the disc. The first visit installs the worker and
+  reloads once, so the pthread workers start under it. `?nodisccache` turns it off.
+- **Tunnel tail latency.** Quick tunnels answer most 1 MiB reads in 0.5–0.8 s but stall a few for 10–15 s
+  (measured: `0.57 0.67 11.46 0.81 0.48 0.71` s; on localhost `0.003–0.124` s). In lockstep that stalls both games.
+  The worker hedges: a block not answered after 1.5 s gets a second request, after 4 s a third; the first
+  complete answer wins and the others abort.
 - One tunnel per run, and the URL changes every run.
 - Quick tunnels have no uptime guarantee, do not support Server-Sent Events, and allow 200 requests in flight
   (more get `429`). The page uses neither SSE nor that many parallel requests.

@@ -638,6 +638,8 @@ async function prefetchDisc() {
   show();
   const worker = async () => {
     while (next < todo.length) {
+      // the game's own disc reads come first: hold the prefetch while the emulator waits on the disc
+      while (session?.emu?.stats().discWaitMs > 0) await new Promise((r) => setTimeout(r, 100));
       const i = todo[next++], start = i * BLOCK, end = Math.min(size, start + BLOCK) - 1;
       for (let attempt = 0; attempt < 5; attempt++) {
         const ok = await fetch(Module.discUrl, { headers: { Range: `bytes=${start}-${end}` } }).then((r) => r.ok && r.arrayBuffer()).catch(() => false);
@@ -648,7 +650,7 @@ async function prefetchDisc() {
       show();
     }
   };
-  await Promise.all(Array.from({ length: 6 }, worker));
+  await Promise.all(Array.from({ length: 4 }, worker));
 }
 
 var Module = {

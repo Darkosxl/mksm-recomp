@@ -22,6 +22,40 @@ function discSize(url) {
   return sizes.get(url);
 }
 
+// One block, hedged: free tunnels answer most requests in well under a second but stall some for 10-15 s, so a
+// second and third copy of a slow request go out after 1.5 s and 4 s; the first complete answer wins, the rest abort.
+function fetchBlock(url, start, end) {
+  return new Promise((resolve, reject) => {
+    const controllers = [];
+    let done = false, failures = 0;
+    const attempt = () => {
+      if (done || controllers.length >= 6) return;
+      const controller = new AbortController();
+      controllers.push(controller);
+      fetch(url, { headers: { Range: `bytes=${start}-${end}` }, credentials: 'same-origin', signal: controller.signal })
+        .then(async (r) => {
+          if (r.status !== 206) throw new Error(`status ${r.status}`);
+          const bytes = new Uint8Array(await r.arrayBuffer());
+          if (bytes.length !== end - start + 1) throw new Error(`${bytes.length} bytes`);
+          return bytes;
+        })
+        .then((bytes) => {
+          if (done) return;
+          done = true;
+          for (const c of controllers) if (c !== controller) c.abort();
+          resolve(bytes);
+        })
+        .catch((e) => {
+          if (done) return;
+          if (++failures >= 4) { done = true; reject(e); } else setTimeout(attempt, 250);
+        });
+    };
+    attempt();
+    setTimeout(attempt, 1500);
+    setTimeout(attempt, 4000);
+  });
+}
+
 async function block(url, size, index) {
   const key = blockKey(size, index);
   const cache = await caches.open(CACHE);
@@ -30,11 +64,8 @@ async function block(url, size, index) {
   let pending = inflight.get(key);
   if (!pending) {
     const start = index * BLOCK, end = Math.min(size, start + BLOCK) - 1;
-    pending = fetch(url, { headers: { Range: `bytes=${start}-${end}` }, credentials: 'same-origin' })
-      .then(async (r) => {
-        if (r.status !== 206) throw new Error(`disc block ${index}: status ${r.status}`);
-        const bytes = new Uint8Array(await r.arrayBuffer());
-        if (bytes.length !== end - start + 1) throw new Error(`disc block ${index}: ${bytes.length} bytes`);
+    pending = fetchBlock(url, start, end)
+      .then(async (bytes) => {
         await cache.put(key, new Response(bytes));
         return bytes;
       })
