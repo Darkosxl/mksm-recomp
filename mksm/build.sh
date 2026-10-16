@@ -32,6 +32,10 @@ if [ "$web" = 1 ]; then
   # preloads the patched ELF as /game/core.elf; the page streams the disc with HTTP Range requests
   "$ROOT/scripts/setup.sh" --web-only
   PS2_JOBS=$jobs PS2_GENERATED="$M/generated" "$ROOT/scripts/build_web.sh" mksm
+  # the game data archives (GAMEDATA.WA*, ~2.4 GB) are what a remote player prefetches into its disc cache (disc-sw.js)
+  python3 -I "$ROOT/scripts/disc.py" list "$G/disc.iso" | python3 -I -c 'import json, sys
+r = sorted((int(f[1]) * 2048, int(f[2])) for f in (l.split() for l in sys.stdin) if f[3].startswith("GAMEDATA.WA"))
+json.dump({"ranges": r}, sys.stdout)' > "$ROOT/build/web-mksm/prefetch.json"
   echo
   echo "Play:   python3 scripts/serve.py build/web-mksm games/mksm/disc.iso   then open http://localhost:8620 in Chrome/Edge"
   exit 0

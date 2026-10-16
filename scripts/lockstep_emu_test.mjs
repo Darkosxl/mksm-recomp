@@ -11,7 +11,7 @@
 // as --press args (frame-exact before the guest arrives) and both pages apply their own player's lines by lockstep
 // frame afterwards. The guest drops in once the host reaches --join-at. Progress goes to stdout and <out>/progress.log.
 import { spawn } from 'node:child_process';
-import { copyFileSync, mkdirSync, readFileSync, writeFileSync, appendFileSync } from 'node:fs';
+import { copyFileSync, mkdirSync, readFileSync, writeFileSync, appendFileSync, unlinkSync } from 'node:fs';
 import { createServer } from 'node:net';
 import { basename, dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -36,6 +36,9 @@ const shotsEvery = Number(opt('shots-every', 60));
 const rtc = Number(opt('rtc', 1767225600));
 const vu = opt('vu', '1');
 const gpus = { host: opt('host-gpu', 'nvidia'), guest: opt('guest-gpu', 'igpu') };
+// --host-origin http://localhost:8620: test against a running mksm/host.sh instead of the local stack. The host page
+// is on that origin; the guest goes through the invite link (the Cloudflare tunnel) like a real friend.
+const hostOrigin = opt('host-origin', '');
 // headless (default) still gets the private Xvfb DISPLAY; headful shows real pixels in screenshots but the X11
 // present path caps the NVIDIA peer at 40-45 fps (web-build.md)
 const modes = { host: opt('host-mode', 'headless'), guest: opt('guest-mode', 'headless') };
@@ -112,16 +115,22 @@ async function main() {
   const files = join(out, 'files');
   mkdirSync(files, { recursive: true });
   copyFileSync(input, join(files, 'session.args'));
-  const port = await freePort();
-  const serveArgs = [join(ROOT, 'scripts/serve.py'), build, disc, String(port), '--files', files];
-  if (opt('disc-delay')) serveArgs.push('--disc-delay', opt('disc-delay'));
-  if (opt('disc-fail')) serveArgs.push('--disc-fail', opt('disc-fail'));
-  const serve = spawn('python3', ['-I', ...serveArgs], { stdio: ['ignore', 'pipe', 'pipe'], detached: true });
-  children.push(serve);
-  await sleep(800);
-  env = await startEnv({ webRoot: build, upstream: `http://127.0.0.1:${port}` });
+  if (hostOrigin) {
+    copyFileSync(input, join(build, 'session.args')); // host.mjs serves the build dir; removed by cleanup
+    children.push({ kill: () => { try { unlinkSync(join(build, 'session.args')); } catch {} } });
+  } else {
+    const port = await freePort();
+    const serveArgs = [join(ROOT, 'scripts/serve.py'), build, disc, String(port), '--files', files];
+    if (opt('disc-delay')) serveArgs.push('--disc-delay', opt('disc-delay'));
+    if (opt('disc-fail')) serveArgs.push('--disc-fail', opt('disc-fail'));
+    const serve = spawn('python3', ['-I', ...serveArgs], { stdio: ['ignore', 'pipe', 'pipe'], detached: true });
+    children.push(serve);
+    await sleep(800);
+    env = await startEnv({ webRoot: build, upstream: `http://127.0.0.1:${port}` });
+  }
+  const origin = hostOrigin || env.origin;
   xvfb = await startXvfb();
-  say(`stack: ${env.origin} (serve.py :${port}, signal ${env.signalOrigin}), Xvfb ${xvfb}`);
+  say(`stack: ${origin}${env ? ` (signal ${env.signalOrigin})` : ' (mksm/host.sh)'}, Xvfb ${xvfb}`);
 
   const presses = readFileSync(input, 'utf8').split('\n').map((l) => l.trim().match(/^--(press|stick)(2?)\s+(\S+)$/)).filter(Boolean);
   // only the frames the host can play before the guest arrives matter (the ring drives both pads afterwards)
@@ -129,7 +138,7 @@ async function main() {
     .map((m) => (m[2] ? m[3].replace(/^(\d+):/, '$1:p2:') : m[3]));
   // the host's pre-session frames: --press only (a stick before the session would need --stick, not supported by the page)
   const common = `lsinput=session.args&lsrtc=${rtc}&lsvu=${vu}` + (drop ? `&lsdrop=${drop}` : '') + (stall ? `&lsstall=${stall}` : '');
-  const hostUrl = `${env.origin}/ps2web.html?room=new&${common}${gpus.host === 'igpu' ? '&gpu=low' : ''}&press=${encodeURIComponent(pressArgs.join(','))}`;
+  const hostUrl = `${origin}/ps2web.html?room=new&${common}${gpus.host === 'igpu' ? '&gpu=low' : ''}&press=${encodeURIComponent(pressArgs.join(','))}`;
 
   const host = await launch('host', gpus.host, 0);
   await host.page.navigate(hostUrl, 60000);
@@ -139,10 +148,21 @@ async function main() {
   await host.page.waitFor(`Module._ps2web_frames() >= ${joinAt}`, 30 * 60000, 1000);
   await shot(host, `f${joinAt}-before-join`);
 
-  const guestUrl = (extra = '') => `${env.origin}/ps2web.html?room=${room}&${common}${gpus.guest === 'igpu' ? '&gpu=low' : ''}${extra}`;
+  // host mode: each guest first opens a fresh single-use invite (sets the cookie on the tunnel origin)
+  const invite = async () => hostOrigin ? (await (await fetch(`${hostOrigin}/host-info?new=1&room=${room}`)).json()) : null;
+  let guestOrigin = hostOrigin ? new URL((await invite()).tunnelUrl).origin : origin;
+  const guestUrl = (extra = '') => `${guestOrigin}/ps2web.html?room=${room}&${common}${gpus.guest === 'igpu' ? '&gpu=low' : ''}${extra}`;
   const startGuest = async () => {
     const guest = await launch('guest', gpus.guest, 800);
+    if (hostOrigin) {
+      const info = await invite();
+      say(`guest opens invite ${info.inviteUrl.replace(/t=[^&]+/, 't=…')}`);
+      await guest.page.navigate(info.inviteUrl, 60000);
+    }
     await guest.page.navigate(guestUrl(), 60000);
+    // a remote page installs the disc cache worker and reloads once before it can start
+    if (hostOrigin) for (let t = Date.now(); Date.now() - t < 60000; await sleep(500))
+      if (await guest.page.evaluate('!!(navigator.serviceWorker && navigator.serviceWorker.controller) && document.readyState === "complete"').catch(() => false)) break;
     await clickStart(guest);
     const t = Date.now();
     await guest.page.waitFor(`window.lsSession && window.lsSession.ls && window.lsSession.ls.running`, 10 * 60000, 250);

@@ -612,6 +612,45 @@ const countShown = () => {
   requestAnimationFrame(countShown);
 };
 requestAnimationFrame(countShown);
+// Far from the disc (a host-mode guest, a VPS): a service worker keeps every disc block it has read in Cache Storage,
+// and prefetchDisc() pulls the game data files in the background, so level loads stop waiting on the network.
+const remoteDisc = !['localhost', '127.0.0.1', '[::1]'].includes(location.hostname) && 'serviceWorker' in navigator && !params.has('nodisccache');
+// The game's threads (workers) must start under the service worker too, so the first visit installs it and reloads once.
+const discCacheReady = !remoteDisc ? Promise.resolve(false) : (async () => {
+  if (navigator.serviceWorker.controller) return true;
+  await navigator.serviceWorker.register('disc-sw.js');
+  await navigator.serviceWorker.ready;
+  location.reload();
+  return new Promise(() => {}); // the reload takes over
+})().catch((e) => (console.warn('disc cache off:', e), false));
+
+async function prefetchDisc() {
+  const BLOCK = 1 << 20, size = Module.discSize;
+  const list = await fetch('prefetch.json', { cache: 'no-store' }).then((r) => (r.ok ? r.json() : null)).catch(() => null);
+  if (!list || !size) return;
+  const blocks = [];
+  for (const [offset, length] of list.ranges) for (let i = Math.floor(offset / BLOCK); i <= Math.floor((offset + length - 1) / BLOCK); i++) blocks.push(i);
+  const cache = await caches.open('disc-v1');
+  const have = new Set((await cache.keys()).map((r) => new URL(r.url).pathname).filter((p) => p.startsWith(`/__disc/${size}/`)).map((p) => Number(p.split('/').pop())));
+  const todo = blocks.filter((i) => !have.has(i));
+  let done = blocks.length - todo.length, next = 0;
+  const show = () => (Module.prefetchText = done >= blocks.length ? 'game data cached' : `caching game data ${Math.floor(done / blocks.length * 100)}% (${done}/${blocks.length} MB)`);
+  show();
+  const worker = async () => {
+    while (next < todo.length) {
+      const i = todo[next++], start = i * BLOCK, end = Math.min(size, start + BLOCK) - 1;
+      for (let attempt = 0; attempt < 5; attempt++) {
+        const ok = await fetch(Module.discUrl, { headers: { Range: `bytes=${start}-${end}` } }).then((r) => r.ok && r.arrayBuffer()).catch(() => false);
+        if (ok) break;
+        await new Promise((r) => setTimeout(r, 1000 << attempt));
+      }
+      done++;
+      show();
+    }
+  };
+  await Promise.all(Array.from({ length: 6 }, worker));
+}
+
 var Module = {
   canvas,
   lockstep: lockstepMode,
@@ -688,7 +727,7 @@ var Module = {
                             '% gs ' + ((renderIdle - lastRenderIdle) / span * 100).toFixed(0) +
                             '%   heap ' + memory + ' MB   audio ' + Module.audioQueuedMs().toFixed(0) + ' ms' +
                             (interpreted > lastInterpreted ? '   vu1 interpreted ' + Math.round((interpreted - lastInterpreted) * 1000 / span) + '/s' : '') +
-                            (session ? '   ' + lockstepStats() : '');
+                            (session ? '   ' + lockstepStats() : '') + (Module.prefetchText ? '   ' + Module.prefetchText : '');
       lastInterpreted = interpreted;
       lastEmuIdle = emuIdle;
       lastRenderIdle = renderIdle;
@@ -764,6 +803,7 @@ if (missing.length) {
 }
 
 document.getElementById('start').addEventListener('click', async () => {
+  const cached = await discCacheReady; // never resolves while the first-visit reload is pending
   document.getElementById('overlay').remove();
   canvas.focus();
   fitCanvas();
@@ -779,6 +819,7 @@ document.getElementById('start').addEventListener('click', async () => {
       return;
     }
   }
+  if (cached) prefetchDisc();
   Module.running = true;
   Module.callMain(Module.arguments);
   if (session) session.run();

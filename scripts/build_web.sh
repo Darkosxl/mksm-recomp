@@ -20,5 +20,5 @@ emcmake cmake -S "$here" -B "$out" -G Ninja -DCMAKE_BUILD_TYPE=Release \
 ninja ${PS2_JOBS:+-j"$PS2_JOBS"} -C "$out" ps2web
 gzip -kf9 "$out/ps2web.wasm" "$out/ps2web.data" "$out/ps2web.js"
 # lockstep netplay modules, imported by the page on ?room= (served next to ps2web.html)
-cp "$here/web/lockstep.js" "$here/web/lockstep-emu.js" "$out/"
+cp "$here/web/lockstep.js" "$here/web/lockstep-emu.js" "$here/web/disc-sw.js" "$out/"
 printf 'built %s/ps2web.html; serve it with scripts/serve.py %q %q\n' "$out" "build/web-$game" "games/$game/disc.iso"
