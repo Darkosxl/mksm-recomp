@@ -21,6 +21,8 @@ python3 -I "$M/tools/scripts/patch_koop.py" "$G/disc/SLUS_210.87" "$G/disc/SLUS_
 [ -x "$ROOT/build/tools/eerecomp" ] || CXX=${CXX:-clang++} PS2_JOBS=$jobs "$ROOT/scripts/setup.sh" --native-only
 if [ "$retranslate" = 1 ]; then
   "$ROOT/build/tools/eerecomp" "$G/disc/SLUS_210.87" --entries "$M/entries.txt" --out "$M/generated" | tail -1
+  # VU1 microprograms recorded with PS2_VU_RECORD=games/mksm/vu1 become SIMD C++ (unseen ones are JIT'd/interpreted)
+  ! compgen -G "$G/vu1/*.bin" > /dev/null || "$ROOT/build/tools/vurecomp" "$G/vu1" "$M/generated" | tail -1
 fi
 
 cmake -S "$ROOT" -B "$ROOT/build/native-mksm" -G Ninja -DCMAKE_BUILD_TYPE=Release \
