@@ -704,8 +704,20 @@ var Module = {
 
 function lockstepStats() {
   const s = session.snapshot(), l = s.ls || {};
-  return 'net ' + (lsStatus || l.status || '') + (l.D ? '  D ' + l.D + '  rtt ' + (l.rttP50 || 0).toFixed(1) + ' ms' : '') +
+  return 'net ' + (lsStatus || l.status || '') + (l.transport === 'relay' ? ' (relay)' : '') + (l.D ? '  D ' + l.D + '  rtt ' + (l.rttP50 || 0).toFixed(1) + ' ms' : '') +
          '  stalls ' + s.emu.stallFrames + '  hashes ' + (l.hashesOk || 0) + '  desyncs ' + (l.desyncs || 0) + '  resyncs ' + s.resyncs;
+}
+
+// The host's invite link. Host mode (server/host.mjs) answers /host-info on localhost with the public tunnel URL and
+// mints a single-use invite token per call; elsewhere (a VPS) the page's own room link is the invite.
+async function showInvite(id) {
+  let invite = new URL(location.href);
+  for (const k of [...invite.searchParams.keys()]) if (k !== 'room') invite.searchParams.delete(k);
+  const info = await fetch('/host-info?new=1&room=' + encodeURIComponent(id), { cache: 'no-store' }).then((r) => (r.ok ? r.json() : null)).catch(() => null);
+  if (info?.inviteUrl) invite = new URL(info.inviteUrl);
+  statusEl.textContent = 'Playing alone. Invite a player (click to copy): ' + invite.href;
+  statusEl.style.cursor = 'copy';
+  statusEl.onclick = () => navigator.clipboard?.writeText(invite.href).then(() => note('Invite link copied'), () => {});
 }
 
 async function startSession() {
@@ -720,16 +732,18 @@ async function startSession() {
   }
   if (params.get('lsinput')) lsScript = parseScript(await (await fetch(params.get('lsinput'), { cache: 'no-store' })).text());
   const disc = await mod.discIdOf(Module.discUrl, Module.discSize);
-  const test = { dropIn: Number(params.get('lsdrop')) || 0, delayMs: Number(params.get('lsdelay')) || 0 };
+  const test = { dropIn: Number(params.get('lsdrop')) || 0, delayMs: Number(params.get('lsdelay')) || 0,
+                 blockIce: params.has('lsrelay'), p2pTimeoutMs: Number(params.get('lsrelay')) || undefined };
   const s = new mod.Session({
     Module, room: id, build, disc, config: lsConfig, rtc: Module.rtcEpoch, readPad, test,
     log: (...a) => console.log(...a),
     onStatus: (text) => {
       lsStatus = text;
-      if (s.isHost && text === 'waiting for the other player') {
-        const invite = new URL(location.href);
-        for (const k of [...invite.searchParams.keys()]) if (k !== 'room') invite.searchParams.delete(k);
-        statusEl.textContent = 'Playing alone. Invite a player: ' + invite.href;
+      if (s.isHost && text === 'waiting for the other player') showInvite(id);
+      else if (text === 'running' && statusEl.onclick) {
+        statusEl.onclick = null;
+        statusEl.style.cursor = '';
+        statusEl.textContent = 'Running, 2 players, ' + Module.gpuInfo;
       }
     },
   });

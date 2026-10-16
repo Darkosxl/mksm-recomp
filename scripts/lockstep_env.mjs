@@ -2,6 +2,7 @@
 // Test environment for the browser lockstep netcode tests: signal.mjs with throwaway secrets behind a
 // same-origin static server (COOP/COEP, /turn and /ws proxied with the invite cookie injected), plus
 // headless Chromium instances driven over CDP. Node >= 24, built-ins only (server/ needs `npm install`).
+// The static file server, the signal.mjs launcher and the WebSocket pass-through are also used by server/host.mjs.
 //
 //   import { startEnv, launchBrowser } from './lockstep_env.mjs';
 //   node scripts/lockstep_env.mjs --smoke
@@ -16,13 +17,13 @@ import { fileURLToPath } from 'node:url';
 
 const SERVER_DIR = resolve(dirname(fileURLToPath(import.meta.url)), '..', 'server');
 const CHROMIUM = process.env.CHROMIUM || '/home/darkwarro/.local/bin/chromium';
-const ISOLATION = {
+export const ISOLATION = {
   'Cross-Origin-Opener-Policy': 'same-origin',
   'Cross-Origin-Embedder-Policy': 'require-corp',
   'Cross-Origin-Resource-Policy': 'same-origin',
   'Cache-Control': 'no-store',
 };
-const TYPES = {
+export const TYPES = {
   '.html': 'text/html; charset=utf-8', '.js': 'text/javascript; charset=utf-8', '.mjs': 'text/javascript; charset=utf-8',
   '.json': 'application/json', '.css': 'text/css; charset=utf-8', '.md': 'text/markdown; charset=utf-8', '.wasm': 'application/wasm',
 };
@@ -31,7 +32,7 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 // Everything we spawn or create is killed / removed on exit, even if close() is never called.
 const children = new Set(), tempDirs = new Set();
 let hooked = false;
-function track(child, group = false) {
+export function track(child, group = false) {
   if (!hooked) {
     hooked = true;
     process.on('exit', () => {
@@ -48,11 +49,11 @@ function track(child, group = false) {
   child.once('exit', () => children.delete(child));
   return child;
 }
-const tempDir = (prefix) => { const d = mkdtempSync(join(tmpdir(), prefix)); tempDirs.add(d); return d; };
-const removeDir = (d) => { rmSync(d, { recursive: true, force: true, maxRetries: 3 }); tempDirs.delete(d); };
+export const tempDir = (prefix) => { const d = mkdtempSync(join(tmpdir(), prefix)); tempDirs.add(d); return d; };
+export const removeDir = (d) => { rmSync(d, { recursive: true, force: true, maxRetries: 3 }); tempDirs.delete(d); };
 
 // SIGTERM, then SIGKILL after graceMs; resolves once the process has exited.
-async function stop(child, graceMs) {
+export async function stop(child, graceMs) {
   if (child.exitCode === null && child.signalCode === null) {
     child.kill('SIGTERM');
     const timer = setTimeout(() => child.kill('SIGKILL'), graceMs);
@@ -69,6 +70,114 @@ const freePort = () => new Promise((res, rej) => {
   });
 });
 
+// ---- static files: COOP/COEP/CORP, HEAD, Range, precompressed .gz ----
+
+const notFound = (res) => res.writeHead(404, { ...ISOLATION, 'Content-Type': 'text/plain' }).end('not found\n');
+
+const acceptsGzip = (req) => (req.headers['accept-encoding'] || '').split(',').some((part) => {
+  const [name, ...params] = part.trim().toLowerCase().split(';');
+  return name.trim() === 'gzip' && !params.some((p) => /^\s*q=0(\.0*)?\s*$/.test(p));
+});
+
+// -> [start, end] (inclusive), 'unsatisfiable', or null to ignore the header (bad syntax, several ranges, other units).
+function parseRange(header, size) {
+  const m = /^bytes=(\d*)-(\d*)$/.exec(header.trim());
+  if (!m || (!m[1] && !m[2])) return null;
+  if (!m[1]) { // suffix: the last n bytes
+    const n = Number(m[2]);
+    return n > 0 && size > 0 ? [Math.max(size - n, 0), size - 1] : 'unsatisfiable';
+  }
+  const start = Number(m[1]), last = m[2] ? Number(m[2]) : Infinity;
+  if (last < start) return null;
+  return start < size ? [start, Math.min(last, size - 1)] : 'unsatisfiable';
+}
+
+// GET/HEAD of one file. A Range request gets raw bytes (206, or 416), never gzip. Otherwise <file>.gz is sent with
+// Content-Encoding: gzip when gzip is on, the client accepts it and the .gz is not older than the file.
+export function serveFile(req, res, file, { gzip = true } = {}) {
+  if (req.method !== 'GET' && req.method !== 'HEAD')
+    return res.writeHead(405, { ...ISOLATION, Allow: 'GET, HEAD', 'Content-Type': 'text/plain' }).end('method not allowed\n');
+  let st;
+  try { st = statSync(file); } catch { return notFound(res); }
+  if (!st.isFile()) return notFound(res);
+  const headers = {
+    ...ISOLATION, 'Content-Type': TYPES[extname(file).toLowerCase()] || 'application/octet-stream',
+    'Accept-Ranges': 'bytes', 'Last-Modified': st.mtime.toUTCString(),
+  };
+  if (gzip) headers.Vary = 'Accept-Encoding';
+  let path = file, start = 0, end = st.size - 1, status = 200;
+  const range = req.headers.range === undefined ? null : parseRange(req.headers.range, st.size);
+  if (range === 'unsatisfiable')
+    return res.writeHead(416, { ...headers, 'Content-Range': `bytes */${st.size}`, 'Content-Length': 0 }).end();
+  if (range) {
+    [start, end, status] = [...range, 206];
+    headers['Content-Range'] = `bytes ${start}-${end}/${st.size}`;
+  } else if (req.headers.range === undefined && gzip && acceptsGzip(req)) {
+    try {
+      const gz = statSync(file + '.gz');
+      if (gz.isFile() && gz.mtimeMs >= st.mtimeMs) [path, end, headers['Content-Encoding']] = [file + '.gz', gz.size - 1, 'gzip'];
+    } catch {}
+  }
+  res.writeHead(status, { ...headers, 'Content-Length': end - start + 1 });
+  if (req.method === 'HEAD' || end < start) return res.end();
+  createReadStream(path, { start, end }).on('error', () => res.destroy()).pipe(res);
+}
+
+// Files under root (a directory serves its index.html); anything resolving outside root is 404.
+export function serveStatic(req, res, root) {
+  let file;
+  try {
+    file = resolve(root, '.' + decodeURIComponent(new URL(req.url, 'http://local').pathname));
+  } catch {
+    return notFound(res);
+  }
+  if (file !== root && !file.startsWith(root + sep)) return notFound(res); // path traversal
+  try { if (statSync(file).isDirectory()) file = join(file, 'index.html'); } catch {}
+  serveFile(req, res, file);
+}
+
+// ---- signal.mjs ----
+
+// Spawns server/signal.mjs with env (PORT '0' picks a free port) and resolves once it listens. onOutput gets its
+// stdout/stderr chunks.
+export async function startSignal(env, { onOutput = () => {} } = {}) {
+  const child = track(spawn(process.execPath, ['signal.mjs'], { cwd: SERVER_DIR, env, stdio: ['ignore', 'pipe', 'pipe'] }));
+  let output = '';
+  const port = await new Promise((res, rej) => {
+    const timer = setTimeout(() => rej(new Error(`signal.mjs did not start:\n${output}`)), 10_000);
+    const onData = (d) => {
+      output = (output + d).slice(-4000);
+      onOutput(String(d));
+      const m = output.match(/listening on http:\/\/127\.0\.0\.1:(\d+)/);
+      if (m) { clearTimeout(timer); res(Number(m[1])); }
+    };
+    child.stdout.on('data', onData);
+    child.stderr.on('data', onData);
+    child.once('exit', (code) => { clearTimeout(timer); rej(new Error(`signal.mjs exited with ${code}:\n${output}`)); });
+  }).catch(async (e) => { await stop(child, 1000); throw e; });
+  return { child, port, origin: `http://127.0.0.1:${port}` };
+}
+
+// WebSocket upgrade: raw TCP pass-through to 127.0.0.1:port. With `cookie`, the client's Cookie header is replaced by
+// it; otherwise the request goes upstream unchanged. Both sockets are added to `sockets` while open.
+export function pipeUpgrade(req, socket, head, port, { cookie, sockets = new Set() } = {}) {
+  const upstream = connect(port, '127.0.0.1');
+  const lines = [`${req.method} ${req.url} HTTP/${req.httpVersion}`];
+  for (let i = 0; i < req.rawHeaders.length; i += 2)
+    if (cookie === undefined || req.rawHeaders[i].toLowerCase() !== 'cookie') lines.push(`${req.rawHeaders[i]}: ${req.rawHeaders[i + 1]}`);
+  if (cookie !== undefined) lines.push(`Cookie: ${cookie}`);
+  lines.push('', '');
+  upstream.write(lines.join('\r\n'));
+  if (head && head.length) upstream.write(head);
+  const kill = () => { socket.destroy(); upstream.destroy(); sockets.delete(socket); sockets.delete(upstream); };
+  for (const s of [socket, upstream]) {
+    s.setNoDelay(true);
+    sockets.add(s);
+    s.on('error', kill).on('close', kill);
+  }
+  socket.pipe(upstream).pipe(socket);
+}
+
 // ---- signal.mjs + same-origin static/proxy server ----
 
 // upstream: forward every other HTTP request (with its Range header) to that origin instead of serving webRoot,
@@ -83,20 +192,13 @@ export async function startEnv({ webRoot, upstream = null }) {
     HOST: '127.0.0.1', PORT: '0', DATA_DIR: join(tmp, 'data'), TURN_HOST: '127.0.0.1', TURN_PORT: String(await freePort()),
   };
   delete env.PUBLIC_ORIGIN; // no Origin check, invite links use the Host header
-  const signal = track(spawn(process.execPath, ['signal.mjs'], { cwd: SERVER_DIR, env, stdio: ['ignore', 'pipe', 'pipe'] }));
-  let output = '';
-  const signalPort = await new Promise((res, rej) => {
-    const timer = setTimeout(() => rej(new Error(`signal.mjs did not start:\n${output}`)), 10_000);
-    const onData = (d) => {
-      output = (output + d).slice(-4000);
-      const m = output.match(/listening on http:\/\/127\.0\.0\.1:(\d+)/);
-      if (m) { clearTimeout(timer); res(Number(m[1])); }
-    };
-    signal.stdout.on('data', onData);
-    signal.stderr.on('data', onData);
-    signal.once('exit', (code) => { clearTimeout(timer); rej(new Error(`signal.mjs exited with ${code}:\n${output}`)); });
-  }).catch(async (e) => { await stop(signal, 1000); removeDir(tmp); throw e; });
-  const signalOrigin = `http://127.0.0.1:${signalPort}`;
+  let signal, signalPort, signalOrigin;
+  try {
+    ({ child: signal, port: signalPort, origin: signalOrigin } = await startSignal(env));
+  } catch (e) {
+    removeDir(tmp);
+    throw e;
+  }
 
   let cookie;
   try {
@@ -124,7 +226,6 @@ export async function startEnv({ webRoot, upstream = null }) {
       }
       return;
     }
-    const notFound = () => res.writeHead(404, { ...ISOLATION, 'Content-Type': 'text/plain' }).end('not found\n');
     if (upstream) {
       const headers = {};
       for (const h of ['range', 'accept-encoding', 'content-type', 'content-length']) if (req.headers[h]) headers[h] = req.headers[h];
@@ -136,19 +237,7 @@ export async function startEnv({ webRoot, upstream = null }) {
       req.pipe(fwd);
       return;
     }
-    if (req.method !== 'GET' && req.method !== 'HEAD') return notFound();
-    let file;
-    try {
-      file = resolve(root, '.' + decodeURIComponent(url.pathname));
-      if (file !== root && !file.startsWith(root + sep)) return notFound(); // path traversal
-      if (statSync(file).isDirectory()) file = join(file, 'index.html');
-      const { size } = statSync(file);
-      res.writeHead(200, { ...ISOLATION, 'Content-Type': TYPES[extname(file).toLowerCase()] || 'application/octet-stream', 'Content-Length': size });
-    } catch {
-      return notFound();
-    }
-    if (req.method === 'HEAD') return res.end();
-    createReadStream(file).on('error', () => res.destroy()).pipe(res);
+    serveStatic(req, res, root);
   });
 
   // /ws: raw TCP pass-through to signal.mjs with the cookie injected into the upgrade request.
@@ -157,20 +246,7 @@ export async function startEnv({ webRoot, upstream = null }) {
       socket.on('error', () => {});
       return socket.end('HTTP/1.1 404 Not Found\r\nConnection: close\r\nContent-Length: 0\r\n\r\n');
     }
-    const upstream = connect(signalPort, '127.0.0.1');
-    const lines = [`${req.method} ${req.url} HTTP/${req.httpVersion}`];
-    for (let i = 0; i < req.rawHeaders.length; i += 2)
-      if (req.rawHeaders[i].toLowerCase() !== 'cookie') lines.push(`${req.rawHeaders[i]}: ${req.rawHeaders[i + 1]}`);
-    lines.push(`Cookie: ${cookie}`, '', '');
-    upstream.write(lines.join('\r\n'));
-    if (head && head.length) upstream.write(head);
-    const kill = () => { socket.destroy(); upstream.destroy(); sockets.delete(socket); sockets.delete(upstream); };
-    for (const s of [socket, upstream]) {
-      s.setNoDelay(true);
-      sockets.add(s);
-      s.on('error', kill).on('close', kill);
-    }
-    socket.pipe(upstream).pipe(socket);
+    pipeUpgrade(req, socket, head, signalPort, { cookie, sockets });
   });
 
   await new Promise((res, rej) => server.once('error', rej).listen(0, '127.0.0.1', res));

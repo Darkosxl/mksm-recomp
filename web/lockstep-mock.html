@@ -75,7 +75,7 @@ try {
   const ls = (T.ls = new Lockstep({
     buffer: sab, room: T.room, build, disc, config: { mock: 1, lockstep: 1 },
     readPad: () => (gen ||= pad(Number(q.get('seed') || 1) * 2 + ls.slot))(),
-    test: { dropIn: Number(q.get('drop') || 0), delayMs: Number(q.get('lag') || 0) },
+    test: { dropIn: Number(q.get('drop') || 0), delayMs: Number(q.get('lag') || 0), blockIce: q.has('relay'), p2pTimeoutMs: Number(q.get('relay')) || undefined },
     log,
   }));
   for (const ev of ['status', 'start', 'desync', 'disconnect', 'reconnect', 'solo', 'refused', 'resync', 'blob', 'peerLeft'])

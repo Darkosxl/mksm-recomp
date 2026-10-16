@@ -3,6 +3,8 @@
 Private, invite-only hosting for the browser build: Caddy (TLS, the auth gate, static files) in front of `signal.mjs` (invites, cookie auth, 2-player rooms, TURN credentials), plus coturn for relayed WebRTC.
 Everything, the disc image included, is behind the invite cookie.
 
+No VPS? See [Host mode](#host-mode): the player who opens the lobby serves everything from their own PC through a Cloudflare quick tunnel.
+
 ## VPS requirements
 
 - Debian 12 / Ubuntu 24.04 or similar, with a public IPv4 address.
@@ -76,13 +78,17 @@ ssh user@host sudo mksm-invite 1 alice      # single-use link
 ssh user@host sudo mksm-invite 5 "lan party" # 5 uses
 ```
 
-Each prints JSON with a `link` (`https://your.domain/invite?t=…`). Opening it sets a signed, httpOnly, `Secure`, `SameSite=Lax` cookie (`__Host-mksm`, 400 days) and redirects to `/`; reopening it with a valid cookie does not use it up. Only a SHA-256 of each token is stored. Over HTTPS from anywhere, with the admin secret:
+Each prints JSON with a `link` (`https://your.domain/invite?t=…`). Opening it sets a signed, httpOnly, `Secure`, `SameSite=Lax` cookie (`__Host-mksm`, 400 days) and redirects to `/`; reopening it with a valid cookie does not use it up. Only a SHA-256 of each token is stored.
+
+Append `&room=<id>` to land the invitee in a room: the redirect goes to `ROOM_URL` with `{room}` replaced (default `/play/{room}`), for fresh and already-signed-in visitors alike. The id must be exactly 12 room-id characters; anything else is `400` with no cookie and the token is not used. `ROOM_URL` must be a same-site path (starts with one `/`, contains `{room}`) or `signal.mjs` refuses to start, so the redirect can never leave the site.
+
+Over HTTPS from anywhere, with the admin secret:
 
 ```sh
 curl -X POST -H "Authorization: Bearer $ADMIN_SECRET" "https://your.domain/admin/invite?uses=1&note=alice"
 curl -H "Authorization: Bearer $ADMIN_SECRET" https://your.domain/admin/invites       # list (uses, used, revoked)
 curl -X POST -H "Authorization: Bearer $ADMIN_SECRET" "https://your.domain/admin/revoke?id=<id>"
-curl -H "Authorization: Bearer $ADMIN_SECRET" https://your.domain/admin/status        # rooms, peers, sockets
+curl -H "Authorization: Bearer $ADMIN_SECRET" https://your.domain/admin/status        # rooms, peers, sockets, relay {bytes, peakBacklog}
 ```
 
 Revoking an invite also signs out everyone who joined through it. Changing `COOKIE_SECRET` signs out everyone.
@@ -96,7 +102,7 @@ Revoking an invite also signs out everyone who joined through it. Changing `COOK
 | `/v/<hash>/ps2web.*` | build, `immutable`, `.br`/`.gz` when accepted | cookie |
 | `/disc.iso` | disc image, Range requests | cookie |
 | `/ws`, `/turn` | `signal.mjs` | cookie (checked by Caddy and again by `signal.mjs`) |
-| `/invite?t=` | `signal.mjs`: token → cookie → `302 /` | none |
+| `/invite?t=[&room=]` | `signal.mjs`: token → cookie → `302 /` (or `ROOM_URL` with the room) | none |
 | `/admin/*` | `signal.mjs` | `Authorization: Bearer <ADMIN_SECRET>` |
 | `/auth` | `signal.mjs`: 200 with a valid cookie, else 401 (Caddy `forward_auth`) | — |
 
@@ -104,7 +110,7 @@ Every response carries COOP `same-origin`, COEP `require-corp` and CORP `same-or
 
 ## Signalling protocol
 
-For the lockstep page (`web/lockstep.js`, a later milestone). JSON text frames over `wss://your.domain/ws`; the cookie is required, frames over 64 KiB close the socket, and a socket that does not answer a ping within 20–40 s is dropped (counts as leaving). A socket is in at most one room; a room holds at most 2 sockets.
+For the lockstep page (`web/lockstep.js`, a later milestone). JSON text frames over `wss://your.domain/ws`, plus binary frames for the relay fallback (below); the cookie is required, text frames over 64 KiB and any frame over 1 MiB close the socket (1009), and a socket that does not answer a ping within 20–40 s is dropped (counts as leaving; a socket held by relay flow control is exempt). A socket is in at most one room; a room holds at most 2 sockets.
 
 `GET /turn` → `{username, credential, ttl, iceServers}`; pass `iceServers` to `new RTCPeerConnection({iceServers})`. `username` is `<expiry unix s>:<invite id>`, `credential` is base64 HMAC-SHA1 of it with coturn's `static-auth-secret`, valid for `ttl` = 3600 s. Fetch a fresh one before each connection attempt.
 
@@ -116,11 +122,22 @@ Client → server:
 | `{type:'info', room}` | `{type:'info', room, build, peers}` (`peers` = 0–2) |
 | `{type:'join', room, build?}` | `{type:'joined', room, id, host, peer, build}`; `id` is this socket's peer id, `peer` the other peer's id or `null`, `host` is true for the first one in. The peer already in receives `{type:'peer-joined', peer}`. |
 | `{type:'leave'}` | `{type:'left'}`; the other peer receives `peer-left` |
-| `{type:'offer', sdp}`, `{type:'answer', sdp}`, `{type:'ice', candidate}`, `{type:'ctl', …}` | none; the other peer receives the same object plus `from: <sender id>`. `ctl` is free-form, for small messages before the data channels are up. |
+| `{type:'offer', sdp}`, `{type:'answer', sdp}`, `{type:'ice', candidate}`, `{type:'ctl', …}`, `{type:'transport', mode}` | none; the other peer receives the same object plus `from: <sender id>`. `ctl` is free-form, for small messages before the data channels are up. `transport` (`mode`: `'relay'` or `'p2p'`) announces which path the data channels use. |
+| binary frame | none; relayed verbatim to the other peer (below) |
 
 Server → client, unprompted: `{type:'peer-joined', peer}` and `{type:'peer-left', peer, host:true}` (the one left behind owns the running session and becomes host). Closing the socket counts as leaving.
 
-Errors: `{type:'error', error, request}` with `error` one of `not-found` (no such room, or it expired), `full`, `build-mismatch` (join with a `build` different from the room's), `already-joined`, `not-joined` (relay before join), `no-peer` (relay while alone), `busy` (1000 rooms open), `bad-request`.
+Errors: `{type:'error', error, request}` with `error` one of `not-found` (no such room, or it expired), `full`, `build-mismatch` (join with a `build` different from the room's), `already-joined`, `not-joined` (relay before join), `no-peer` (relay while alone), `too-big` (binary frame over `RELAY_MAX`), `busy` (1000 rooms open), `bad-request`. Binary frames report as `request:'relay'`.
+
+Relay fallback: when ICE fails, the client carries its two data channels over this WebSocket. Every binary frame from a joined socket goes to the other peer as one binary frame, byte for byte, with nothing added (no sender id). The server does not look inside; the client's framing is byte 0 = channel (`0` in, `1` ctl), byte 1 = kind (`0` binary, `1` UTF-8 text), then the payload.
+
+| Case | Behaviour |
+|---|---|
+| Frame ≤ `RELAY_MAX` (256 KiB) | relayed |
+| Frame > `RELAY_MAX` | dropped, sender gets `{type:'error', error:'too-big', request:'relay'}`; the socket stays open |
+| Sender not in a room | `{type:'error', error:'not-joined', request:'relay'}` |
+| Sender alone in the room | dropped silently (normal while a peer leaves or drops in) |
+| Rate / slow receiver | never dropped: each sender has a token bucket of `RELAY_RATE` bytes/s (8 MB/s) holding up to `RELAY_BURST` (1 MiB). While the bucket is in debt, or the receiver has more than `RELAY_BACKLOG` (4 MiB) queued, the server stops reading the sender, so TCP pushes back to the sender's `bufferedAmount`. The sender's later JSON frames wait behind its binary ones. |
 
 Session flow:
 
@@ -130,12 +147,23 @@ Session flow:
 4. The W3 handshake (build hash, disc id, lockstep config, input delay) and the W4 snapshot transfer run over the `ctl` data channel, not the WebSocket. The host is the one that runs the session and sends the snapshot.
 5. On `peer-left`, the remaining page keeps the socket open and waits for a new `peer-joined` (drop-in); it then gets the next `offer`.
 
+## Host mode
+
+`mksm/host.sh` runs the whole site on the host player's PC, without Caddy, coturn or a VPS. Guide, security model and troubleshooting: [`mksm/notes/web-host.md`](../mksm/notes/web-host.md).
+
+- `host.mjs` listens on 127.0.0.1 only (default port 8620). It serves the build (`--build`, top-level `*.html/js/mjs/wasm/data` only, `.gz` when accepted) and the disc (`--disc`, at `/disc.iso`, Range) with COOP/COEP/CORP, using the static server exported by `scripts/lockstep_env.mjs`. It spawns `signal.mjs` with per-run random secrets (memory only), `DATA_DIR` in a temp directory and `ROOM_URL=/ps2web.html?room={room}`, and proxies `/ws`, `/auth` and `/invite` to it. `/admin` is not exposed; `/turn` is 404 (no TURN: the page uses public STUN and falls back to the binary relay above).
+- **Gate:** every path except `/invite` needs the cookie, except for the host's own browser: TCP peer 127.0.0.1/::1, no proxy header (`Cf-*`, `X-Forwarded-*`, `Forwarded`, `X-Real-IP`, `CDN-Loop`, `Via`; cloudflared always adds `Cf-Connecting-IP` and `X-Forwarded-For`), a loopback `Host`, and `Origin`/`Sec-Fetch-Site` (when present) not naming another site. host.mjs adds its own cookie to that browser's `/ws` and `/auth` requests. A remote WebSocket with an `Origin` must come from the tunnel URL.
+- **`/host-info`** (local only) → `{tunnelUrl, inviteToken, inviteUrl, inviteUsed, room}`. `?room=<id>` records the host's room and adds `&room=<id>` to `inviteUrl`; `?new=1` mints a new single-use invite (revoking the previous one if it is unused). `POST /host-info/tunnel?url=https://…` (local only) sets the tunnel URL; `host.sh` calls it once cloudflared prints its `*.trycloudflare.com` URL.
+- `host.sh` downloads `tools/cloudflared` (pinned release, SHA-256 checked) on first use, runs `npm ci` here if `node_modules` is missing, starts host.mjs and `cloudflared tunnel --no-autoupdate --url http://127.0.0.1:<port>`, prints the host's URL and the invite, and stops all of it on Ctrl-C.
+
+Tests: `node host_test.mjs` (host.mjs on loopback: the gate with cloudflared-like headers, `/host-info`, single-use invite and room redirect, gzip, Range, `/ws` rules, relay through the proxy) and `node host_tunnel_test.mjs` (needs internet: `host.sh` with a real quick tunnel, then the gate, invite, Range, throughput and relay through it).
+
 ## Local test
 
 ```sh
 cd server && npm install && node test.mjs        # or CADDY=/path/to/caddy-2.11 node test.mjs, or --no-caddy
 ```
 
-Starts `signal.mjs` on a free loopback port with throwaway secrets (and, when `caddy` is installed, Caddy with this Caddyfile and a temp web root holding a fake build and disc) and checks invites, cookies, `/auth`, `/turn`, rooms (create, join, relay, third-peer reject, leave notifications, drop-in, expiry), and through Caddy the auth gate on every path, the isolation and cache headers, precompressed wasm and disc Range reads.
+Starts `signal.mjs` on a free loopback port with throwaway secrets (and, when `caddy` is installed, Caddy with this Caddyfile and a temp web root holding a fake build and disc) and checks invites (including `&room=` and `ROOM_URL`), cookies, `/auth`, `/turn`, rooms (create, join, relay, third-peer reject, leave notifications, drop-in, expiry), the binary relay (byte-exact, size cap, 20 MiB paced by the rate limit and held by a stalled receiver, lossless and in order), and through Caddy the auth gate on every path, the isolation and cache headers, precompressed wasm and disc Range reads.
 
-`signal.mjs` alone: `COOKIE_SECRET=… ADMIN_SECRET=… TURN_SECRET=… node signal.mjs` (each ≥ 32 characters; also `HOST`, `PORT` 8787, `DATA_DIR` ./data, `PUBLIC_ORIGIN`, `TURN_HOST`, `TURN_PORT` 3478, `TURN_TTL` 3600, `ROOM_GRACE_MS` 600000).
+`signal.mjs` alone: `COOKIE_SECRET=… ADMIN_SECRET=… TURN_SECRET=… node signal.mjs` (each ≥ 32 characters; also `HOST`, `PORT` 8787, `DATA_DIR` ./data, `PUBLIC_ORIGIN`, `TURN_HOST`, `TURN_PORT` 3478, `TURN_TTL` 3600, `ROOM_GRACE_MS` 600000, `ROOM_URL` `/play/{room}`, `RELAY_MAX` 262144, `RELAY_RATE` 8000000 bytes/s, `RELAY_BURST` 1048576, `RELAY_BACKLOG` 4194304).

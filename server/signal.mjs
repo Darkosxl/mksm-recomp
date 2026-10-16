@@ -23,6 +23,26 @@ const TURN_PORT = Number(env.TURN_PORT || 3478), TURN_TTL = Number(env.TURN_TTL 
 const GRACE_MS = Number(env.ROOM_GRACE_MS || 600_000);
 const COOKIE = '__Host-mksm', COOKIE_AGE = 400 * 86400; // 400 days is Chrome's cap
 const MAX_ROOMS = 1000, ROOM_CHARS = 'abcdefghijkmnpqrstuvwxyz23456789'; // 12 chars of 32 = 60 bits
+const ROOM_ID = new RegExp(`^[${ROOM_CHARS}]{12}$`);
+// Where /invite?room=<id> lands: a same-site path template. The VPS site serves /play/<room>.
+const ROOM_URL = env.ROOM_URL || '/play/{room}';
+if (!ROOM_URL.startsWith('/') || ROOM_URL.startsWith('//') || /[\s\\]/.test(ROOM_URL) || !ROOM_URL.includes('{room}')) {
+  console.error(`ROOM_URL must be a path starting with a single / and containing {room}, got ${JSON.stringify(ROOM_URL)}`);
+  process.exit(1);
+}
+const positive = (name, fallback) => {
+  const value = Number(env[name] || fallback);
+  if (!(value > 0)) {
+    console.error(`${name} must be a positive number`);
+    process.exit(1);
+  }
+  return value;
+};
+// Binary relay (the fallback when WebRTC cannot connect): per-message cap, per-sender rate and burst, and
+// how much may queue towards a receiver before its sender is held back. All in bytes.
+const RELAY_MAX = positive('RELAY_MAX', 256 * 1024), RELAY_RATE = positive('RELAY_RATE', 8_000_000);
+const RELAY_BURST = positive('RELAY_BURST', 1 << 20), RELAY_BACKLOG = positive('RELAY_BACKLOG', 4 << 20);
+const TEXT_MAX = 64 * 1024; // JSON frames
 
 // Invites persist in DATA_DIR/invites.json, keyed by id. Only a hash of each token is stored.
 const DATA_DIR = env.DATA_DIR || './data', FILE = join(DATA_DIR, 'invites.json');
@@ -52,6 +72,7 @@ function user(req) {
 
 const DENIED = '<!doctype html><meta charset="utf-8"><title>Invite only</title><p>This site is invite-only. Open the invite link you were sent.</p>\n';
 const BAD_INVITE = '<!doctype html><meta charset="utf-8"><title>Invite only</title><p>This invite link is invalid, revoked or used up. Ask for a new one.</p>\n';
+const BAD_ROOM = '<!doctype html><meta charset="utf-8"><title>Bad room</title><p>The room in this invite link is malformed. Ask for a new link.</p>\n';
 
 function send(res, status, body, type = 'text/plain; charset=utf-8', headers = {}) {
   if (typeof body === 'object') [body, type] = [JSON.stringify(body, null, 1) + '\n', 'application/json'];
@@ -86,7 +107,7 @@ function admin(req, res, url) {
   }
   if (route === 'GET /admin/status') {
     const peers = [...rooms.values()].reduce((n, room) => n + room.peers.length, 0);
-    return send(res, 200, { rooms: rooms.size, peers, sockets: wss.clients.size });
+    return send(res, 200, { rooms: rooms.size, peers, sockets: wss.clients.size, relay: relayed });
   }
   send(res, 404, 'not found\n');
 }
@@ -96,7 +117,11 @@ const server = createServer((req, res) => {
   if (url.pathname === '/admin' || url.pathname.startsWith('/admin/')) return admin(req, res, url);
   if (url.pathname === '/auth') return user(req) ? send(res, 200, 'ok\n') : send(res, 401, DENIED, 'text/html; charset=utf-8');
   if (url.pathname === '/invite') {
-    if (user(req)) return send(res, 302, '', undefined, { Location: '/' });
+    // ?room= must be a well-formed room id, so the redirect stays on this site; a bad one does not use the token.
+    const room = url.searchParams.get('room');
+    if (room !== null && !ROOM_ID.test(room)) return send(res, 400, BAD_ROOM, 'text/html; charset=utf-8');
+    const location = room === null ? '/' : ROOM_URL.replaceAll('{room}', room);
+    if (user(req)) return send(res, 302, '', undefined, { Location: location });
     const hash = sha256(url.searchParams.get('t') || '');
     const id = Object.keys(invites).find((k) => same(invites[k].hash, hash));
     const invite = invites[id];
@@ -106,7 +131,7 @@ const server = createServer((req, res) => {
     console.log(`invite ${id} used (${invite.used}/${invite.uses})`);
     const cookie = `${COOKIE}=${id}.${Math.floor(Date.now() / 1000)}`;
     return send(res, 302, '', undefined, {
-      Location: '/',
+      Location: location,
       'Set-Cookie': `${cookie}.${sign(cookie.slice(COOKIE.length + 1))}; Path=/; Max-Age=${COOKIE_AGE}; HttpOnly; Secure; SameSite=Lax`,
       'Referrer-Policy': 'no-referrer',
     });
@@ -128,7 +153,10 @@ const server = createServer((req, res) => {
 
 // Rooms: in memory only. A room holds at most 2 sockets; it is dropped GRACE_MS after it becomes empty.
 const rooms = new Map();
-const wss = new WebSocketServer({ noServer: true, maxPayload: 64 * 1024 });
+// maxPayload admits relay frames up to RELAY_MAX so they can be refused politely; JSON frames over TEXT_MAX and
+// anything over maxPayload close the socket (1009).
+const wss = new WebSocketServer({ noServer: true, maxPayload: Math.max(1 << 20, RELAY_MAX) });
+const relayed = { bytes: 0, peakBacklog: 0 }; // /admin/status
 const out = (ws, msg) => ws.readyState === ws.OPEN && ws.send(JSON.stringify(msg));
 const fail = (ws, error, request) => out(ws, { type: 'error', error, request });
 const idle = (room) => {
@@ -147,13 +175,18 @@ server.on('upgrade', (req, socket, head) => {
   if (ORIGIN && req.headers.origin && req.headers.origin !== ORIGIN) return reject('403 Forbidden');
   wss.handleUpgrade(req, socket, head, (ws) => {
     Object.assign(ws, { id: randomBytes(6).toString('base64url'), user: id, room: null, alive: true });
+    Object.assign(ws, { tokens: RELAY_BURST, refilled: performance.now(), flowTimer: null }); // relay flow()
     ws.on('pong', () => (ws.alive = true));
     ws.on('error', () => {}); // e.g. an oversized frame (code 1009); 'close' follows
     ws.on('close', () => leave(ws));
     ws.on('message', (data, binary) => {
+      if (ws.readyState !== ws.OPEN) return; // closing, e.g. after the 1009 below
+      ws.alive = true; // a pong can queue behind relay data that is being paced
+      if (binary) return relay(ws, data);
+      if (data.length > TEXT_MAX) return ws.close(1009);
       let msg;
       try {
-        msg = binary ? null : JSON.parse(data);
+        msg = JSON.parse(data);
       } catch {}
       if (!msg || typeof msg.type !== 'string') return fail(ws, 'bad-request');
       handle(ws, msg);
@@ -201,7 +234,8 @@ function handle(ws, msg) {
     case 'offer':
     case 'answer':
     case 'ice':
-    case 'ctl': {
+    case 'ctl':
+    case 'transport': {
       if (!room) return fail(ws, 'not-joined', msg.type);
       const peer = room.peers.find((p) => p !== ws);
       if (!peer) return fail(ws, 'no-peer', msg.type);
@@ -216,17 +250,53 @@ function leave(ws) {
   const room = ws.room;
   if (!room) return;
   ws.room = null;
+  flow(ws); // no room: released
   room.peers = room.peers.filter((p) => p !== ws);
   const peer = room.peers[0];
   if (!peer) return idle(room);
+  flow(peer); // alone: released
   peer.host = true; // the one still running the game owns the session
   out(peer, { type: 'peer-left', peer: ws.id, host: true });
+}
+
+// Binary frames from a joined socket go verbatim to the other peer (the client's data channels, when WebRTC
+// cannot connect). Contents are opaque. Nothing is dropped for rate: flow() slows the sender instead.
+function relay(ws, data) {
+  if (!ws.room) return fail(ws, 'not-joined', 'relay');
+  if (data.length > RELAY_MAX) return fail(ws, 'too-big', 'relay');
+  const peer = ws.room.peers.find((p) => p !== ws);
+  if (!peer) return; // alone (the peer just left, or the next one has not joined yet): dropped
+  if (peer.readyState === peer.OPEN) peer.send(data, { binary: true });
+  relayed.bytes += data.length;
+  relayed.peakBacklog = Math.max(relayed.peakBacklog, peer.bufferedAmount);
+  flow(ws, data.length);
+}
+
+// Relay flow control: charges `bytes` to the sender's token bucket (RELAY_RATE/s, capacity RELAY_BURST), then
+// stops reading the sender while the bucket is in debt or the peer has more than RELAY_BACKLOG bytes queued,
+// re-checking on a timer. TCP then pushes back to the sender. Frames ws already read still arrive and are
+// relayed. A socket without a peer (or not open) is always released.
+function flow(ws, bytes = 0) {
+  const now = performance.now();
+  ws.tokens = Math.min(RELAY_BURST, ws.tokens + ((now - ws.refilled) * RELAY_RATE) / 1000) - bytes;
+  ws.refilled = now;
+  clearTimeout(ws.flowTimer);
+  ws.flowTimer = null;
+  const peer = ws.readyState === ws.OPEN ? ws.room?.peers.find((p) => p !== ws) : null;
+  const wait = !peer ? 0
+    : ws.tokens < 0 ? Math.ceil((-ws.tokens * 1000) / RELAY_RATE)
+    : peer.bufferedAmount > RELAY_BACKLOG ? 15 : 0;
+  if (wait) {
+    ws.pause();
+    ws.flowTimer = setTimeout(flow, wait, ws);
+  } else if (ws.isPaused) ws.resume();
 }
 
 // Dead connections (sleeping laptops, dropped Wi-Fi) are noticed within 2 intervals and count as leaving.
 const heartbeat = setInterval(() => {
   for (const ws of wss.clients) {
-    if (!ws.alive) ws.terminate();
+    if (ws.isPaused) ws.alive = true; // held by flow(): its pong cannot be read until it is released
+    else if (!ws.alive) ws.terminate();
     else {
       ws.alive = false;
       ws.ping();

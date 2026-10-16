@@ -24,6 +24,9 @@ const KEEPALIVE_MS = 50, STALL_RETRY_MS = 16, OVERLAY_MS = 3000, SOLO_MS = 15000
 const MAX_REDUNDANT = 32, HEADER = 20, CHUNK = 64 * 1024;
 const BUF_HIGH = 4 * 1024 * 1024, BUF_LOW = 1024 * 1024;
 const PKT_INPUT = 1, PKT_NEED = 1; // packet kind; packet flags bit0: the sender lacks an input it needs now or next frame
+const P2P_TIMEOUT_MS = 10000;
+// No TURN in host mode (/turn 404): public STUN only; peers that still can't connect fall back to the relay below.
+const STUN = [{ urls: ['stun:stun.l.google.com:19302', 'stun:stun.cloudflare.com:3478'] }];
 
 export function encodeInput(p, out = new Uint8Array(WIRE_BYTES)) {
   out[0] = p.buttons & 255;
@@ -71,6 +74,36 @@ function openSocket(signal) {
   });
 }
 
+// Stand-in for an RTCDataChannel when the peers can't connect directly: frames go through the signalling
+// WebSocket as binary messages that signal.mjs forwards to the other peer in the room. Frame: u8 channel (0 in,
+// 1 ctl), u8 kind (0 binary, 1 UTF-8 text), payload. Only the RTCDataChannel surface lockstep.js uses is provided.
+const enc = new TextEncoder(), dec = new TextDecoder();
+class RelayChannel {
+  constructor(ws, id, label) { this.ws = ws; this.id = id; this.label = label; this.bufferedAmountLowThreshold = 0; this.onmessage = null; }
+  get readyState() { return this.ws.readyState === 1 ? 'open' : 'closed'; }
+  get bufferedAmount() { return this.ws.bufferedAmount; }
+  send(data) {
+    const text = typeof data === 'string';
+    const body = text ? enc.encode(data) : new Uint8Array(data.buffer ? data.buffer : data, data.byteOffset || 0, data.byteLength);
+    const frame = new Uint8Array(2 + body.byteLength);
+    frame[0] = this.id;
+    frame[1] = text ? 1 : 0;
+    frame.set(body, 2);
+    this.ws.send(frame);
+  }
+  // WebSocket has no bufferedamountlow event: poll for it (only sendBlob waits on it).
+  addEventListener(type, fn) {
+    if (type !== 'bufferedamountlow') return;
+    const poll = () => (this.readyState !== 'open' || this.bufferedAmount <= this.bufferedAmountLowThreshold ? fn() : setTimeout(poll, 20));
+    poll();
+  }
+  deliver(u8) {
+    const body = u8.subarray(2);
+    this.onmessage?.({ data: u8[1] ? dec.decode(body) : body.slice().buffer });
+  }
+  close() {}
+}
+
 // Disc id for the handshake: size + SHA-256 of the first MB (any Blob/File, e.g. from a Range fetch).
 export async function discId(size, firstMB) {
   return `${size}:${hex(await crypto.subtle.digest('SHA-256', firstMB))}`;
@@ -108,6 +141,7 @@ export class Lockstep {
     this.blobIn = null;
     this.blobWaiters = [];
     this.pad = new Uint8Array(WIRE_BYTES);
+    this.transport = 'p2p';
     this.adv = 0;
     this.localAdv = 0;
   }
@@ -126,7 +160,8 @@ export class Lockstep {
     const { signal, room, build } = this.opts;
     this.setStatus('connecting');
     this.ws = await openSocket(signal);
-    this.ws.onmessage = (e) => this.onSignal(JSON.parse(e.data));
+    this.ws.binaryType = 'arraybuffer';
+    this.ws.onmessage = (e) => (typeof e.data === 'string' ? this.onSignal(JSON.parse(e.data)) : this.onRelay(new Uint8Array(e.data)));
     this.joined = deferred();
     this.channelsOpen = deferred();
     this.ws.send(JSON.stringify({ type: 'join', room, build }));
@@ -165,6 +200,8 @@ export class Lockstep {
         if (!this.pc || !this.pc.remoteDescription) (this.pendingIce ||= []).push(msg.candidate);
         else await this.pc.addIceCandidate(msg.candidate).catch((e) => this.log('ice', e.message));
         return;
+      case 'transport': if (msg.mode === 'relay') this.useRelay('peer asked'); return;
+      case 'relay-throttle': this.log('relay throttled by the server'); return;
     }
   }
   sendSignal(msg) { if (this.ws?.readyState === 1) this.ws.send(JSON.stringify(msg)); }
@@ -174,17 +211,24 @@ export class Lockstep {
   }
 
   async startPeer(offer) {
-    const turn = await fetch(new URL('/turn', this.opts.signal), { credentials: 'same-origin' }).then((r) => r.json());
-    const pc = (this.pc = new RTCPeerConnection({ iceServers: turn.iceServers }));
-    pc.onicecandidate = (e) => e.candidate && this.sendSignal({ type: 'ice', candidate: e.candidate });
-    pc.onconnectionstatechange = () => this.log('pc', pc.connectionState);
+    if (this.transport === 'relay') return;
+    const turn = await fetch(new URL('/turn', this.opts.signal), { credentials: 'same-origin' }).then((r) => (r.ok ? r.json() : null)).catch(() => null);
+    const pc = (this.pc = new RTCPeerConnection({ iceServers: turn?.iceServers ?? STUN }));
+    pc.onicecandidate = (e) => e.candidate && !this.test.blockIce && this.sendSignal({ type: 'ice', candidate: e.candidate });
+    pc.onconnectionstatechange = () => {
+      this.log('pc', pc.connectionState);
+      if (pc.connectionState === 'failed') this.useRelay('ICE failed');
+    };
+    // No direct path within P2P_TIMEOUT_MS (strict NATs, no TURN): use the relay instead.
+    clearTimeout(this.p2pTimer);
+    this.p2pTimer = setTimeout(() => this.channelsOpen.settled || this.useRelay('no direct connection'), this.opts.p2pTimeoutMs ?? this.test.p2pTimeoutMs ?? P2P_TIMEOUT_MS);
     // Negotiated ids: both sides create the same two channels, no ondatachannel race.
     this.inCh = pc.createDataChannel('in', { negotiated: true, id: 0, ordered: false, maxRetransmits: 0, priority: 'high' });
     this.ctl = pc.createDataChannel('ctl', { negotiated: true, id: 1, ordered: true, priority: 'low' });
     let open = 0;
     for (const ch of [this.inCh, this.ctl]) {
       ch.binaryType = 'arraybuffer';
-      ch.onopen = () => ++open === 2 && this.channelsOpen.resolve();
+      ch.onopen = () => ++open === 2 && this.transport === 'p2p' && this.openChannels();
       ch.onclose = () => this.log(`channel ${ch.label} closed`);
     }
     this.inCh.onmessage = (e) => this.onInput(e.data);
@@ -194,6 +238,38 @@ export class Lockstep {
       await pc.setLocalDescription(await pc.createOffer());
       this.sendSignal({ type: 'offer', sdp: pc.localDescription });
     }
+  }
+
+  openChannels() {
+    clearTimeout(this.p2pTimer);
+    this.channelsOpen.settled = true;
+    this.channelsOpen.resolve();
+    this.emit('transport', this.transport);
+  }
+
+  // Switches both data channels to the WebSocket relay for the rest of the session and tells the peer to do the
+  // same. Idempotent; also used when a direct connection dies mid-session (inputs resume through the relay).
+  useRelay(why) {
+    if (this.transport === 'relay' || !this.ws) return;
+    this.log(`using the relay (${why})`);
+    this.transport = 'relay';
+    this.stats.relay = 1;
+    this.sendSignal({ type: 'transport', mode: 'relay' });
+    const pc = this.pc;
+    this.pc = null;
+    try { pc?.close(); } catch {}
+    this.inCh = new RelayChannel(this.ws, 0, 'in');
+    this.ctl = new RelayChannel(this.ws, 1, 'ctl');
+    this.ctl.bufferedAmountLowThreshold = BUF_LOW;
+    this.inCh.onmessage = (e) => this.onInput(e.data);
+    this.ctl.onmessage = (e) => this.onCtl(e.data);
+    if (this.channelsOpen && !this.channelsOpen.settled) this.openChannels();
+    else this.emit('transport', this.transport);
+  }
+  onRelay(u8) {
+    if (u8.length < 2) return;
+    if (this.transport !== 'relay') this.useRelay('peer is relaying'); // its 'transport' message may come later
+    (u8[0] === 0 ? this.inCh : this.ctl).deliver(u8);
   }
 
   async handshake() {
@@ -666,7 +742,7 @@ export class Lockstep {
   snapshot() {
     return {
       status: this.status, host: this.isHost, slot: this.slot, D: this.D, solo: this.solo,
-      emuFrame: this.lastFrame, localHigh: this.localHigh, remoteHigh: this.remoteHigh, ackedByRemote: this.ackedByRemote,
+      transport: this.transport, emuFrame: this.lastFrame, localHigh: this.localHigh, remoteHigh: this.remoteHigh, ackedByRemote: this.ackedByRemote,
       rttStart: this.rttAtStart, rttP50: this.rtts.length ? percentile(this.rtts.slice(-20), 0.5) : null,
       adv: this.adv, slowMs: this.slowMs || 0, paused: this.paused, remotePaused: !!this.remotePaused, disconnected: !!this.disconnected,
       overlay: this.overlayVisible, ...this.stats,
