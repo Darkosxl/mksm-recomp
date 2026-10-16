@@ -12,7 +12,7 @@ import { startEnv, launchBrowser } from './lockstep_env.mjs';
 
 const args = process.argv.slice(2);
 const opt = (name, def) => { const i = args.indexOf(name); return i < 0 ? def : args[i + 1]; };
-const MAIN_S = Number(opt('--main', 300)), LOSS_S = Number(opt('--loss', 60)), LAG_S = Number(opt('--lag', 30));
+const MAIN_S = Number(opt('--main', 300)), LOSS_S = Number(opt('--loss', 60)), LAG_S = Number(opt('--lag', 30)), RELAY_S = Number(opt('--relay', 60));
 const only = opt('--only', '') ? new Set(opt('--only').split(',')) : null;
 const want = (name) => !only || only.has(name);
 const repo = join(dirname(fileURLToPath(import.meta.url)), '..');
@@ -198,6 +198,31 @@ try {
     results.snapshot = { size: SIZE, sha: sent, send: sendRes, recv, totalMs, MBps: +(SIZE / 1048576 / (totalMs / 1000)).toFixed(1),
       stallsDuring: [sa2.emu.stalls - sa.emu.stalls, sb2.emu.stalls - sb.emu.stalls], stallMsDuring: [+(sa2.emu.stallMs - sa.emu.stallMs).toFixed(1), +(sb2.emu.stallMs - sb.emu.stallMs).toFixed(1)] };
     check('snapshot: 40 MB intact through gzip + ctl (sha256)', recv.sha === sent && recv.size === SIZE, `${totalMs} ms end to end, ${results.snapshot.MBps} MB/s, gzip ${sendRes.zsize} B, stalls during ${results.snapshot.stallsDuring}`);
+  }
+
+  // No direct path (ICE candidates withheld): both sides fall back to the signalling relay after 2 s and play on.
+  if (want('relay')) {
+    const p = await pair({ relay: 2000 }, { relay: 2000 });
+    check('relay: connected', !p.a && !p.b, `${p.a || ''} ${p.b || ''}`);
+    const r = (results.relay = await run('relay', RELAY_S));
+    const [ta, tb] = await Promise.all([A.page.evaluate('T.ls.transport'), B.page.evaluate('T.ls.transport')]);
+    check('relay: both sides on the relay', ta === 'relay' && tb === 'relay', `${ta}/${tb}`);
+    assertClean('relay', r, 2);
+    await B.page.evaluate(`(T.blobRecv = null, T.ls.recvBlob().then(async (b) => {
+      const sha = [...new Uint8Array(await crypto.subtle.digest('SHA-256', b.bytes))].map((x) => x.toString(16).padStart(2, '0')).join('');
+      T.blobRecv = { size: b.bytes.byteLength, sha };
+    }), true)`);
+    const sent = await A.page.evaluate(`(async () => {
+      const bytes = new Uint8Array(16 * 1048576);
+      for (let o = 0; o < bytes.length; o += 65536) crypto.getRandomValues(bytes.subarray(o, o + 65536));
+      T.blobBytes = bytes;
+      return [...new Uint8Array(await crypto.subtle.digest('SHA-256', bytes))].map((x) => x.toString(16).padStart(2, '0')).join('');
+    })()`);
+    const t0 = Date.now();
+    await A.page.evaluate('T.ls.sendBlob(T.blobBytes, { kind: "test" }).then(() => (T.blobBytes = null))');
+    const recv = await B.page.waitFor('T.blobRecv', 120000, 20);
+    results.relay.blobMs = Date.now() - t0;
+    check('relay: 16 MB snapshot intact through the relay', recv.sha === sent, `${results.relay.blobMs} ms`);
   }
 
   if (want('disconnect')) {
