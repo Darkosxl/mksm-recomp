@@ -1,0 +1,1 @@
+((d) => d ? ({ bytes: d.length, header: new TextDecoder('latin1').decode(d.subarray(0, 28)), BASLUS_21087: new TextDecoder('latin1').decode(d).split('BASLUS-21087').length - 1, sum: d.reduce((a, b, i) => (i % 512 ? a : (a * 31 + b) >>> 0), 0) }) : 'no card file')((() => { try { return FS.readFile('/memcard/Mcd001.ps2') } catch (e) { return null } })())

@@ -499,7 +499,12 @@ namespace {
 void reboot(Cpu &c) {
     g_reboot_request = false;
     sync_vu_thread();
-    gs::flush_and_wait();
+#ifdef __EMSCRIPTEN__
+    // the WebGPU device belongs to the browser main thread, which drains the render queue; this is the emulation
+    // thread, and gs::reset() (via boot) posts its reset to that queue in order anyway
+    if (!gs::queue::active())
+#endif
+        gs::flush_and_wait();
     std::memset(g_ram, 0, kRamSize);
     std::memset(g_spr, 0, kScratchpadSize);
     g_events.clear();

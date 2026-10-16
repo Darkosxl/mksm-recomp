@@ -16,7 +16,7 @@ mkdir -p "$out"
 printf '%s\n' "$boot" > "$out/boot.txt"
 source "$emsdk/emsdk_env.sh" > /dev/null 2>&1
 emcmake cmake -S "$here" -B "$out" -G Ninja -DCMAKE_BUILD_TYPE=Release \
-    -DPS2_GENERATED="$here/generated/$game" -DPS2_WEB_ELF="$elf" -DPS2_WEB_BOOT_FILE="$out/boot.txt"
-ninja -C "$out" ps2web
+    -DPS2_GENERATED="${PS2_GENERATED:-$here/generated/$game}" -DPS2_WEB_ELF="$elf" -DPS2_WEB_BOOT_FILE="$out/boot.txt"
+ninja ${PS2_JOBS:+-j"$PS2_JOBS"} -C "$out" ps2web
 gzip -kf9 "$out/ps2web.wasm" "$out/ps2web.data" "$out/ps2web.js"
 printf 'built %s/ps2web.html; serve it with scripts/serve.py %q %q\n' "$out" "build/web-$game" "games/$game/disc.iso"
