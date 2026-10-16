@@ -1,4 +1,5 @@
 #include "dmac.hpp"
+#include "debug.hpp"
 
 #include "kernel.hpp"
 
@@ -175,6 +176,7 @@ void run_normal(int ch) {
     } else if (ch == 1) {
         for (std::uint32_t i = 0, n = 1; i < c.qwc; i += n, n = 1) {
             while (i + n < c.qwc && target(c.madr + (i + n) * 16) == target(c.madr + i * 16) + n * 16) ++n;
+            debug::count(debug::kGsDownloadDma);
             gs::read_image(target(c.madr + i * 16), n);
         }
     } else {

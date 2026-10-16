@@ -429,7 +429,15 @@ namespace ps2::vif {
 
 void state(ps2::state::Stream &s) {
     s.tag("vif");
-    for (Unit *u : {&g_units[0], &g_units[1], &g_vu_side}) {
+    // Hashing compares runs across thread layouts: "vif" is what the EE sees (VIF0, VIF1 or its emu-side shadow),
+    // "vifvu" the VIF1 that feeds VU1 (g_vu_side only while the VU1 thread runs).
+    const bool hashing = s.hashing();
+    Unit *const units[3] = {&g_units[0], &g_units[1], hashing ? nullptr : &g_vu_side};
+    for (Unit *u : units) {
+        if (!u) {
+            s.tag("vifvu");
+            u = gs::queue::vu_active() ? &g_vu_side : &g_units[1];
+        }
         s.pod(u->stat);
         s.pod(u->err);
         s.pod(u->mark);
@@ -449,6 +457,15 @@ void state(ps2::state::Stream &s) {
         s.pod(u->dbf);
         s.pod(u->stalled);
         s.vec(u->pending);
+    }
+    // A state saved without the VU1 thread has a blank VU-side VIF1 (it never ran); with the thread on, that blank copy
+    // would drive VU1 (CYCLE/MASK/ROW/ERR all zero) instead of the VIF1 the game set up, so seed it from VIF1.
+    if (s.loading() && gs::queue::vu_active()) {
+        const Unit &v = g_vu_side;
+        const bool blank = !(v.stat | v.err | v.mark | v.cycle | v.mode | v.num | v.mask | v.code | v.itops | v.base | v.ofst | v.tops |
+                             v.itop | v.top | v.row[0] | v.row[1] | v.row[2] | v.row[3] | v.col[0] | v.col[1] | v.col[2] | v.col[3]) &&
+                           v.pending.empty();
+        if (blank) g_vu_side = g_units[1];
     }
 }
 

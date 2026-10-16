@@ -1067,8 +1067,17 @@ namespace ps2::vu {
 
 void state(ps2::state::Stream &s) {
     s.tag("vu");
-    if (s.saving()) flush_kicks();
-    else g_pending_kicks.clear();
+    if (s.hashing()) {
+        // XGKICK packets still waiting for a VIF sync are guest-visible later; hash them instead of flushing
+        for (PendingKick &k : g_pending_kicks) {
+            s.pod(k.start);
+            s.pod(k.count);
+            s.vec(k.data);
+        }
+    } else if (s.saving()) {
+        if (!g_pending_kicks.empty()) std::fprintf(stderr, "[state] the save sends %zu pending XGKICK packets early\n", g_pending_kicks.size());
+        flush_kicks();
+    } else g_pending_kicks.clear();
     s.pod(g_vu1);
     s.pod(g_top);
     s.pod(g_itop);

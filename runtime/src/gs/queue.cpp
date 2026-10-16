@@ -1,5 +1,7 @@
 #include "queue.hpp"
 
+#include "../debug.hpp"
+
 #include <algorithm>
 #include <climits>
 #include <cmath>
@@ -85,6 +87,7 @@ void Ring::start(std::size_t capacity) {
 }
 
 void Ring::post(Type type, std::uint32_t arg0, std::uint32_t arg1, const void *data, std::uint32_t bytes) {
+    debug::jitter(1);
     const std::uint64_t need = sizeof(Header) + align16(bytes);
     std::uint64_t head = head_.load(std::memory_order_relaxed);
     for (;;) {

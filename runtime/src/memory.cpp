@@ -1,3 +1,4 @@
+#include "debug.hpp"
 #include "hw.hpp"
 #include "vu_micro.hpp"
 #include "ps2/memory.hpp"
@@ -51,9 +52,18 @@ void unmapped(const char *what, std::uint32_t a) {
     std::fprintf(stderr, "[mem] %s at unmapped 0x%08X (pc 0x%08X)\n", what, a, g_cpu.pc);
 }
 
+void count_vu(const Target &t, bool write) {
+    if (t.region != Region::Vu || !debug::g_census) return;
+    const std::uint32_t p = t.address & 0xFFFFu;
+    if (p >= 0xC000u) debug::count(write ? debug::kVu1MemWrite : debug::kVu1MemRead);
+    else if (p >= 0x8000u) debug::count(write ? debug::kVu1CodeWrite : debug::kVu1CodeRead);
+    else if (p >= 0x4000u && !write) debug::count(debug::kVu0MemRead);
+}
+
 template <typename T>
 T read_slow(std::uint32_t a) {
     const Target t = resolve(a);
+    count_vu(t, false);
     if (t.host) {
         T v;
         std::memcpy(&v, t.host, sizeof v);
@@ -73,6 +83,7 @@ T read_slow(std::uint32_t a) {
 template <typename T>
 void write_slow(std::uint32_t a, T v) {
     const Target t = resolve(a);
+    count_vu(t, true);
     if (t.host) {
         std::memcpy(t.host, &v, sizeof v);
         if (t.region == Region::Vu && (t.address & 0x4000u) == 0) vu::code_changed((t.address >> 15) & 1u);
@@ -102,6 +113,7 @@ std::uint64_t slow_ld64(std::uint32_t a) { return read_slow<std::uint64_t>(a); }
 
 void slow_ld128(std::uint32_t a, Reg128 &out) {
     const Target t = resolve(a);
+    count_vu(t, false);
     if (t.host) std::memcpy(&out, t.host, 16);
     else if (t.region == Region::Io) hw::read128(t.address, out);
     else std::memset(&out, 0, 16);
@@ -114,6 +126,7 @@ void slow_st64(std::uint32_t a, std::uint64_t v) { write_slow(a, v); }
 
 void slow_st128(std::uint32_t a, const Reg128 &v) {
     const Target t = resolve(a);
+    count_vu(t, true);
     if (t.host) std::memcpy(t.host, &v, 16);
     else if (t.region == Region::Io) hw::write128(t.address, v);
     else unmapped("write128", a);

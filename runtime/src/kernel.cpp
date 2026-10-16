@@ -911,8 +911,16 @@ std::function<void()> alarm_action(int id) {
 
 void state(ps2::state::Stream &s) {
     s.tag("eekern");
-    if (s.saving() && (g_in_handler || !g_guest_calls.empty())) throw std::runtime_error("the EE is inside an interrupt handler");
-    s.map(g_threads);
+    if (s.saving() && !s.hashing() && (g_in_handler || !g_guest_calls.empty())) throw std::runtime_error("the EE is inside an interrupt handler");
+    if (s.hashing()) {
+        // pod() of Thread/Alarm would hash their padding (4+8 and 4 bytes), which is heap garbage in threads and
+        // alarms created since boot or load, so hash field by field
+        s.map(g_threads, [&s](Thread &t) {
+            s.pod(t.id), s.pod(t.status), s.pod(t.priority), s.pod(t.init_priority), s.pod(t.entry), s.pod(t.stack);
+            s.pod(t.stack_size), s.pod(t.gp), s.pod(t.heap), s.pod(t.option), s.pod(t.attr), s.pod(t.wakeups);
+            s.pod(t.suspends), s.pod(t.wait), s.pod(t.wait_id), s.pod(t.order), s.pod(t.context);
+        });
+    } else s.map(g_threads);
     s.map(g_semas, [&s](Semaphore &v) {
         s.pod(v.count);
         s.pod(v.max);
@@ -923,7 +931,8 @@ void state(ps2::state::Stream &s) {
     });
     s.vec(g_intc_handlers);
     s.vec(g_dmac_handlers);
-    s.map(g_alarms);
+    if (s.hashing()) s.map(g_alarms, [&s](Alarm &a) { s.pod(a.callback), s.pod(a.arg), s.pod(a.gp), s.pod(a.due); });
+    else s.map(g_alarms);
     s.pod(g_current);
     s.pod(g_next_handler);
     s.pod(g_order);

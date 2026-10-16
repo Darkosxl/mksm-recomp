@@ -872,10 +872,12 @@ void state(ps2::state::Stream &s) {
     s.tag("spu2");
     s.vec(g_ram);
     for (Core &k : g_cores) {
+        if (s.hashing()) s.tag(&k == g_cores ? "spu2v0" : "spu2v1");  // hash sections only, to bisect
         s.pod(k.voices);
         if (s.loading())
             for (const Voice &v : k.voices)
                 for (int i = 0; i < 2; ++i) block_flags(v)[i] = static_cast<std::uint8_t>((g_ram[v.block[i] & kRamMask] >> 8) & 7u);
+        if (s.hashing()) s.tag(&k == g_cores ? "spu2c0" : "spu2c1");
         s.pod(k.attr);
         s.pod(k.admas);
         s.pod(k.irqa);
@@ -912,6 +914,10 @@ void state(ps2::state::Stream &s) {
     s.pod(g_spdif_media);
     s.pod(g_next_tick);
     s.pod(g_tick_pending);
+    if (s.loading()) {  // outside the savestate layout: start them as a fresh process does, so every load matches
+        std::memset(g_history, 0, sizeof g_history);
+        for (ReverbIo &io : g_reverb_io) io = ReverbIo{};
+    }
 }
 
 }

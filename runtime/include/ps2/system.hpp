@@ -62,6 +62,9 @@ void save_context(const Cpu &c, ThreadContext &t);
 void load_context(Cpu &c, const ThreadContext &t);
 
 std::uint64_t now();
+// The guest's real-time clock in Unix seconds: the host clock, or with PS2_RTC=<unix seconds> that epoch plus emulated
+// time, which every run (and every lockstep peer) sees identically.
+std::int64_t rtc_time();
 std::uint64_t hblank_cycles();
 void set_budget(Cpu &c, std::int64_t cycles);
 void schedule(int event, std::uint64_t at, std::function<void()> action);
