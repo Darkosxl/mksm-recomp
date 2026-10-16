@@ -194,7 +194,7 @@ const room = params.get('room');
 const lockstepMode = room !== null;
 const lsConfig = { lockstep: 1, vuThread: params.get('lsvu') === '0' ? 0 : 1, gs: 'gpu', vuJit: 1 };
 // the only PS2_* parameters a lockstep peer keeps: they change how frames look, never what the guest sees
-const RENDER_ONLY = new Set(['PS2_SCALE', 'PS2_NO_DEINTERLACE', 'PS2_DECODE', 'PS2_GPU_FALLBACK']);
+const RENDER_ONLY = new Set(['PS2_SCALE', 'PS2_NO_DEINTERLACE', 'PS2_DECODE', 'PS2_GPU_FALLBACK', 'PS2_GPU_LOW_POWER']);
 let session = null, lsStatus = '', lsScript = null;
 
 function missingFeatures() {

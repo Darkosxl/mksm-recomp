@@ -8,7 +8,7 @@
 import { spawn } from 'node:child_process';
 import { randomBytes } from 'node:crypto';
 import { createReadStream, mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs';
-import { createServer } from 'node:http';
+import { createServer, request as httpRequest } from 'node:http';
 import { connect, createServer as createTcpServer } from 'node:net';
 import { tmpdir } from 'node:os';
 import { dirname, extname, join, resolve, sep } from 'node:path';
@@ -71,7 +71,9 @@ const freePort = () => new Promise((res, rej) => {
 
 // ---- signal.mjs + same-origin static/proxy server ----
 
-export async function startEnv({ webRoot }) {
+// upstream: forward every other HTTP request (with its Range header) to that origin instead of serving webRoot,
+// e.g. scripts/serve.py with the real build and disc image.
+export async function startEnv({ webRoot, upstream = null }) {
   const root = resolve(webRoot);
   const tmp = tempDir('lockstep-env-');
   const key = () => randomBytes(32).toString('hex');
@@ -123,6 +125,17 @@ export async function startEnv({ webRoot }) {
       return;
     }
     const notFound = () => res.writeHead(404, { ...ISOLATION, 'Content-Type': 'text/plain' }).end('not found\n');
+    if (upstream) {
+      const headers = {};
+      for (const h of ['range', 'accept-encoding', 'content-type', 'content-length']) if (req.headers[h]) headers[h] = req.headers[h];
+      const fwd = httpRequest(upstream + req.url, { method: req.method, headers }, (up) => {
+        res.writeHead(up.statusCode, up.headers);
+        up.pipe(res);
+      });
+      fwd.on('error', (e) => { if (!res.headersSent) res.writeHead(502, { ...ISOLATION, 'Content-Type': 'text/plain' }).end(`proxy error: ${e.message}\n`); else res.destroy(); });
+      req.pipe(fwd);
+      return;
+    }
     if (req.method !== 'GET' && req.method !== 'HEAD') return notFound();
     let file;
     try {
@@ -178,20 +191,26 @@ export async function startEnv({ webRoot }) {
 const fmtArg = (a) => (a.value !== undefined ? (typeof a.value === 'string' ? a.value : JSON.stringify(a.value)) : a.unserializableValue ?? a.description ?? a.type);
 const short = (s) => (s.length > 200 ? s.slice(0, 200) + '...' : s);
 
-export async function launchBrowser(name, { log = console.log } = {}) {
+// Options for the real WebGPU build (scripts/lockstep_emu_test.mjs): `display` runs headful inside that private Xvfb
+// display (never the desktop's), `flags` adds Chromium flags, `env` adds environment variables (e.g. the NVIDIA PRIME
+// offload ones), `windowSize` "W,H". With a display and headless:true, Chromium stays headless but its GPU process
+// sees that DISPLAY (the NVIDIA PRIME Vulkan driver hides the dGPU without one).
+export async function launchBrowser(name, { log = console.log, display = null, headless = !display, flags = [], env: extraEnv = {}, windowSize = '800,600' } = {}) {
   const availMb = Number(readFileSync('/proc/meminfo', 'utf8').match(/MemAvailable:\s+(\d+)/)[1]) / 1024;
   if (availMb < 3000) throw new Error(`launchBrowser(${name}): only ${Math.round(availMb)} MB MemAvailable (< 3000 MB); not launching Chromium`);
 
   const profile = tempDir('lockstep-chromium-');
   // XDG_CONFIG_HOME -> the temp profile keeps the distro launcher from adding the desktop's chromium-flags.conf;
   // no DISPLAY / WAYLAND_DISPLAY so nothing can ever reach the user's screen.
-  const env = { ...process.env, XDG_CONFIG_HOME: profile };
+  const env = { ...process.env, XDG_CONFIG_HOME: profile, ...extraEnv };
   delete env.DISPLAY;
   delete env.WAYLAND_DISPLAY;
+  if (display) Object.assign(env, { DISPLAY: display, XDG_SESSION_TYPE: 'x11' });
   const child = track(spawn(CHROMIUM, [
-    '--headless=new', '--remote-debugging-port=0', `--user-data-dir=${profile}`, '--no-first-run', '--no-default-browser-check',
+    ...(headless ? ['--headless=new'] : ['--ozone-platform=x11', '--window-position=0,0']),
+    '--remote-debugging-port=0', `--user-data-dir=${profile}`, '--no-first-run', '--no-default-browser-check',
     '--mute-audio', '--disable-background-timer-throttling', '--disable-renderer-backgrounding', '--disable-backgrounding-occluded-windows',
-    '--disable-features=WebRtcHideLocalIpsWithMdns', '--password-store=basic', '--window-size=800,600', 'about:blank',
+    '--disable-features=WebRtcHideLocalIpsWithMdns', '--password-store=basic', `--window-size=${windowSize}`, ...flags, 'about:blank',
   ], { env, stdio: 'ignore', detached: true }), true);
 
   let ws, closing;

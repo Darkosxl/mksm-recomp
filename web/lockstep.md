@@ -118,6 +118,10 @@ ls.setPaused(true); await ls.resync(); await ls.sendBlob(bytes, meta); ls.snapsh
 
 ## Test
 
+With the real emulator (two browsers, NVIDIA host + Intel iGPU guest, drop-in, faults, forced desync, rejoin):
+`node scripts/lockstep_emu_test.mjs --input <args> --join-at <frame> --minutes N ...`; results and options in
+`mksm/notes/web-lockstep.md`. The mock tests below cover the protocol alone.
+
 ```sh
 (cd server && npm install)          # ws for signal.mjs
 node scripts/lockstep_test.mjs      # about 9 min: --main 300 --loss 60 --lag 30, or --only main,loss,...

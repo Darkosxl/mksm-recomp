@@ -2,23 +2,42 @@
 """Serves a web build and a disc image with HTTP range requests.
 
 usage: serve.py <build dir> <disc image> [port] [--record <dir for unrecorded VU1 programs>]
+                [--files <dir of extra flat files, e.g. lockstep input scripts>]
+                [--disc-delay <ms>[,<jitter ms>]] [--disc-fail <fraction>]
+
+--disc-delay and --disc-fail throttle disc.iso reads (every Range request waits ms + random(0..jitter), and a
+fraction of them answer 503) to test the lockstep host's blocking disc fetch.
 """
 
 import http.server
 import os
+import random
 import re
 import shutil
 import sys
+import time
 
-RECORD = None
-if '--record' in sys.argv:
-    at = sys.argv.index('--record')
-    RECORD = os.path.abspath(sys.argv[at + 1])
+
+def option(name, default=None):
+    if name not in sys.argv:
+        return default
+    at = sys.argv.index(name)
+    value = sys.argv[at + 1]
     del sys.argv[at:at + 2]
+    return value
+
+
+RECORD = option('--record')
+RECORD = RECORD and os.path.abspath(RECORD)
+FILES = option('--files')
+FILES = FILES and os.path.abspath(FILES)
+DELAY = [float(x) for x in option('--disc-delay', '0').split(',')] + [0.0]
+FAIL = float(option('--disc-fail', '0'))
 BUILD = os.path.abspath(sys.argv[1])
 DISC = os.path.abspath(sys.argv[2])
 PORT = int(sys.argv[3]) if len(sys.argv) > 3 else 8620
-TYPES = {'.html': 'text/html', '.js': 'text/javascript', '.wasm': 'application/wasm', '.data': 'application/octet-stream'}
+TYPES = {'.html': 'text/html', '.js': 'text/javascript', '.mjs': 'text/javascript', '.wasm': 'application/wasm',
+         '.data': 'application/octet-stream', '.args': 'text/plain', '.txt': 'text/plain', '.json': 'application/json'}
 
 
 class Handler(http.server.BaseHTTPRequestHandler):
@@ -32,6 +51,8 @@ class Handler(http.server.BaseHTTPRequestHandler):
         if name.startswith('..') or os.sep in name:
             return None
         full = os.path.join(BUILD, name)
+        if not os.path.isfile(full) and FILES:
+            full = os.path.join(FILES, name)
         return full if os.path.isfile(full) else None
 
     def headers_for(self, path, length, encoding=None):
@@ -68,6 +89,11 @@ class Handler(http.server.BaseHTTPRequestHandler):
             with open(packed, 'rb') as f:
                 shutil.copyfileobj(f, self.wfile, 1 << 20)
             return
+        if path == DISC and 'Range' in self.headers and (DELAY[0] or DELAY[1] or FAIL):
+            time.sleep((DELAY[0] + random.random() * DELAY[1]) / 1000.0)
+            if random.random() < FAIL:
+                self.send_error(503)
+                return
         size = os.path.getsize(path)
         match = re.match(r'bytes=(\d+)-(\d*)', self.headers.get('Range', ''))
         start, end = 0, size - 1

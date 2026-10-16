@@ -132,6 +132,7 @@ export class Session {
     this.rtc = opts.rtc;
     this.resyncTimes = [];
     this.stats = { syncs: 0, resyncs: 0, loadMismatches: 0, transfers: [], desyncReports: [] };
+    this.past = { hashesOk: 0, desyncs: 0, sessions: 0 }; // totals of earlier Lockstep instances (a guest left)
     this.syncing = false;
     this.lastEmuFrame = -1;
     this.lastEmuChange = now();
@@ -294,6 +295,9 @@ export class Session {
   }
   restartHost(delay) {
     setTimeout(async () => {
+      this.past.hashesOk += this.ls.stats.hashesOk;
+      this.past.desyncs += this.ls.stats.desyncs;
+      this.past.sessions++;
       try { this.ls.close(); } catch {}
       this.emu.hold(false);
       this.ls = this.newLockstep();
@@ -333,6 +337,8 @@ export class Session {
   hideOverlay() { if (this.overlay) this.overlay.hidden = true; }
 
   snapshot() {
-    return { host: this.isHost, syncing: this.syncing, rtc: this.rtc, ...this.stats, ls: this.ls?.snapshot(), emu: this.emu.stats() };
+    const ls = this.ls?.snapshot();
+    const total = { hashesOk: this.past.hashesOk + (ls?.hashesOk || 0), desyncs: this.past.desyncs + (ls?.desyncs || 0), sessions: this.past.sessions + 1 };
+    return { host: this.isHost, syncing: this.syncing, rtc: this.rtc, ...this.stats, total, ls, emu: this.emu.stats() };
   }
 }
