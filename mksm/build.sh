@@ -24,6 +24,8 @@ if [ "$web" = 0 ] || [ "$retranslate" = 1 ]; then
 fi
 if [ "$retranslate" = 1 ]; then
   "$ROOT/build/tools/eerecomp" "$G/disc/SLUS_210.87" --entries "$M/entries.txt" --out "$M/generated" | tail -1
+  # VU1 microprograms recorded with PS2_VU_RECORD=games/mksm/vu1 become SIMD C++ (unseen ones are JIT'd/interpreted)
+  ! compgen -G "$G/vu1/*.bin" > /dev/null || "$ROOT/build/tools/vurecomp" "$G/vu1" "$M/generated" | tail -1
 fi
 
 if [ "$web" = 1 ]; then
