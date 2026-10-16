@@ -1,8 +1,10 @@
 #!/usr/bin/env node
 // Local end-to-end test. Starts signal.mjs (and Caddy with ./Caddyfile in front of it when `caddy` is on
 // PATH) on loopback ports with throwaway secrets and a temp web root, then checks invite -> cookie ->
-// /auth, /turn credentials, rooms (create/join/relay/full/leave/expiry) and, through Caddy, the auth
-// gate, headers, precompression and disc Range requests.
+// /auth (and /invite?room= redirects, ROOM_URL), /turn credentials, rooms (create/join/relay/full/leave/
+// expiry), the binary relay (byte-exact both ways, size cap, 20 MiB paced by the rate limit and held by a
+// stalled receiver's backlog, lossless and in order; ~8 s of the run) and, through Caddy, the auth gate,
+// headers, precompression and disc Range requests.
 // usage: [CADDY=/path/to/caddy] node test.mjs [--no-caddy]   (Caddy >= 2.11: 2.10.x answers precompressed files with 206)
 import assert from 'node:assert/strict';
 import { execFileSync, spawn } from 'node:child_process';
@@ -84,8 +86,8 @@ function client(base, cookie, options = {}) {
   return new Promise((resolve, reject) => {
     const ws = new WebSocket(base.replace(/^http/, 'ws') + '/ws', { headers: cookie ? { cookie } : {}, ...options });
     const queue = [], waiters = [];
-    ws.on('message', (data) => {
-      const msg = JSON.parse(data);
+    ws.on('message', (data, isBinary) => {
+      const msg = isBinary ? data : JSON.parse(data); // binary (relay) frames are queued as Buffers
       const waiter = waiters.shift();
       waiter ? waiter(msg) : queue.push(msg);
     });
@@ -181,6 +183,42 @@ await check('the second use works, the third is refused', async () => {
   const path = new URL(invite.link).pathname + new URL(invite.link).search;
   assert.equal((await get(path)).status, 302);
   assert.equal((await get(path)).status, 403);
+});
+await check('/invite?room= redirects into the room; a malformed room is 400, sets no cookie and keeps the token', async () => {
+  const one = await mint(1);
+  const path = new URL(one.link).pathname + new URL(one.link).search;
+  for (const bad of ['abc', '//evil.example', 'aaaaaaaaaaa1', 'AAAAAAAAAAAA', 'aaaaaaaaaaaaa', '', '/\\evil.example', 'https://evil.example/']) {
+    const res = await get(`${path}&room=${encodeURIComponent(bad)}`);
+    assert.equal(res.status, 400, bad);
+    assert.equal(res.headers.get('set-cookie'), null, bad);
+    assert.equal(res.headers.get('location'), null, bad);
+    assert.match(await res.text(), /room/, bad);
+  }
+  const res = await get(`${path}&room=abcdefghijkm`);
+  assert.equal(res.status, 302);
+  assert.equal(res.headers.get('location'), '/play/abcdefghijkm');
+  const roomCookie = res.headers.getSetCookie()[0].split(';')[0];
+  assert.equal((await get(path)).status, 403, 'the single use is spent');
+  const again = await get(`${path}&room=23456789abcd`, { cookie: roomCookie });
+  assert.equal(again.status, 302);
+  assert.equal(again.headers.get('location'), '/play/23456789abcd');
+  assert.equal(again.headers.get('set-cookie'), null);
+  assert.equal((await get(`${path}&room=//evil.example`, { cookie: roomCookie })).status, 400);
+});
+await check('ROOM_URL: a custom template is used; an off-site or room-less one stops signal.mjs at startup', async () => {
+  for (const bad of ['//evil.example/{room}', 'https://evil.example/{room}', '/\\evil.example/{room}', '/play/'])
+    await assert.rejects(start('signal.mjs', process.execPath, ['signal.mjs'], { ...signalEnv, PORT: '0', ROOM_URL: bad }, /listening on/), /exited with 1/, bad);
+  const port = await freePort(), at = `http://127.0.0.1:${port}`;
+  const env = { ...signalEnv, PORT: String(port), DATA_DIR: join(tmp, 'data-host'), ROOM_URL: '/ps2web.html?room={room}' };
+  const other = await start('signal.mjs', process.execPath, ['signal.mjs'], env, /listening on/);
+  try {
+    const { link } = await (await fetch(at + '/admin/invite', { method: 'POST', headers: adminHeaders })).json();
+    const res = await fetch(at + new URL(link).pathname + new URL(link).search + '&room=abcdefghijkm', { redirect: 'manual' });
+    assert.equal(res.status, 302);
+    assert.equal(res.headers.get('location'), '/ps2web.html?room=abcdefghijkm');
+  } finally {
+    await stop(other);
+  }
 });
 
 await check('invites persist across a restart; only token hashes are on disk', async () => {
@@ -322,14 +360,133 @@ await check('an empty room survives the grace period, then is dropped', async ()
   assert.deepEqual(await c.ask({ type: 'info', room }), { type: 'error', error: 'not-found', request: 'info' });
   c.close();
 });
-await check('oversized messages close only that socket; the server keeps serving', async () => {
+await check('oversized messages close only that socket (1009); the server keeps serving', async () => {
   const c = await client(base, cookie);
+  const code = new Promise((resolve) => c.once('close', resolve));
   c.send(JSON.stringify({ type: 'ctl', data: 'x'.repeat(70 * 1024) }));
-  await closed(c);
+  assert.equal(await code, 1009);
   const d = await client(base, cookie);
   assert.equal((await d.ask({ type: 'create' })).type, 'created');
   d.close();
   assert.equal((await fetch(direct + '/auth', { headers: { cookie } })).status, 200);
+});
+
+// ---- binary relay (the fallback when WebRTC cannot connect) ----
+const RELAY_MAX = 256 * 1024, RELAY_RATE = 8_000_000, RELAY_BURST = 1 << 20, RELAY_BACKLOG = 4 << 20; // signal.mjs defaults
+const status = async () => (await get('/admin/status', adminHeaders)).json();
+const pair = async () => {
+  const x = await client(base, cookie), y = await client(base, cookie);
+  const { room } = await x.ask({ type: 'create' });
+  x.id = (await x.ask({ type: 'join', room })).id;
+  y.id = (await y.ask({ type: 'join', room })).id;
+  assert.deepEqual(await x.next(), { type: 'peer-joined', peer: y.id });
+  return [x, y, room];
+};
+// 20 MiB as 320 frames of 64 KiB: client header (channel 0, binary) + uint32 sequence number + random bytes.
+const COUNT = 320, SIZE = 64 * 1024, TOTAL = COUNT * SIZE, blob = randomBytes(SIZE);
+const frame = (seq) => {
+  const b = Buffer.from(blob);
+  b[0] = b[1] = 0;
+  b.writeUInt32BE(seq, 2);
+  return b;
+};
+const sendAll = (ws) => { for (let i = 0; i < COUNT; i++) ws.send(frame(i)); };
+const receiveAll = async (ws) => {
+  for (let i = 0; i < COUNT; i++) {
+    const msg = await ws.next(10_000);
+    assert.ok(Buffer.isBuffer(msg), `frame ${i}: got ${JSON.stringify(msg)}`);
+    if (!msg.equals(frame(i))) assert.fail(`frame ${i}: got ${msg.length} bytes, sequence ${msg.readUInt32BE(2)}`);
+  }
+};
+let x, y;
+await check('binary before joining is refused (not-joined); alone in a room it is dropped silently', async () => {
+  const c = await client(base, cookie);
+  c.send(Buffer.from([0, 0, 1, 2, 3]));
+  assert.deepEqual(await c.next(), { type: 'error', error: 'not-joined', request: 'relay' });
+  const { room } = await c.ask({ type: 'create' });
+  assert.equal((await c.ask({ type: 'join', room })).type, 'joined');
+  c.send(Buffer.from([0, 0, 1, 2, 3]));
+  await c.quiet();
+  c.close();
+});
+await check('binary is relayed verbatim both ways, as binary, with nothing added', async () => {
+  [x, y] = await pair();
+  const cases = [
+    [x, y, Buffer.from([0, 0, ...randomBytes(1000)])],
+    [y, x, Buffer.concat([Buffer.from([1, 1]), Buffer.from('{"hello":"wörld"}')])],
+    [x, y, Buffer.from([1, 0])],
+    [y, x, randomBytes(5000)],
+  ];
+  for (const [from, to, data] of cases) {
+    from.send(data);
+    const got = await to.next();
+    assert.ok(Buffer.isBuffer(got), 'arrives as binary');
+    assert.ok(got.equals(data), 'byte-exact');
+  }
+  await x.quiet();
+  await y.quiet();
+});
+await check('transport is relayed both ways with the sender id', async () => {
+  for (const [from, to, mode] of [[x, y, 'relay'], [y, x, 'p2p']]) {
+    from.send(JSON.stringify({ type: 'transport', mode }));
+    assert.deepEqual(await to.next(), { type: 'transport', mode, from: from.id });
+  }
+});
+await check('exactly RELAY_MAX (256 KiB) passes; 1 byte more is refused (too-big) and the socket keeps working', async () => {
+  const max = randomBytes(RELAY_MAX);
+  x.send(max);
+  assert.ok((await y.next()).equals(max));
+  x.send(randomBytes(RELAY_MAX + 1));
+  assert.deepEqual(await x.next(), { type: 'error', error: 'too-big', request: 'relay' });
+  const after = Buffer.from([0, 0, 42]);
+  x.send(after);
+  assert.ok((await y.next()).equals(after));
+  await x.quiet();
+  await y.quiet();
+  x.close();
+  y.close();
+});
+await check('a 20 MiB burst is paced by RELAY_RATE, not dropped: complete, in order, >= (20 MiB - burst) / rate', async () => {
+  [x, y] = await pair();
+  const t0 = performance.now();
+  sendAll(x);
+  await receiveAll(y);
+  const seconds = (performance.now() - t0) / 1000, floor = (TOTAL - RELAY_BURST) / RELAY_RATE;
+  console.log(`     ${(TOTAL / 2 ** 20).toFixed(0)} MiB in ${seconds.toFixed(2)} s; floor ${floor.toFixed(2)} s`);
+  assert.ok(seconds >= floor * 0.98, `too fast for the rate limit: ${seconds} s`);
+  assert.ok(seconds < floor * 2 + 1, `much slower than RELAY_RATE: ${seconds} s`);
+  await y.quiet(0);
+  x.close();
+  y.close();
+});
+await check('a receiver that stops reading holds its sender (backlog cap); after it resumes nothing is lost', async () => {
+  [x, y] = await pair();
+  assert.ok((await status()).relay.peakBacklog <= RELAY_BACKLOG);
+  const t0 = performance.now();
+  y.pause();
+  sendAll(x);
+  await sleep(2000);
+  y.resume();
+  await receiveAll(y);
+  const seconds = (performance.now() - t0) / 1000, { relay } = await status();
+  console.log(`     ${(TOTAL / 2 ** 20).toFixed(0)} MiB in ${seconds.toFixed(2)} s with a 2 s stall; peak backlog ${(relay.peakBacklog / 2 ** 20).toFixed(2)} MiB`);
+  assert.ok(relay.peakBacklog > RELAY_BACKLOG, 'the backlog never reached RELAY_BACKLOG (path not exercised)');
+  assert.ok(relay.peakBacklog <= RELAY_BACKLOG + 2 * RELAY_MAX, 'the backlog was not capped');
+  await x.quiet(0);
+  x.close();
+  y.close();
+});
+await check('a held sender is released when its peer goes away; the rest of its binary is dropped silently', async () => {
+  let room;
+  [x, y, room] = await pair();
+  y.pause();
+  sendAll(x);
+  await sleep(1500);
+  y.terminate();
+  assert.deepEqual(await x.next(5000), { type: 'peer-left', peer: y.id, host: true });
+  assert.deepEqual(await x.ask({ type: 'info', room }), { type: 'info', room, build: null, peers: 1 });
+  await x.quiet();
+  x.close();
 });
 
 // ---- Caddy: gate, headers, precompression, Range ----
