@@ -178,6 +178,54 @@ any game that branches on macro-mode flags (`cfc2 vi16/vi17` after an op) was af
 - Mash batch (fresh g7600 warp + sweep inputs, frames 7600–11200, `OUT=$P/logs/black/verify black_batch.sh fx …`, merged with main 470bffe):
   21/22 maps stay grounded through 11200: 40 0c 48 92 a2 a4 a6 a7 bc e3 eb 0f 87 62 e6 2f a0 2d 14 47 a5
   (a0's flagged jump at 8050 is a room change, grounded throughout). **e9 still misses** at frame 10850, pos (−36421, −56866):
-  a second, separate gap (fix/raycast-e9).
+  not an emulation bug. The player walks off the edge of E9's collision floor, and PCSX2 falls at the same spot (§8).
 - `regress.sh` on the merged build: PASS ×4 (boot, gameplay, koop, versus).
 
+
+## 8. Map 0xE9: real edge of the collision floor, not an emulation bug (fix/raycast-e9, 2026-10-16)
+
+**Verdict.** E9 ("Extra Map - Map 10", one of the debug Extra maps) has one floor collidable, a flat MOPP mesh. The mash
+input walks the player through the building's visual walls, most of which have no collision, and then off the south edge
+of that floor. PCSX2 behaves the same way at the same spot. No runtime change was needed.
+
+**Repro.** The miss is deterministic. `verify/fx-e9.w` (VU0-flags fix) is byte-identical to the pre-fix
+`traces/fb-e9.w` and to a re-run on fix/raycast-e9, so the VU0 flag fix never changed E9.
+- Ground is lost at watch frame 10834 (move 0x12E → 0x10A). The root-motion probe point travels to z −56594, then −56665.
+- The scene has been black since frame ≈9200, while the player is still grounded (g1, y −22).
+
+**Offline replay.** The probe build (probes2 list) was run with `PS2_PROBE_FRAME=10834` and
+`PS2_PROBE_DUMP=2c0aa8:1:60:…`. Hit 5 is the P1 ground ray (a1 0x5E9830). The new `tools/scripts/ray_scan.cpp`
+replays that ray and can move it anywhere:
+- **Broadphase.** The floor collidable 0xB107DC (hkMoppBvTreeShape 0xB0F600 over mesh 0xB20210) is not a candidate for the
+  failing ray. The only candidates are the player's own two proxies, 0xB2169C and 0xB21A5C, which the filter rejects.
+  A ray in the same frame at z −56494 hits the floor at y −21.97.
+- **Grid scan** with rays from y −60000 to +200000:
+  - floor at y −22 for x −70000…−27500 and z −56550…−28750, and at y −400 north of that;
+  - nothing at any height for z < −56600 or x > −27000. The edge is one straight line across x.
+- **3-axis-sweep broadphase** (0xB0ED80: offset 500, scale 32.767, 35 objects):
+  - object 1 is the floor, with quantized AABB x −74580…−27139, y −450…53, z −56635…−9163;
+  - objects 2–5 and 11–12 are small props, and 13–34 are 11 pairs of character proxies parked at the origin;
+  - the only tall objects are 6–8: two thin wall pieces at x ≈ −43330 (z −39361…−36325) and z ≈ −26140
+    (x −56604…−44626), and a block at x −58618…−55460. None of them is near the player's path or the south edge;
+    the building's other walls have no collision.
+- **MOPP code info** (0xB104D0) is loaded from disc data, not computed by us: offset (−149.107, −0.834, −113.186),
+  scale 175593. Its domain starts at z −56593 game units, so the floor mesh ends there.
+
+**PCSX2 oracle** (headless Xvfb, Null audio, `-statefile logs/black/pcsx2/pc_0c.p2s`, then the same warp pokes):
+- **Spawn:** (−50598, −22, −34280), g1, the same as the recomp.
+- **eeMemory:** the broadphase is identical to ours except objects 9–10 (the player proxies, which are at the spawn point in
+  PCSX2). The MOPP info is at the same address with the same bytes.
+- **Position pokes** on P1 (pos 0x5E6BC0/C8):
+  - (−36500, −56400): stays grounded;
+  - (−36421, −56866): g0, root.y = pos.y + 10000, falls 583 → 25183 in 4 s, exactly like the recomp.
+- **Dark-fade:** P1 poked to the frame-9300 spot (−42588, −47413) renders an all-black frame in PCSX2 too, while
+  (−46813, −40000) is lit. Outside the rendered building, the floor is an invisible plane.
+
+**Consequence.** E9's dark-fade and its fall are game/map behaviour under random input, so the sweep should not count them
+as emulator failures. The other debug Extra maps flagged dark-fade (E3, EB) are grounded since the VU0 fix.
+
+Artifacts are in `logs/e9/`:
+- `dump34/d_*.bin`: the frame-10834 dumps;
+- `grid*.txt`: the floor scans;
+- `pcsx2/pc_e9_spawn.p2s`, `pcsx2/spawn/eeMemory.bin`, `pcsx2/shot_*.png`: PCSX2 state, RAM and screenshots;
+- `runs/r1-e9.w`: the repro watch log.
