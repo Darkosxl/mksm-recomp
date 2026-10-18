@@ -867,6 +867,7 @@ std::atomic<double> g_vu_idle_ms{0.0};
 
 double vu_thread_idle_ms() { return g_vu_idle_ms.load(); }
 std::uint64_t vu1_interpreted_calls() { return vu::interpreted_calls(); }
+std::uint64_t vu1_jit_programs() { return vu::jit_programs(); }
 
 void run_vu_thread() {
     gs::queue::role() = gs::queue::Role::Vu;

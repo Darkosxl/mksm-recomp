@@ -5,14 +5,18 @@
 // are compared frame by frame, and the first differing frame is printed with the state sections that differ.
 //
 //   node remaster/coop/webpeer.mjs --out DIR --state koop.state [--frames 400] [--relay] [--browser-host]
-//        [--web-params 'PS2_GS=soft&copy'] [--native-env 'PS2_THREADS=1'] [--web build/web-mksm] [--ps2run …]
+//        [--web-params 'lsvu=0'] [--native-env 'PS2_THREADS=1'] [--no-gpu] [--web build/web-mksm] [--ps2run …]
+//   node remaster/coop/webpeer.mjs --solo --out DIR --state koop.state [--frames 400] [--web-params 'PS2_VU_JIT=all']
 //
 // Default: the native ps2run hosts (loads --state, plays alone) and the browser drops in as P2. --browser-host swaps
 // the roles (the page loads the state with ?state=). --relay forces the WebSocket relay (PS2_LOCKSTEP_RELAY=1 on the
-// native side; the page follows). Local only: the page gets its ICE servers from the local /turn, Chromium resolves
+// native side; the page follows). --solo: no session; the page (?state=, ?press=, no memory card) and ps2run
+// (--load-state, --press) each play the same script alone from the state, e.g. to compare the browser's VU1 JIT
+// (PS2_VU_JIT=all, which lockstep mode does not allow) with the desktop's compiled VU1 code. Local only: the page gets its ICE servers from the local /turn, Chromium resolves
 // no host name but 127.0.0.1, the native side runs with PS2_LOCKSTEP_STUN=none.
 // Chromium runs headless with a private Xvfb DISPLAY (the NVIDIA PRIME Vulkan driver needs one for WebGPU), in a
-// MemoryMax=3G scope; so does ps2run. The browser uses the GPU: run this under logs/heavy.lock.
+// MemoryMax=3G scope; so does ps2run. The browser uses the GPU: run this under logs/heavy.lock. --no-gpu: Chromium
+// without a GPU (--disable-gpu, no WebGPU), so the page renders with the CPU GS (PS2_GS=soft) and presents a 2D copy.
 import { spawn } from 'node:child_process';
 import { copyFileSync, mkdirSync, readFileSync, writeFileSync, appendFileSync, existsSync, chmodSync, openSync } from 'node:fs';
 import { createServer } from 'node:net';
@@ -33,6 +37,8 @@ const browserHost = has('browser-host');
 const webParams = opt('web-params', '');
 const nativeEnv = Object.fromEntries(opt('native-env', '').split(/\s+/).filter(Boolean).map((kv) => [kv.slice(0, kv.indexOf('=')), kv.slice(kv.indexOf('=') + 1)]));
 const minutes = Number(opt('minutes', 20));
+const noGpu = has('no-gpu');
+const solo = has('solo');
 const G = join(ROOT, 'games/mksm');
 const RTC = 1792000000;
 
@@ -80,7 +86,7 @@ async function startXvfb() {
   throw new Error('no free Xvfb display');
 }
 
-function startNative(join_) {
+function startNative(join_, cap = 100000) { // lockstep: the run ends when both hash logs have enough frames after the drop-in
   const dir = join(out, 'native');
   mkdirSync(dir, { recursive: true });
   const args = readFileSync(join(out, 'files/session.args'), 'utf8').split('\n').filter(Boolean).flatMap((l) => l.split(/\s+/));
@@ -88,9 +94,8 @@ function startNative(join_) {
   const e = { ...process.env, SDL_AUDIODRIVER: 'dummy', ...PRIME, PS2_GS: 'soft', PS2_RTC: String(RTC), PS2_LOCKSTEP_STUN: 'none',
     PS2_HASH_LOG: join(dir, 'hash.log'), PS2_HASH_SPLIT: '1', PS2_LOCKSTEP_COOKIE_FILE: join(dir, 'cookies'), ...(relay ? { PS2_LOCKSTEP_RELAY: '1' } : {}), ...nativeEnv };
   for (const k of Object.keys(e)) if (k.startsWith('PS2_') && !(k in nativeEnv) && !['PS2_GS', 'PS2_RTC', 'PS2_LOCKSTEP_STUN', 'PS2_HASH_LOG', 'PS2_HASH_SPLIT', 'PS2_LOCKSTEP_COOKIE_FILE', 'PS2_LOCKSTEP_RELAY'].includes(k)) delete e[k];
-  const cap = 100000; // the run ends when both hash logs have enough frames after the drop-in
   const p = spawn('systemd-run', ['--user', '--scope', '-q', '-p', 'MemoryMax=3G', '-p', 'MemorySwapMax=0', '--', 'timeout', String(minutes * 60 + 120), bin,
-    join(G, 'disc/SLUS_210.87'), '--disc', join(G, 'disc.iso'), '--frames', String(cap), ...args, '--memcard', join(dir, 'card.ps2'), ...join_],
+    join(G, 'disc/SLUS_210.87'), '--disc', join(G, 'disc.iso'), '--frames', String(cap), ...args, ...(solo ? [] : ['--memcard', join(dir, 'card.ps2')]), ...join_],
   { env: e, stdio: ['ignore', log, log] });
   p.on('exit', (code, sig) => { nativeExit = code ?? sig; say(`native exited: ${code ?? sig}`); });
   return p;
@@ -100,6 +105,7 @@ const parseLog = (text) => new Map(text.split('\n').filter(Boolean).map((l) => {
 
 async function main() {
   if (memMb() < 2560 + 1024) throw new Error(`only ${memMb().toFixed(0)} MB MemAvailable`);
+  if (solo) return soloRun();
   say(`browser <-> native: ${browserHost ? 'browser hosts' : 'native hosts'}, ${relay ? 'relay forced' : 'WebRTC'}, ${frames} frames, web ${web}, ps2run ${bin}`);
   const files = join(out, 'files');
   mkdirSync(files, { recursive: true });
@@ -114,15 +120,16 @@ async function main() {
   await sleep(800);
   env = await startEnv({ webRoot: web, upstream: `http://127.0.0.1:${port}` });
   const wsOrigin = env.origin.replace(/^http/, 'ws');
-  const xvfb = await startXvfb();
+  const xvfb = noGpu ? null : await startXvfb();
   say(`stack: ${env.origin} (signal ${env.signalOrigin}), Xvfb ${xvfb}`);
 
   browser = await launchBrowser('web', {
-    display: xvfb, headless: true, flags: [...GPU_FLAGS, ...LOCAL_FLAGS], env: PRIME, windowSize: '800,600',
+    display: xvfb, headless: true, flags: noGpu ? ['--disable-gpu', '--disable-extensions', '--mute-audio', ...LOCAL_FLAGS] : [...GPU_FLAGS, ...LOCAL_FLAGS],
+    env: noGpu ? {} : PRIME, windowSize: '800,600',
     log: (line) => { appendFileSync(join(out, 'browser.console.log'), line + '\n'); if (/DESYNC|refused|loaded frame|snapshot of|error|exception|failed|relay|direct|transport|handshake|pc (connected|failed)/i.test(line)) say(line.slice(0, 300)); },
   });
   const page = browser.page;
-  const common = `lsinput=session.args&lsrtc=${RTC}&PS2_HASH_LOG=/session/hash.log&PS2_HASH_SPLIT=1${webParams ? '&' + webParams : ''}`;
+  const common = `lsinput=session.args&lsrtc=${RTC}&PS2_HASH_LOG=/session/hash.log&PS2_HASH_SPLIT=1${noGpu ? '&PS2_GS=soft&copy' : ''}${webParams ? '&' + webParams : ''}`;
   const startPage = async (room) => {
     await page.navigate(`${env.origin}/ps2web.html?room=${room}&${common}${browserHost ? '&state=start.state' : ''}`, 60000);
     await page.waitFor(`document.getElementById('start') && !document.getElementById('start').disabled`, 180000, 250);
@@ -172,11 +179,11 @@ async function main() {
   // the browser's log out of its in-memory file system, then stop the native peer
   const text = await page.evaluate(`(() => { try { return FS.readFile('/session/hash.log', { encoding: 'utf8' }); } catch (e) { return 'ERROR ' + e.message; } })()`).catch((e) => 'ERROR ' + e.message);
   writeFileSync(join(out, 'web-hash.log'), text);
-  const final = await page.evaluate(`(() => { const s = window.lsSession; return { snapshot: s && s.snapshot(), vuInterpreted: Module._ps2web_vu_interpreted(), status: document.getElementById('status').textContent }; })()`).catch((e) => ({ error: e.message }));
+  const final = await page.evaluate(`(() => { const s = window.lsSession; return { snapshot: s && s.snapshot(), vuInterpreted: Module._ps2web_vu_interpreted(), vuJit: Module._ps2web_vu_jit_programs?.(), status: document.getElementById('status').textContent }; })()`).catch((e) => ({ error: e.message }));
   writeFileSync(join(out, 'web-final.json'), JSON.stringify(final, null, 2));
   if (native && nativeExit === null) { native.kill('SIGTERM'); for (let i = 0; i < 50 && nativeExit === null; i++) await sleep(100); }
   say(`native: ${(nativeLog().match(/\[lockstep\] summary.*/) || ['no summary'])[0].slice(0, 400)}`);
-  say(`browser: ${JSON.stringify({ transport: final.snapshot?.ls?.transport, D: final.snapshot?.ls?.D, hashesOk: final.snapshot?.ls?.hashesOk, desyncs: final.snapshot?.ls?.desyncs, stalls: final.snapshot?.emu?.stallFrames, vuInterpreted: final.vuInterpreted, transfers: final.snapshot?.transfers })}`);
+  say(`browser: ${JSON.stringify({ transport: final.snapshot?.ls?.transport, D: final.snapshot?.ls?.D, hashesOk: final.snapshot?.ls?.hashesOk, desyncs: final.snapshot?.ls?.desyncs, stalls: final.snapshot?.emu?.stallFrames, vuInterpreted: final.vuInterpreted, vuJitPrograms: final.vuJit, transfers: final.snapshot?.transfers })}`);
 
   if (text.startsWith('ERROR')) return say('no browser hash log: ' + text);
   if (dropIn === null) return say('no drop-in seen in the native log');
@@ -193,6 +200,63 @@ async function main() {
   writeFileSync(join(out, 'report.json'), JSON.stringify(report, null, 2));
   say(`hash logs after the drop-in (game frame ${dropIn}): native ${[...a.keys()].filter((f) => f > dropIn).length}, browser ${[...b.keys()].filter((f) => f > dropIn).length}; identical ${same}/${both.length}` +
     (both.length ? ` (${both[0]}-${both[both.length - 1]})` : '') + `; first divergent frame ${first ?? 'none'}${report.sections ? ', sections ' + report.sections.join(',') : ''}`);
+}
+
+// both play alone from the state with the same script (presses by game frame); the hash logs cover every frame
+async function soloRun() {
+  const base = JSON.parse(readFileSync(state.replace(/\.state$/, '.json'), 'utf8')).frame;
+  say(`browser and native alone from game frame ${base}, ${frames} frames, page params '${webParams}', web ${web}`);
+  const files = join(out, 'files');
+  mkdirSync(files, { recursive: true });
+  const gen = (seed) => new Promise((res, rej) => { const p = spawn('python3', ['-I', join(ROOT, 'mksm/tools/scripts/gen_mash.py'), String(base + 10), String(frames), String(seed)]); let s = ''; p.stdout.on('data', (d) => (s += d)); p.on('exit', (c) => (c ? rej(new Error('gen_mash')) : res(s))); });
+  const script = (await gen(4242)) + (await gen(777)).replace(/^--press (\d+):/gm, '--press $1:p2:');
+  writeFileSync(join(files, 'session.args'), script);
+  copyFileSync(state, join(files, 'start.state'));
+  const presses = script.split('\n').filter(Boolean).map((l) => l.split(/\s+/)[1]);
+  const port = await freePort();
+  const serve = spawn('python3', ['-I', join(ROOT, 'scripts/serve.py'), web, join(G, 'disc.iso'), String(port), '--files', files], { stdio: ['ignore', 'ignore', 'pipe'], detached: true });
+  children.push(serve);
+  await sleep(800);
+  const xvfb = noGpu ? null : await startXvfb();
+  browser = await launchBrowser('web', {
+    display: xvfb, headless: true, flags: noGpu ? ['--disable-gpu', '--disable-extensions', '--mute-audio', ...LOCAL_FLAGS] : [...GPU_FLAGS, ...LOCAL_FLAGS],
+    env: noGpu ? {} : PRIME, windowSize: '800,600',
+    log: (line) => { appendFileSync(join(out, 'browser.console.log'), line + '\n'); if (/error|exception|failed|cannot|state/i.test(line)) say(line.slice(0, 300)); },
+  });
+  const page = browser.page;
+  const url = `http://127.0.0.1:${port}/ps2web.html?state=start.state&nocard&PS2_RTC=${RTC}&PS2_HASH_LOG=/hash.log&PS2_HASH_SPLIT=1` +
+    `${noGpu ? '&PS2_GS=soft&copy' : ''}${webParams ? '&' + webParams : ''}&press=${encodeURIComponent(presses.join(','))}`;
+  await page.navigate(url, 60000);
+  await page.waitFor(`document.getElementById('start') && !document.getElementById('start').disabled`, 180000, 250);
+  await page.send('Runtime.evaluate', { expression: `document.getElementById('start').click()`, userGesture: true, awaitPromise: true });
+  native = startNative([`--load-state`, state], base + frames + 1);
+  const end = Date.now() + minutes * 60000;
+  let lastSay = 0, f = 0;
+  for (;;) {
+    await sleep(3000);
+    f = await page.evaluate('Module._ps2web_frames()').catch(() => f);
+    let n = 0; try { n = readFileSync(join(out, 'native/hash.log'), 'utf8').split('\n').length - 1; } catch {}
+    if (Date.now() - lastSay > 15000) { lastSay = Date.now(); say(`browser game frame ${f}, native ${n} hashed${nativeExit !== null ? ' (exited ' + nativeExit + ')' : ''} | mem ${memMb().toFixed(0)} MB`); }
+    if (f > base + frames && nativeExit !== null) break;
+    if (Date.now() > end) { say('time limit'); break; }
+    if (memMb() < 1200) { say(`stopping: only ${memMb().toFixed(0)} MB MemAvailable`); break; }
+  }
+  const text = await page.evaluate(`(() => { try { return FS.readFile('/hash.log', { encoding: 'utf8' }); } catch (e) { return 'ERROR ' + e.message; } })()`).catch((e) => 'ERROR ' + e.message);
+  writeFileSync(join(out, 'web-hash.log'), text);
+  const vuInterpreted = await page.evaluate('Module._ps2web_vu_interpreted()').catch(() => null);
+  if (text.startsWith('ERROR')) return say('no browser hash log: ' + text);
+  const a = parseLog(readFileSync(join(out, 'native/hash.log'), 'utf8')), b = parseLog(text);
+  const both = [...a.keys()].filter((x) => x > base && x <= base + frames && b.has(x)).sort((x, y) => x - y);
+  const same = both.filter((x) => a.get(x).h === b.get(x).h).length;
+  const first = both.find((x) => a.get(x).h !== b.get(x).h);
+  const report = { base, compared: both.length, identical: same, range: both.length ? [both[0], both[both.length - 1]] : null, firstDivergent: first ?? null, vuInterpreted };
+  if (first !== undefined) {
+    const pa = Object.fromEntries(a.get(first).parts.map((p) => p.split('='))), pb = Object.fromEntries(b.get(first).parts.map((p) => p.split('=')));
+    report.sections = Object.keys(pa).filter((k) => pa[k] !== pb[k]);
+  }
+  writeFileSync(join(out, 'report.json'), JSON.stringify(report, null, 2));
+  say(`solo hash logs from game frame ${base}: identical ${same}/${both.length}${both.length ? ` (${both[0]}-${both[both.length - 1]})` : ''}; first divergent frame ${first ?? 'none'}` +
+    `${report.sections ? ', sections ' + report.sections.join(',') : ''}; browser VU1 interpreted calls ${vuInterpreted}`);
 }
 
 main().catch((e) => say('ERROR', e.stack || e.message)).finally(async () => {

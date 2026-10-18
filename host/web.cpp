@@ -651,6 +651,7 @@ extern "C" EMSCRIPTEN_KEEPALIVE const char *ps2web_lockstep_identity() {
 extern "C" EMSCRIPTEN_KEEPALIVE void ps2web_debug_corrupt(int offset) { ps2::g_ram[static_cast<std::uint32_t>(offset) & (ps2::kRamSize - 1)] ^= 0x5A; }
 extern "C" EMSCRIPTEN_KEEPALIVE double ps2web_audio_queued_ms() { return audio_queued_ms(); }
 extern "C" EMSCRIPTEN_KEEPALIVE double ps2web_vu_interpreted() { return static_cast<double>(ps2::vu1_interpreted_calls()); }
+extern "C" EMSCRIPTEN_KEEPALIVE double ps2web_vu_jit_programs() { return static_cast<double>(ps2::vu1_jit_programs()); }
 extern "C" EMSCRIPTEN_KEEPALIVE double ps2web_idle_ms(int which) {
     if (which == 2) return ps2::vu_thread_idle_ms();
     return which ? g_render_idle.load() : g_emulation_idle.load();

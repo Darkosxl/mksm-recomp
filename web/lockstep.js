@@ -109,6 +109,24 @@ export async function discId(size, firstMB) {
   return `${size}:${hex(await crypto.subtle.digest('SHA-256', firstMB))}`;
 }
 
+// A refusal's text, worded as a desktop peer words it (host/lockstep.cpp Session::describe) and naming both players,
+// so both screens show the same sentence whichever side noticed the mismatch first.
+function describeMismatch(why, mine, peer, isHost) {
+  const [me, them] = isHost ? ['P1', 'P2'] : ['P2', 'P1'];
+  const both = (a, b) => `${me} has ${a}, ${them} has ${b}`;
+  if (why !== 'config') return `different ${why} (${both(JSON.stringify(mine[why]), JSON.stringify(peer[why]))})`;
+  const a = mine.config || {}, b = peer.config || {};
+  for (const k of new Set([...Object.keys(a), ...Object.keys(b)])) {
+    if (JSON.stringify(a[k]) === JSON.stringify(b[k])) continue;
+    if (k === 'patches') {
+      const files = (h) => (h.patchFiles?.length ? `${h.patchFiles.join(',')} (${h.config.patches})` : 'no game patches');
+      return `game patch set differs: ${both(files(mine), files(peer))}. Both players need the same PS2_PNACH files (both with or both without widescreen)`;
+    }
+    return `config.${k} differs (${both(JSON.stringify(a[k]), JSON.stringify(b[k]))})`;
+  }
+  return 'config differs';
+}
+
 export class Lockstep {
   // Reserves a room on the signalling server and returns its id (does not join).
   static async createRoom({ signal = location.origin, build } = {}) {
@@ -280,9 +298,10 @@ export class Lockstep {
     const peer = await this.waitCtl('hello', 10000);
     const why = ['proto', 'build', 'disc', 'config'].find((k) => JSON.stringify(peer[k]) !== JSON.stringify(hello[k]));
     if (why) {
-      this.sendCtl({ t: 'refuse', reason: why });
+      const detail = describeMismatch(why, hello, peer, this.isHost);
+      this.sendCtl({ t: 'refuse', reason: why, detail });
       await sleep(200);
-      this.refuse(why, true);
+      this.refuse(why, true, detail);
     }
     // opts.sync(ls, isHost) runs between the handshake and the first frame (W4: the host's snapshot is loaded by
     // both peers); on the host it returns the first frame to run.
