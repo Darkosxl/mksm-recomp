@@ -1,4 +1,5 @@
 #include "raster.hpp"
+#include "texpack.hpp"
 
 #include <algorithm>
 #include <cmath>
@@ -603,6 +604,18 @@ void reset() {}
 
 void draw(const State &st, const Vertex *v, int count, texcache::Run run) {
     const Setup s = make_setup(st);
+    // texture dump on CPU-only machines (keys are the GPU renderer's: same decoded texels); once per register change
+    static std::uint32_t keyed = ~0u;
+    if (texpack::active() && keyed != g_setup_generation) {
+        keyed = g_setup_generation;
+        const auto box = [&](std::uint32_t bp, std::uint32_t psm) {
+            texpack::drawn(bp, s.fbw, psm, static_cast<std::uint32_t>(std::max(s.scax0, 0)), static_cast<std::uint32_t>(std::max(s.scay0, 0)),
+                           static_cast<std::uint32_t>(std::max(s.scax1, 0)), static_cast<std::uint32_t>(std::max(s.scay1, 0)));
+        };
+        box(s.fbp, s.fpsm);
+        if (s.zte && !s.zmsk) box(s.zbp, s.zpsm);
+        if (s.tme) texpack::key(st);
+    }
     if (run != texcache::Run::same) {
         g_snapshot.clear();
         g_snapshot.active = s.tme && reads_target(s);
@@ -663,18 +676,26 @@ void draw(const State &st, const Vertex *v, int count, texcache::Run run) {
     }
 }
 
-bool dump_texture(const State &st, const char *path) {
+bool decode_texture(const State &st, std::vector<std::uint32_t> &texels, std::uint32_t &w, std::uint32_t &h) {
     const Setup s = make_setup(st);
     if (!s.tme || s.tw > 10 || s.th > 10) return false;
+    w = 1u << s.tw;
+    h = 1u << s.th;
+    texels.resize(static_cast<std::size_t>(w) * h);
+    const Level l = level(s, 0);
+    for (std::uint32_t y = 0; y < h; ++y)
+        for (std::uint32_t x = 0; x < w; ++x) texels[y * w + x] = fetch(s, l, static_cast<int>(x), static_cast<int>(y));
+    return true;
+}
+
+bool dump_texture(const State &st, const char *path) {
+    std::vector<std::uint32_t> texels;
+    std::uint32_t w, h;
+    if (!decode_texture(st, texels, w, h)) return false;
     std::FILE *f = std::fopen(path, "wb");
     if (!f) return false;
-    std::fprintf(f, "P7\nWIDTH %u\nHEIGHT %u\nDEPTH 4\nMAXVAL 255\nTUPLTYPE RGB_ALPHA\nENDHDR\n", 1u << s.tw, 1u << s.th);
-    const Level l = level(s, 0);
-    for (int y = 0; y < (1 << s.th); ++y)
-        for (int x = 0; x < (1 << s.tw); ++x) {
-            const std::uint32_t t = fetch(s, l, x, y);
-            std::fwrite(&t, 4, 1, f);
-        }
+    std::fprintf(f, "P7\nWIDTH %u\nHEIGHT %u\nDEPTH 4\nMAXVAL 255\nTUPLTYPE RGB_ALPHA\nENDHDR\n", w, h);
+    std::fwrite(texels.data(), 4, texels.size(), f);
     std::fclose(f);
     return true;
 }

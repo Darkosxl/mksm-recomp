@@ -237,3 +237,20 @@ the world passes test alpha ≥ 0x80 with AFAIL = RGB only, so those pixels skip
 drawn later showed through. Fix in both renderers (raster.cpp lerp3, gs.wgsl shade_at): colour and fog as one vertex
 plus deltas, as PCSX2 does — exact for equal vertex values. Re-baselined `golden.json` and `golden-s3.json`: state
 hashes 12/12 unchanged, images changed in 11/12 (all but fmv), replay-identical 12/12.
+
+### Step 6 — texture dump and replacement (2026-10-18)
+- **Keys** (`runtime/src/gs/texpack.*`): a texture's key hashes its decoded texels (level 0 through CLUT and TEXA,
+  as the samplers see them), so it is the same in every run and in both renderers (Goro: 39/39 keys identical GPU vs
+  CPU renderer, and across runs). Keys are cached per texture registers + CLUT entries + page write generations;
+  render targets get no key (GPU: its rendered-page record; CPU renderer: pages it drew to). Keying reads the CPU copy
+  of GS memory, which is now kept current (uploads, local copies, CLUT loads) while a dump or pack is set.
+- **`PS2_TEX_DUMP=dir`**: each texture once as `<key>.pam` (RGBA, PS2 alpha 0–128) + `index.ndjson` (size, format,
+  TBP, first frame, GIF path). Works with the GPU renderer and with `PS2_GS=soft` (CPU-only machines).
+  `remaster/texdump.sh` dumps the 12 reference scenes: 284 textures (`remaster-data/textures/dump`).
+- **`PS2_TEX_PACK=dir`**: `<key>.pam` at 2, 4 or 8 times the size replaces that texture. The GPU renderer uploads it
+  once into a persistent part of the decoded-texture buffer (256 MB, allocated only with a pack) and samples it at
+  the higher resolution (setup flag F_REPLACED, UVs scaled, clamp regions scaled; mipmapping off for it; REGION_REPEAT
+  textures are not replaced). Presentation only: state hash unchanged with a pack. Tinted test pack: every keyed
+  texture of the Goro frame replaced; 4× Lanczos pack at 3×6: pixel-aligned, no seams.
+- `remaster/makepack.py` (Lanczos/tint test packs), `remaster/upscale.py` (Real-ESRGAN, step 7).
+- Off by default: `check.sh` PASS 12/12 at 1× (final build) and at 3×.

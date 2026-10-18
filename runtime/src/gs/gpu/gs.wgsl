@@ -476,6 +476,7 @@ const F_FBA: u32 = 4096u;
 const F_TCC: u32 = 8192u;
 const F_BILINEAR: u32 = 16384u;
 const F_AEM: u32 = 32768u;
+const F_REPLACED: u32 = 65536u;
 
 fn load_setup(at: u32) -> Setup {
     var s: Setup;
@@ -666,6 +667,13 @@ fn texture_lod(s: Setup, q: f32) -> f32 {
 // MXL=0 always filters with MMAG on level 0. Otherwise LOD <= 0 magnifies (MMAG, level 0) and LOD > 0 minifies with MMIN:
 // NEAREST/LINEAR stay on level 0, *_MIPMAP_NEAREST rounds the LOD to a level, *_MIPMAP_LINEAR blends floor(LOD) and the next level.
 fn texture(s: Setup, u: f32, v: f32, q: f32, k: u32) -> u32 {
+    if (has(s, F_REPLACED)) {
+        // texture pack: level 0 at 2^n the size in decoded[] (gpu.cpp replace_texture)
+        let n = data[s.mip_at];
+        let l = Level(s.tf, s.tw + n, s.th + n, s.minu << n, ((s.maxu + 1u) << n) - 1u, s.minv << n, ((s.maxv + 1u) << n) - 1u, s.dec);
+        let f = f32(1u << n);
+        return sample(s, l, u * f, v * f, k, has(s, F_BILINEAR));
+    }
     let mxl = (s.mip >> 1u) & 7u;
     if (mxl == 0u) {
         return sample(s, level(s, 0u), u, v, k, has(s, F_BILINEAR));

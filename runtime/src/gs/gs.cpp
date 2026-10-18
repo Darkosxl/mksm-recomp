@@ -5,6 +5,7 @@
 #include "queue.hpp"
 #include "raster.hpp"
 #include "texcache.hpp"
+#include "texpack.hpp"
 #include "../debug.hpp"
 #include "../hw.hpp"
 #include "../vu_micro.hpp"
@@ -52,6 +53,8 @@ bool cpu_raster() { return gpu::mode() != gpu::Mode::primary; }
 constexpr bool gpu_on() { return false; }
 constexpr bool cpu_raster() { return true; }
 #endif
+// The CPU copy of GS memory (uploads, local copies, CLUT loads) is kept for the CPU renderer and for texture keys.
+bool cpu_memory() { return cpu_raster() || texpack::active(); }
 
 bool trace_display() {
     static const bool enabled = std::getenv("PS2_TRACE_DISPLAY") != nullptr;
@@ -257,9 +260,14 @@ void feed_image(const std::uint8_t *data, std::size_t bytes) {
 #ifdef PS2_GPU
     if (gpu_on() && (g_state.trxdir & 3u) == 0) gpu::image_data(data, bytes);
 #endif
-    if (!cpu_raster()) return;
+    if (!cpu_memory()) return;
     if (!g_transfer.active || (g_state.trxdir & 3u) != 0) return;
     const std::uint32_t psm = static_cast<std::uint32_t>(g_state.bitbltbuf >> 56) & 0x3Fu;
+    if (texpack::active()) {
+        const std::uint64_t buf = g_state.bitbltbuf, pos = g_state.trxpos, reg = g_state.trxreg;
+        texpack::touched(static_cast<std::uint32_t>(buf >> 32) & 0x3FFFu, static_cast<std::uint32_t>(buf >> 48) & 0x3Fu, psm, static_cast<std::uint32_t>(pos >> 32) & 0x7FFu,
+                         static_cast<std::uint32_t>(pos >> 48) & 0x7FFu, static_cast<std::uint32_t>(reg) & 0xFFFu, static_cast<std::uint32_t>(reg >> 32) & 0xFFFu);
+    }
     const std::uint32_t bits = bits_per_pixel(psm);
     if (bits == 24) {
         for (std::size_t i = 0; i < bytes && g_transfer.active; ++i) {
@@ -346,7 +354,7 @@ void load_clut(std::uint64_t tex0) {
 #ifdef PS2_GPU
     if (gpu_on()) gpu::load_clut(tex0, g_state.texclut);
 #endif
-    if (!cpu_raster()) return;
+    if (!cpu_memory()) return;
     const bool eight = psm == PSMT8 || psm == PSMT8H;
     const std::uint32_t entries = eight ? 256u : 16u;
     const std::uint32_t texclut = static_cast<std::uint32_t>(g_state.texclut);
@@ -698,7 +706,14 @@ void write(std::uint32_t reg, std::uint64_t value) {
         }
 #endif
         if ((value & 3u) == 0) g_transfer.active = true;
-        else if ((value & 3u) == 2) { if (cpu_raster()) local_copy(); }
+        else if ((value & 3u) == 2) {
+            if (cpu_memory()) local_copy();
+            if (texpack::active())
+                texpack::touched(static_cast<std::uint32_t>(s.bitbltbuf >> 32) & 0x3FFFu, static_cast<std::uint32_t>(s.bitbltbuf >> 48) & 0x3Fu,
+                                 static_cast<std::uint32_t>(s.bitbltbuf >> 56) & 0x3Fu, static_cast<std::uint32_t>(s.trxpos >> 32) & 0x7FFu,
+                                 static_cast<std::uint32_t>(s.trxpos >> 48) & 0x7FFu, static_cast<std::uint32_t>(s.trxreg) & 0xFFFu,
+                                 static_cast<std::uint32_t>(s.trxreg >> 32) & 0xFFFu);
+        }
         else if ((value & 3u) == 1) g_transfer.active = true;
         break;
     case 0x54:

@@ -1,5 +1,6 @@
 #include "gpu.hpp"
 #include "../drawdbg.hpp"
+#include "../texpack.hpp"
 #include "ps2/system.hpp"
 
 #include <webgpu/webgpu.h>
@@ -38,6 +39,8 @@ constexpr std::uint32_t kClutEntries = 512;
 constexpr std::uint32_t kPrimWords = 28;
 constexpr std::uint32_t kSetupWords = 32;
 constexpr std::uint32_t kDecodedWords = 4u << 20;
+// Texture-pack replacements live after the per-batch decodes in the same buffer (only allocated with PS2_TEX_PACK).
+constexpr std::uint32_t kReplWords = 64u << 20, kReplaced = 1u << 16;
 constexpr std::uint32_t kDecodePrims = 64;
 
 Mode g_mode = Mode::off;
@@ -479,7 +482,7 @@ void plan_decodes(std::uint32_t prims) {
     static const int kKey[] = {12, 13, 14, 15, 16, 17, 20, 22};
     for (std::uint32_t i = 0; i < setups; ++i) {
         std::uint32_t *w = b.setups.data() + i * kSetupWords;
-        if (!(w[0] & 2u)) continue;
+        if (!(w[0] & 2u) || (w[0] & kReplaced)) continue;
         bool shared = false;
         for (const Decode &d : g_decodes) {
             const std::uint32_t *o = b.setups.data() + d.setup * kSetupWords;
@@ -1233,7 +1236,8 @@ bool init(Mode m) {
     g_clut = make_buffer(static_cast<std::uint64_t>(kClutSlots) * kClutEntries * 4, WGPUBufferUsage_Storage | WGPUBufferUsage_CopySrc | WGPUBufferUsage_CopyDst);
     g_scratch = make_buffer((static_cast<std::uint64_t>(g_copy_words) + 2ull * g_field_words) * 4, WGPUBufferUsage_Storage | WGPUBufferUsage_CopySrc);
     g_cache = make_buffer(static_cast<std::uint64_t>(kCacheWords) * 4, WGPUBufferUsage_Storage | WGPUBufferUsage_CopyDst);
-    g_decoded = make_buffer(static_cast<std::uint64_t>(kDecodedWords) * 4, WGPUBufferUsage_Storage);
+    g_decoded = make_buffer((static_cast<std::uint64_t>(kDecodedWords) + (texpack::packing() ? kReplWords : 0u)) * 4,
+                            WGPUBufferUsage_Storage | WGPUBufferUsage_CopyDst);
     if (const char *decode = std::getenv("PS2_DECODE")) g_decode = std::atoi(decode) != 0;
     g_cache_copy.assign(kCacheWords, 0);
     g_readback = make_buffer(static_cast<std::uint64_t>(g_copy_words) * 4, WGPUBufferUsage_MapRead | WGPUBufferUsage_CopyDst);
@@ -1293,6 +1297,40 @@ bool init(Mode m) {
     return true;
 }
 
+// Texture pack: a texture keyed from uploaded data (not a render target) that the pack replaces samples the pack's
+// pixels, 2^scale times larger, from the persistent part of the decoded buffer (setup word 24 = offset, 26 = scale;
+// mipmapping off). Keys and dumps need nothing from the GPU.
+void replace_texture(const State &st, SetupCache &cache) {
+    static std::unordered_map<std::uint64_t, std::pair<std::uint32_t, std::uint32_t>> replaced;
+    static std::uint32_t used = 0;
+    std::uint32_t *w = cache.setup;
+    const std::uint32_t tw = w[15] & 0xFFu, th = w[15] >> 8;
+    if (rendered(pages(w[12], w[13], w[14], 0, 0, (1 << tw) - 1, (1 << th) - 1))) return;
+    const std::uint64_t key = texpack::key(st);
+    if (!key || !texpack::packing() || ((w[7] >> 24) & 3u) == 3u || ((w[7] >> 26) & 3u) == 3u) return;
+    auto it = replaced.find(key);
+    if (it == replaced.end()) {
+        std::uint32_t scale = 0;
+        const std::vector<std::uint32_t> *px = texpack::replacement(key, tw, th, scale);
+        if (!px) return;
+        if (used + px->size() > kReplWords) {
+            static bool warned = false;
+            if (!warned) std::fprintf(stderr, "[texpack] replacement memory full (%u MB)\n", kReplWords / (1u << 18));
+            warned = true;
+            return;
+        }
+        wgpuQueueWriteBuffer(g_queue, g_decoded, (static_cast<std::uint64_t>(kDecodedWords) + used) * 4, px->data(), px->size() * 4);
+        it = replaced.emplace(key, std::make_pair(kDecodedWords + used, scale)).first;
+        used += static_cast<std::uint32_t>(px->size());
+    }
+    w[0] |= kReplaced;
+    cache.flags = w[0];
+    w[24] = it->second.first;
+    w[25] = 0;
+    w[26] = it->second.second;
+    cache.mips = 0;
+}
+
 void draw(const State &st, const Vertex *v, int count, texcache::Run run) {
     if (g_image.active && !g_image.pending.empty()) flush_image();
     std::uint64_t attr = st.prim;
@@ -1313,6 +1351,7 @@ void draw(const State &st, const Vertex *v, int count, texcache::Run run) {
             cache.tex = level_range(w, 0);
             cache.mips = mip_levels(w);
             for (std::uint32_t n = 1; n <= cache.mips; ++n) cache.levels[n] = level_range(w, n);
+            if (texpack::active()) replace_texture(st, cache);
         }
     }
     const std::uint32_t *setup = cache.setup;
