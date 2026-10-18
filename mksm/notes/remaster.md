@@ -108,3 +108,57 @@ primitives, character program) changes no pixel of the final frame when left out
   Foundry 81 fps uncapped, everything else 104+.
 - Look: **faithful first** (sharp, same art and mood, toggle to original), modern lighting as a later optional mode.
 - **Online co-op desktop to desktop** is needed: the lockstep netcode moves into the desktop app.
+
+### Step 3 — draw classification (2026-10-18)
+- `remaster/classify.py <framedbg dir> remaster/categories.json` sorts every draw group of the 12 framedbg scenes by
+  the first matching rule (path, EE call site, VU1 program hash, primitive, blend, texture format, target). Result:
+  **0 unclassified groups**, 13 categories. Writes `remaster-data/framedbg/categories/<cat>.png` (isolation masks per
+  scene), `overview.png`, `report.json`. Isolation runs covered the top 40–60 groups by primitives per scene, so tiny
+  HUD groups show "(no isolation)" — classified, just not masked.
+- Every VU1 draw comes from one EE call site (0x241c88); the VU1 microprogram tells the kinds apart.
+
+| Category | Primitives (12 scenes) | Key | Faithful plan | Modern plan (11+) |
+|---|---|---|---|---|
+| character | 92,996 | VU1 672fef39 ad5f3626 51bd… c77204b7 2f9dff01 95a24514, base pass T8 128², lerp-with-FIX blend | high-res T8 skins (6/7) | per-pixel lighting from VU1 normals |
+| character_highlight | 44,496 | same programs, blend 0211 (additive, dest alpha) | keep pass, upscale 16-level masks | replaced by lighting |
+| character_shading | 14,022 | same programs, blend 1202 (multiply), T4 512×256 masks | keep pass, smooth masks | replaced by lighting/AO |
+| world | 72,078 | VU1 002c80ed 567ce7d8 50bd… (fogged), c372c643 opaque props | upscaled textures, fog at full res | normal/PBR maps, real lights |
+| world_alpha | 18,361 | VU1 5f818a97, alpha blend 0101 (foliage, fences, trees, statues) | alpha edges alias at high scale → supersampled alpha/AA | same + denser detail |
+| post_fx | 19,120 | VU1 b27a143b sprites, 320×128 offscreen glow chain (FBP 0x8c/0x12c/0x14c) | run the glow chain at scaled res (blocky otherwise) | HDR bloom, tone mapping |
+| sky | 3,127 | VU1 8a4e53a2 textured | higher-res sky textures | dynamic sky |
+| effects | 2,007 | VU1 c372c643 additive, path-2 sprites and additive strips | upscaled particle textures | soft particles (depth) |
+| hud | 1,096 | path 3 EE 0x37e578, path-2 strips (health bars, pause menu, cinematic bars) | high-res HUD, re-anchor for 16:9 (step 5) | same |
+| ui | 212 | path-2 triangles (main menu, character select) | high-res UI textures | same |
+| shadow | 141 | VU1 8a4e53a2 untextured (blob shadows) | smooth edges at high res | shadow maps |
+| clear | 11 | path 3 EE 0x275194 full-screen untextured sprite | — | — |
+| movie | 1 | path 3 EE 0x272ccc CT32 sprite | pillarbox 4:3 in 16:9 | optional upscaled movie files |
+
+Step 4 groundwork — GPU cost per frame by stage (`PS2_GPU_PROFILE`, 60 frames, ms; dispatches per frame in brackets):
+
+| Scene, scale | raster | load_clut | snapshot | decode | upload | total |
+|---|---|---|---|---|---|---|
+| goro 1× | 4.77 (122) | 1.39 (23) | 0.54 (107) | 0.38 (58) | 0.25 (55) | 7.33 |
+| goro 3× | 7.45 | 1.16 | 1.22 | 0.27 | 0.54 | 10.63 |
+| foundry 1× | 6.81 (140) | 2.81 (42) | 0.39 (107) | 0.94 (251) | 0.49 (141) | 11.44 |
+| foundry 3× | 11.42 | 2.96 | 1.25 | 0.85 | 1.32 | 17.79 |
+
+Desktop fps (PS2_THREADS=1, uncapped) at scale 2 / 3: goro 89 / 74, nether 80 / 64, academy 70 / 63, foundry 48 / 48.
+Raster grows only ~1.7× for 9× the pixels → fixed per-dispatch/per-primitive cost dominates, not fill. load_clut
+costs ~65 µs per call. The game draws 640×224 fields, so 1440p needs ~3× horizontal and ~6× vertical with today's
+square scale.
+
+### Research for later steps (agents, 2026-10-18)
+- **Widescreen (step 5):** the only public patch (PCSX2 `SLUS-21087_455DD546.pnach`, OPL CHT; PAL version by
+  nemesis2000) sets a dormant aspect variable at **0x4f4b38** (data, 1.0f → 0.75f). Nothing writes it; projection
+  (0x249e38) and frustum culling (0x236ae0, width 640/aspect) already honour it (Hor+). `is_widescreen()` 0x36f848
+  also feeds two camera/gameplay sites (0x14cc58, 0x14e47c) → simulation changes → co-op peers must match, hashes
+  differ on/off. Other writes are code: 0x322f2c (cinematic bar height 88 → 1), 0x272210/0x272498 (FMV height 598).
+  Apply as a host-side `st32` before boot behind a flag; skip the FMV patch (pillarbox movies); bars optional. HUD is
+  not handled by any patch (needs an x-scale of 2D draws about the centre). Host must stretch to 16:9
+  (window.cpp:237, gpu.cpp:935, :1799). Unverified: FOV values from unscaled 320 (0x663444/8) may pop edge culling.
+- **Native co-op (step 9):** protocol fully mapped (`web/lockstep.js`, `lockstep-emu.js`, `server/signal.mjs`).
+  Plan: move the emulator side of `host/web.cpp` into a portable `host/lockstep_emu.cpp`, port the JS (~2–2.5k lines
+  C++) on libdatachannel (already found by CMake, 0.24.5). Blockers to solve: `rtc::WebSocket` can't send the
+  `__Host-mksm` cookie (accept it via subprotocol/query, or use libcurl WS); web `build` id (hash of wasm headers)
+  and `config.vuJit` must become portable values. **First job: native vs browser hash comparison** (never done);
+  build with `-ffp-contract=off`, hard-code the IPU IDCT cos table.

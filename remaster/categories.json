@@ -1,0 +1,19 @@
+[
+ {"category": "clear",              "match": {"path": 3, "prim": "sprite", "tme": false, "fullscreen": true}},
+ {"category": "movie",              "match": {"path": 3, "ra": ["272ccc"]}},
+ {"category": "post_fx",            "match": {"vu1": ["b27a143b"], "prim": "sprite"}},
+ {"category": "character_shading",  "match": {"vu1": ["672fef39", "ad5f3626", "51bd", "c77204b7", "2f9dff01", "95a24514"], "blend": "1202"}},
+ {"category": "character_highlight","match": {"vu1": ["672fef39", "ad5f3626", "51bd", "c77204b7", "2f9dff01", "95a24514"], "blend": "0211"}},
+ {"category": "character",          "match": {"vu1": ["672fef39", "ad5f3626", "51bd", "c77204b7", "2f9dff01", "95a24514"]}},
+ {"category": "world",              "match": {"vu1": ["002c80ed", "567ce7d8", "50bd"]}},
+ {"category": "world_alpha",        "match": {"vu1": ["5f818a97"]}},
+ {"category": "sky",                "match": {"vu1": ["8a4e53a2"], "tme": true}},
+ {"category": "shadow",             "match": {"vu1": ["8a4e53a2"], "tme": false}},
+ {"category": "world",              "match": {"vu1": ["c372c643"], "blend": "0101", "tme": true}},
+ {"category": "effects",            "match": {"vu1": ["c372c643"]}},
+ {"category": "hud",                "match": {"path": 3, "ra": ["37e578"]}},
+ {"category": "ui",                 "match": {"path": 2, "prim": "tri"}},
+ {"category": "effects",            "match": {"path": 2, "prim": "sprite"}},
+ {"category": "effects",            "match": {"path": 2, "blend": ["0201", "0221"]}},
+ {"category": "hud",                "match": {"path": 2}}
+]
