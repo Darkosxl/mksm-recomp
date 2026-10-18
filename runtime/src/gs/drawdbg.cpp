@@ -159,7 +159,7 @@ bool begin_prim(const State &s, int vertices) {
     const Context &c = s.ctx[(eff >> 9) & 1u];
     const std::uint64_t flags = (s.prim & 7u) | (eff & 0x7F8u);
     std::uint32_t group = fnv(fnv(fnv(fnv(2166136261u, g_path), g_src.ra), (static_cast<std::uint64_t>(g_src.vu1_entry) << 32) | g_src.vu1_hash),
-                              (c.tex0 & 0x3FFFFFFFFull) ^ (static_cast<std::uint64_t>(c.frame & 0x3F0001FFu) << 34));
+                              (c.tex0 & 0x3FFFFFFFFull) ^ (static_cast<std::uint64_t>(c.frame & 0x3F3F0000u) << 34));  // target format + width, not FBP: games double-buffer
     group = fnv(group, flags & 0x17u);
     g_skipping = !config().skip.empty() && g_frame >= config().skip_from && config().skip.count(group);
     if (!dumping()) return !g_skipping;
