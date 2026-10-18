@@ -61,7 +61,8 @@ if [ -z "${ARGS:-}" ]; then
 fi
 base=$(python3 -c "import json; print(json.load(open('${state%.state}.json'))['frame'])")
 stop=$((base + frames + 200))  # the host plays alone for a while before the guest drops in
-common=(SDL_AUDIODRIVER=dummy __NV_PRIME_RENDER_OFFLOAD=1 __VK_LAYER_NV_optimus=NVIDIA_only PS2_GS=soft PS2_RTC=1792000000 "${tls_env[@]}")
+# PS2_LOCKSTEP_STUN=none: never fall back to public STUN servers (local only)
+common=(SDL_AUDIODRIVER=dummy __NV_PRIME_RENDER_OFFLOAD=1 __VK_LAYER_NV_optimus=NVIDIA_only PS2_GS=soft PS2_RTC=1792000000 PS2_LOCKSTEP_STUN=none "${tls_env[@]}")
 args=("$G/disc/SLUS_210.87" --disc "$G/disc.iso" --frames "$stop" $(cat "$args_file"))
 ps2run() { # dir join-args extra-env... ; the instance's log, hash log, card and cookie file live in <dir>
   local dir=$1; shift

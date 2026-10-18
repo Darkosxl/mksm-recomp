@@ -7,20 +7,31 @@ Branch `remaster-coop`, 2026-10-18.
 ## Use
 
 ```sh
-# player 1: creates a room and prints its id
-PS2_LOCKSTEP_COOKIE='__Host-mksm=…' ps2run <elf> --disc disc.iso [--load-state s.state] --lockstep ws://host:port --room new
-# player 2: joins it
-PS2_LOCKSTEP_COOKIE='__Host-mksm=…' ps2run <elf> --disc disc.iso [--load-state s.state] --lockstep ws://host:port --room <id>
+# player 1 (host): redeems the invite, creates a room, prints its id, plays alone until player 2 drops in
+ps2run <elf> --disc disc.iso [--load-state s.state] --invite 'https://host/invite?t=…'
+# player 2 (guest): no state file needed, it receives the host's game
+ps2run <elf> --disc disc.iso --invite 'https://host/invite?t=…&room=<id>'
+# or without an invite link: --lockstep ws[s]://host[:port] --room new|<id> (cookie stored earlier, or PS2_LOCKSTEP_COOKIE)
 ```
 
 - Works headless and with `--window` (keyboard/pad 1 is the local player; the window title shows the session).
 - The first player in the room is the host (P1), the second the guest (P2). `--press`/`--stick` lines become the
   local player's scripted input by lockstep frame (`p1:` lines on the host, `p2:` lines on the guest), the same
   rule as the browser's `lsinput`.
-- Both emulators hold at their first vblank until the handshake is done, then start together at lockstep frame 1.
-- `PS2_LOCKSTEP_COOKIE` is the invite cookie `/ws` requires. With `server/host.mjs` (host mode) a native client on
-  the host's own PC needs none: host.mjs adds its cookie to local `/ws` requests.
-- Test hook: `PS2_LOCKSTEP_DROP=0.2` drops that fraction of outgoing input packets.
+- **Drop-in (W4):** the host plays alone until a guest connects, then holds at a vblank F, snapshots state + memory
+  card, sends them gzipped (zlib; `lockstep.js` `blob`/`blob-end` framing, meta `{frame, stateSize, cardSize, rtc,
+  attempt}`), reloads its own bytes; the guest loads them, answers `loaded {f, h}`, the host answers `sync-result`;
+  both start at F+1. The guest's copy of the card goes to `<--memcard>.session`, its own card is untouched.
+- **Invite links:** `--invite` opens the link like a browser, stores the cookie per origin in
+  `~/.config/ps2run/lockstep-cookies` (0600; `PS2_LOCKSTEP_COOKIE_FILE` moves it), takes server and room from the
+  link. `PS2_LOCKSTEP_COOKIE` overrides. Host mode (`server/host.mjs`) needs no cookie on the host's own PC.
+- **Transport:** WebRTC data channels via libdatachannel (ICE servers from `/turn`, else public STUN;
+  `PS2_LOCKSTEP_STUN=none|url,…` replaces that fallback), the signalling relay as fallback, switched like
+  `lockstep.js` (ICE failed, no direct connection in 10 s, peer asks or relays first). `wss://`/`https://` through
+  OpenSSL (`PS2_LOCKSTEP_CA=<pem>` trusts an extra certificate). Both libraries are optional at configure time,
+  like `--host`; without libdatachannel the relay is used. Lockstep itself needs zlib.
+- Test hooks: `PS2_LOCKSTEP_DROP=0.2` (drop input packets), `PS2_LOCKSTEP_BLOCK_ICE=1` (never send our ICE
+  candidates), `PS2_LOCKSTEP_RELAY=1` (no WebRTC), `PS2_LOCKSTEP_P2P_TIMEOUT_MS`.
 
 ## What both peers must share (the handshake)
 
@@ -32,26 +43,23 @@ exactly as `lockstep.js` does. A mismatch sends `{t:'refuse', reason, detail}` a
 | `build` | XXH64 of the running executable (`/proc/self/exe`). Peers must run the same binary: another compiler or flags can change float results. The signalling room is pinned to it. |
 | `disc` | `size:sha256(first MB)`, the browser's `discId` format. |
 | `config.patches` | XXH64 of the `PS2_PNACH` files' content, in order (`none` without patches). The widescreen pnach changes game state, so it must match; texture packs, `PS2_SCALE`, `PS2_ASPECT`, post FX and the GS renderer are local and not compared. |
-| `config.start` | Boot arguments + `--load-state` file + memory card at start. Without the W4 snapshot transfer both players start from the same files. |
 | `config.rate` | `auto`, or `pal`/`ntsc` when forced. |
 | `config.env` | Every `PS2_*` variable that is not on the local-only list (`local_only()` in `host/lockstep.cpp`), as `NAME=value`. |
 | `patchFiles` | File names of the patches, only used to word a refusal. |
 
-The host also sends its RTC epoch in `start` (`rtc`, its `PS2_RTC` or the wall clock), and both set it before the
-first frame.
+The host's RTC epoch (its `PS2_RTC` or the wall clock) travels in the drop-in meta and the guest installs it with the
+state.
 
 ## Code
 
 | File | What |
 |---|---|
 | `host/lockstep.cpp` | Port of `lockstep.js` (signalling, relay switch, handshake, RTT and D, sampling, input packets, acks and resends, time sync, disconnect → solo, resync of D, hash exchange) on a network thread, and of the emulator side of `host/web.cpp` (`lockstep_vblank`: wait for both inputs, pause frames, 1/32 hash part per frame, 59.94 Hz pacing + `slow_ms`). They share the W3 struct as the browser's page and worker do; a condition variable stands in for the futex, an eventfd wakes the network thread when the emulator reaches a frame. |
-| `host/lockstep_net.cpp` | `Channels` (the `in`/`ctl` pair), a minimal RFC 6455 client (`ws://`, non-blocking, `TCP_NODELAY`) and `RelayChannels`: both channels as binary frames on the signalling socket (byte 0 channel, byte 1 kind), the relay `signal.mjs` already forwards. |
+| `host/lockstep_net.cpp` | `Channels` (the `in`/`ctl` pair), a TCP/TLS connection, a small HTTP GET (`/turn`, `/invite`), a minimal RFC 6455 client (non-blocking, `TCP_NODELAY`) and `RelayChannels`: both channels as binary frames on the signalling socket (byte 0 channel, byte 1 kind). |
+| `host/lockstep_rtc.cpp` | `RtcChannels`: libdatachannel peer connection with negotiated `in` (id 0, unordered, 0 retransmits) and `ctl` (id 1, reliable), offer/answer/ICE in the browser's JSON shapes; callbacks are queued for the network thread. |
 | `host/lockstep_json.hpp` | JSON parse/print with `JSON.stringify` output, so configs compare as the browser compares them. |
 | `host/main.cpp`, `host/window.cpp` | `--lockstep`, `--room`; the window hands pad 1 to the session and lets the session pace frames. |
 
-Transport: the native client asks for the relay at once (`{type:'transport', mode:'relay'}`; as the room's host it
-answers a browser's WebRTC offer with that message). `lockstep.js` already switches to the relay on that message or
-on the first relayed frame, so the browser needs no change. Inputs go A → server → B over TCP.
 
 ## Tests (local, 2026-10-18)
 
@@ -75,45 +83,33 @@ Throughput: headless `PS2_GS=soft` with a full state hash every frame runs ~7 fp
 ~90% of a core per instance), so the faster peer waits on the slower one; with the window and the GPU renderer the
 59.94 Hz pacing applies. The Node interop peer (60 fps mock) therefore stalled on 598/600 frames, as expected.
 
+Second round (P2P, wss, drop-in, invites; guest boots with **no state file**, hashes compared after the drop-in
+frame; `PS2_LOCKSTEP_STUN=none`, so nothing left the machine in these runs):
+
+| Test | Result |
+|---|---|
+| P2P over localhost, wss through a local TLS proxy (self-signed cert on 127.0.0.1), both join with `--invite` links | WebRTC connected with the `/turn` servers, state sent over the data channel (48.3 MB, 14.1 MB gzip in 0.46 s), load hashes equal, per-frame hashes identical **795/795**, 24 windows ok. Cookies stored 0600 per origin. |
+| Relay fallback: both block their ICE candidates, P2P timeout 4 s | Guest: `using the relay (no direct connection)`, host follows on the peer's request; drop-in over the relay (0.8 s), identical **769/769**. |
+| Build without libdatachannel, OpenSSL, FFmpeg, SDL (compiled by hand against the same libraries) | `relay only (built without libdatachannel)`, drop-in over the relay, identical **497/497**. |
+| `web/lockstep.js` in Node as host sends `koop.state` with the browser's `CompressionStream` gzip | Native guest (relay) inflated 14.8 MB, loaded it at frame 1000, its `loaded` hash reached the JS side; 300 frames, P2 inputs 300/300 as scripted. |
+
+The first P2P run of this round (before `PS2_LOCKSTEP_STUN=none` existed, and with a `/turn` parsing bug that is now
+fixed) fell back to the public STUN servers (`stun.l.google.com`, `stun.cloudflare.com`): two STUN lookups left the
+laptop. No other outbound traffic.
+
 Not run: native vs browser hash comparison of the real game (needs a wasm build in headless Chromium; the protocol
 side is covered by the Node test above). The window mode was built, not run (headless only).
 
-## Not done / blocked
+## Not done
 
-**Blocked on a dependency decision (nothing was added):**
-
-1. **TLS (`wss://`).** The deployed server (Caddy) and host mode's Cloudflare tunnel are HTTPS only; the native
-   client speaks `ws://` (local `signal.mjs`, LAN, or host mode on the host's own PC). Options:
-   - *OpenSSL* (Apache-2.0, system `libssl`/`libcrypto` 3.6, ~7 MB, already installed as a libdatachannel and
-     FFmpeg dependency): wrap the existing `WsClient` socket in an `SSL*` (~80 lines). Keeps the cookie header.
-   - *libdatachannel's `rtc::WebSocket`* (has TLS): cannot send custom headers, so `signal.mjs` would need a second
-     way to present the invite (query or subprotocol token), and the server change ships to the VPS.
-   - *mbedTLS* (Apache-2.0, ~0.5 MB): smaller, but a new package everywhere.
-2. **Direct peer-to-peer (WebRTC data channels).** Today inputs go through the server (A → server → B): it works
-   behind any NAT, costs ~5 KB/s per player on the server, and adds the server detour to the RTT (D grows by 1 frame
-   per ~33 ms of extra p95 RTT). P2P needs WebRTC to talk to a browser. Options:
-   - *libdatachannel 0.24.5* (MPL-2.0, `libdatachannel.so` 2.8 MB + libjuice 0.2 MB + libsrtp 0.1 MB + OpenSSL):
-     already installed here and already an optional dependency of `ps2run --host` (`find_package(LibDataChannel)`),
-     so for this repo it is a decision to make it a lockstep dependency too, not a new package. Gets ICE/STUN/TURN
-     (works with the existing coturn credentials from `/turn`), negotiated channels `in` (unordered, 0 retransmits)
-     and `ctl` (reliable) exactly as `lockstep.js` creates them. Work: an `RtcChannels` behind `Channels` plus
-     offer/answer/ICE in `Session::on_signal` (~300 lines); the relay stays as the fallback, as in the browser.
-   - *Google libwebrtc* (BSD): tens of MB and its own build system. Not worth it for data channels.
-   - *Own UDP + hole punching*: native-to-native only (browsers cannot join), and NAT traversal to write and test.
-3. **W4 drop-in (the host sends its state + memory card).** Needed for browser interop (a browser guest waits for
-   the host's snapshot) and to drop the "same start files" rule. The blob is gzip on the wire: zlib (Zlib licence,
-   0.1 MB, already on every desktop) or an own inflate (~300 lines; sending can use stored deflate blocks).
-
-**Remaining (no dependency question):**
-- Browser interop beyond the protocol: a portable build id (the browser hashes wasm headers, native hashes the
+- **Browser interop beyond the protocol:** a portable build id (the browser hashes wasm headers, native hashes the
   executable), one config schema (the browser sends `{lockstep, vuThread, gs, vuJit}`, native
-  `{lockstep, rate, patches, start, env}`; `gs` is a presentation choice and should leave the browser's config,
-  `patches` should join it), and proof that the wasm VU JIT and the native AOT VU code compute the same state
-  (never compared; the hash-log comparison needs a headless Chromium run of the wasm build).
-- Invite flow: the native client takes the cookie from `PS2_LOCKSTEP_COOKIE`; it should redeem an invite link
-  itself (`/invite?t=` → `Set-Cookie`) and remember the cookie.
-- UI: room code entry and display, waiting/stall/disconnect overlays, a pause key (the protocol's pause bit is
-  wired: `lockstep_set_paused`), resync on demand. The window only shows the status in its title.
-- NAT traversal: none needed for the relay; P2P is item 2.
-- Window mode is built but was not run (headless-only rule).
-- macOS/Windows: `eventfd` and POSIX sockets are Linux-only as written (a pipe and Winsock are the swaps).
+  `{lockstep, rate, patches, env}`; `gs` should leave the browser's config, `patches` join it), and proof that the
+  wasm VU JIT and the native AOT VU code compute the same state (needs a headless Chromium run of the wasm build).
+  A real browser WebRTC peer against the native was not tested (Node has no RTCPeerConnection).
+- **Resync after a desync** (`state-request`/`state-begin`, lockstep-emu.js) and **re-hosting** after the guest
+  leaves are not ported: a desync is reported, not repaired; after a guest leaves the host continues solo.
+- **UI:** room code entry/display, waiting/stall/disconnect overlays, a pause key (`lockstep_set_paused` is wired),
+  resync on demand. The window only shows the status in its title; window mode was built, not run.
+- **NAT traversal:** whatever ICE/TURN gives; the relay works everywhere both can reach the server.
+- **macOS/Windows:** `eventfd` and POSIX sockets are Linux-only as written (CMake only builds lockstep on Linux).

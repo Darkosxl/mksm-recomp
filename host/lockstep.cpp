@@ -779,7 +779,8 @@ std::vector<lockstep::IceServer> Session::ice_servers() {
         url.scheme = url.tls() ? "https" : "http";
         url.path = "/turn";
         if (lockstep::http_get(url, opts_.cookie, status, headers, body, error) && status == 200) {
-            for (const Json &s : Json::parse(body)["iceServers"].items()) {
+            const Json turn = Json::parse(body);  // named: a temporary would die before the loop body runs
+            for (const Json &s : turn["iceServers"].items()) {
                 std::vector<std::string> urls;
                 if (s["urls"].is_string()) urls.push_back(s["urls"].str());
                 for (const Json &u : s["urls"].items()) urls.push_back(u.str());
@@ -787,9 +788,20 @@ std::vector<lockstep::IceServer> Session::ice_servers() {
             }
         }
     }
-    if (out.empty())
+    if (!out.empty()) {
+        log("ICE servers from /turn: %zu", out.size());
+        return out;
+    }
+    // PS2_LOCKSTEP_STUN=url[,url] replaces the public fallback, "none" leaves only host candidates (local tests)
+    const char *stun = std::getenv("PS2_LOCKSTEP_STUN");
+    if (!stun)
         for (const char *s : kPublicStun) out.push_back({s, "", ""});
-    else log("ICE servers from /turn: %zu", out.size());
+    else if (std::string(stun) != "none") {
+        std::stringstream ss(stun);
+        for (std::string u; std::getline(ss, u, ',');) out.push_back({u, "", ""});
+    }
+    log("no ICE servers from /turn (%s): %s", error.empty() ? ("HTTP " + std::to_string(status)).c_str() : error.c_str(),
+        out.empty() ? "host candidates only" : "public STUN");
     return out;
 }
 

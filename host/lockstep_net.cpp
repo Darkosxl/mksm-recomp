@@ -281,7 +281,20 @@ bool http_get(const Url &url, const std::string &cookie, int &status, std::strin
     headers = in.substr(0, head_end + 2);
     status = std::atoi(headers.c_str() + std::min<std::size_t>(9, headers.size()));
     const std::string length = header_value(headers, "Content-Length");
-    if (!length.empty()) {
+    if (header_value(headers, "Transfer-Encoding").find("chunked") != std::string::npos) {
+        // Node answers chunked: <hex size>\r\n<data>\r\n ... 0\r\n\r\n
+        if (!closed) read_until(c, in, [&](const std::string &s) { return s.find("\r\n0\r\n\r\n", head_end) != std::string::npos; }, 5000, closed);
+        std::size_t at = head_end + 4;
+        body.clear();
+        while (at < in.size()) {
+            const std::size_t eol = in.find("\r\n", at);
+            if (eol == std::string::npos) break;
+            const std::size_t n = std::strtoull(in.c_str() + at, nullptr, 16);
+            if (!n || eol + 2 + n > in.size()) break;
+            body.append(in, eol + 2, n);
+            at = eol + 2 + n + 2;
+        }
+    } else if (!length.empty()) {
         const std::size_t want = head_end + 4 + std::strtoull(length.c_str(), nullptr, 10);
         if (!closed) read_until(c, in, [&](const std::string &s) { return s.size() >= want; }, 5000, closed);
         body = in.substr(head_end + 4, want - head_end - 4);
