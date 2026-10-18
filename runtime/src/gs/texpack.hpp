@@ -20,7 +20,8 @@ void touched(std::uint32_t bp, std::uint32_t bw, std::uint32_t psm, std::uint32_
 void drawn(std::uint32_t bp, std::uint32_t bw, std::uint32_t psm, std::uint32_t x0, std::uint32_t y0, std::uint32_t x1, std::uint32_t y1);
 // Key of the texture the current context samples (0 when it is too large or a render target); dumps it when dumping.
 std::uint64_t key(const State &st);
-// The pack's pixels for a key, 2^scale times the given size; nullptr when the pack has none.
-const std::vector<std::uint32_t> *replacement(std::uint64_t key, std::uint32_t tw, std::uint32_t th, std::uint32_t &scale);
+// The pack's pixels for a key, 2^scale times the given size, read from disk (the caller keeps what it needs); empty
+// when the pack has none.
+std::vector<std::uint32_t> replacement(std::uint64_t key, std::uint32_t tw, std::uint32_t th, std::uint32_t &scale);
 
 }

@@ -41,7 +41,12 @@ constexpr std::uint32_t kPrimWords = 28;
 constexpr std::uint32_t kSetupWords = 32;
 constexpr std::uint32_t kDecodedWords = 4u << 20;
 // Texture-pack replacements live after the per-batch decodes in the same buffer (only allocated with PS2_TEX_PACK).
-constexpr std::uint32_t kReplWords = 64u << 20, kReplaced = 1u << 16, kRtHires = 1u << 17;
+constexpr std::uint32_t kReplaced = 1u << 16, kRtHires = 1u << 17;
+// Texture-pack replacements live in this many words after kDecodedWords (PS2_TEX_PACK_MB, default 256 MB).
+const std::uint32_t kReplWords = [] {
+    const char *e = std::getenv("PS2_TEX_PACK_MB");
+    return static_cast<std::uint32_t>(std::clamp(e ? std::atoi(e) : 256, 16, 1024)) << 18;
+}();
 constexpr std::uint32_t kDecodePrims = 64;
 
 Mode g_mode = Mode::off;
@@ -1327,17 +1332,24 @@ void replace_texture(const State &st, SetupCache &cache) {
     auto it = replaced.find(key);
     if (it == replaced.end()) {
         std::uint32_t scale = 0;
-        const std::vector<std::uint32_t> *px = texpack::replacement(key, tw, th, scale);
-        if (!px) return;
-        if (used + px->size() > kReplWords) {
-            static bool warned = false;
-            if (!warned) std::fprintf(stderr, "[texpack] replacement memory full (%u MB)\n", kReplWords / (1u << 18));
-            warned = true;
-            return;
+        const std::vector<std::uint32_t> px = texpack::replacement(key, tw, th, scale);
+        if (px.empty()) return;
+        if (used + px.size() > kReplWords) {
+            // Full, usually after a few maps: start the region over. At most every 600 frames, so a scene that needs
+            // more than the region keeps the textures it has instead of reloading every frame.
+            // ponytail: drops everything at once; per-texture LRU if a scene ever needs more than the region.
+            static std::uint64_t last_reset = 0;
+            if (frame_count() - last_reset < 600 || px.size() > kReplWords) return;
+            flush();  // commands recorded so far read the old contents
+            replaced.clear();
+            used = 0;
+            last_reset = frame_count();
+            std::fprintf(stderr, "[texpack] replacement memory full (%u MB), starting over at frame %llu\n", kReplWords >> 18,
+                         static_cast<unsigned long long>(last_reset));
         }
-        wgpuQueueWriteBuffer(g_queue, g_decoded, (static_cast<std::uint64_t>(kDecodedWords) + used) * 4, px->data(), px->size() * 4);
+        wgpuQueueWriteBuffer(g_queue, g_decoded, (static_cast<std::uint64_t>(kDecodedWords) + used) * 4, px.data(), px.size() * 4);
         it = replaced.emplace(key, std::make_pair(kDecodedWords + used, scale)).first;
-        used += static_cast<std::uint32_t>(px->size());
+        used += static_cast<std::uint32_t>(px.size());
     }
     w[0] |= kReplaced;
     cache.flags = w[0];
