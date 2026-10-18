@@ -1,14 +1,19 @@
 #include "texpack.hpp"
+#include "queue.hpp"
 #include "raster.hpp"
 #include "ps2/system.hpp"
 
 #include <algorithm>
 #include <chrono>
+#include <condition_variable>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
+#include <deque>
 #include <filesystem>
+#include <mutex>
 #include <string>
+#include <thread>
 #include <unordered_map>
 #include <unordered_set>
 #include <utility>
@@ -112,6 +117,44 @@ bool read_pam(const std::string &path, std::vector<std::uint32_t> &px, std::uint
     return ok;
 }
 
+// With the render thread on its own (play), pack files are read here, off it: a cold read (btrfs zstd) stalled a frame
+// up to 172 ms. The original texture shows until the file is in, usually a frame or two. Single-threaded runs
+// (captures) read in place, so their images stay the same every run.
+// ponytail: one thread, files in request order; a second one if map loads pop in too slowly.
+struct Loaded {
+    std::vector<std::uint32_t> px;
+    std::uint32_t w = 0, h = 0;
+    bool ok = false;
+};
+struct Loader {
+    std::mutex m;
+    std::condition_variable cv;
+    std::deque<std::uint64_t> wanted;
+    std::unordered_set<std::uint64_t> asked;  // wanted or ready, until taken
+    std::unordered_map<std::uint64_t, Loaded> ready;
+    Loader() {
+        std::thread([this] {
+            for (;;) {
+                std::unique_lock lock(m);
+                cv.wait(lock, [this] { return !wanted.empty(); });
+                const std::uint64_t key = wanted.front();
+                wanted.pop_front();
+                lock.unlock();
+                char name[64];
+                std::snprintf(name, sizeof name, "/%016llx.pam", static_cast<unsigned long long>(key));
+                Loaded f;
+                f.ok = read_pam(std::string(pack_dir()) + name, f.px, f.w, f.h);
+                lock.lock();
+                ready[key] = std::move(f);
+            }
+        }).detach();
+    }
+};
+Loader &loader() {
+    static Loader l;
+    return l;
+}
+
 }
 
 bool active() { return dump_dir() || pack_dir(); }
@@ -198,15 +241,28 @@ std::vector<std::uint32_t> replacement(std::uint64_t key, std::uint32_t tw, std:
     if (!p.files.count(key)) return {};
     char name[64];
     std::snprintf(name, sizeof name, "/%016llx.pam", static_cast<unsigned long long>(key));
-    std::vector<std::uint32_t> px;
-    std::uint32_t w, h;
-    const auto t0 = std::chrono::steady_clock::now();
-    const bool read = read_pam(std::string(pack_dir()) + name, px, w, h);
-    ++g_stats.loads, g_stats.load_ms += ms_since(t0), g_stats.load_mb += px.size() * 4.0 / (1 << 20);
-    if (read) {
+    Loaded f;
+    if (queue::active()) {
+        Loader &l = loader();
+        std::lock_guard lock(l.m);
+        auto it = l.ready.find(key);
+        if (it == l.ready.end()) {
+            if (l.asked.insert(key).second) l.wanted.push_back(key), l.cv.notify_one();
+            return {};
+        }
+        f = std::move(it->second);
+        l.ready.erase(it);
+        l.asked.erase(key);
+    } else {
+        const auto t0 = std::chrono::steady_clock::now();
+        f.ok = read_pam(std::string(pack_dir()) + name, f.px, f.w, f.h);
+        g_stats.load_ms += ms_since(t0);
+    }
+    ++g_stats.loads, g_stats.load_mb += f.px.size() * 4.0 / (1 << 20);
+    if (f.ok) {
         for (std::uint32_t s = 1; s <= 3; ++s)
-            if (w == (1u << (tw + s)) && h == (1u << (th + s))) return scale = s, px;
-        std::fprintf(stderr, "[texpack] %s: %ux%u is not 2, 4 or 8 times %ux%u\n", name + 1, w, h, 1u << tw, 1u << th);
+            if (f.w == (1u << (tw + s)) && f.h == (1u << (th + s))) return scale = s, std::move(f.px);
+        std::fprintf(stderr, "[texpack] %s: %ux%u is not 2, 4 or 8 times %ux%u\n", name + 1, f.w, f.h, 1u << tw, 1u << th);
     }
     p.files.erase(key);  // unreadable or the wrong size: one attempt per key
     return {};
