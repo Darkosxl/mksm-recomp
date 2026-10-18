@@ -188,13 +188,10 @@ const params = new URLSearchParams(location.search);
 // ?room=<id> joins a 2-player lockstep session (?room=new or an empty value creates one): the first player in the
 // room is the host (P1), whose game the guest (P2) drops into. Test knobs: lsinput=<args file> (scripted input in
 // the native --press/--stick format, applied by lockstep frame to the local player's lines), lsrtc=<epoch>,
-// lsvu=0 (VU1 on the emulation thread; both peers must agree), lsdrop=<0..1> (drop input packets),
+// lsvu=0 (VU1 on the emulation thread; local, the peers may differ), lsdrop=<0..1> (drop input packets),
 // lsdelay=<ms> (delay every send), lsstall=<ms>,<every ms> (block the main thread).
 const room = params.get('room');
 const lockstepMode = room !== null;
-const lsConfig = { lockstep: 1, vuThread: params.get('lsvu') === '0' ? 0 : 1, gs: 'gpu', vuJit: 1 };
-// the only PS2_* parameters a lockstep peer keeps: they change how frames look, never what the guest sees
-const RENDER_ONLY = new Set(['PS2_SCALE', 'PS2_NO_DEINTERLACE', 'PS2_DECODE', 'PS2_GPU_FALLBACK', 'PS2_GPU_LOW_POWER']);
 let session = null, lsStatus = '', lsScript = null;
 
 function missingFeatures() {
@@ -690,13 +687,12 @@ var Module = {
         console.warn('memory card: browser storage is not available', e);
       }
     }
+    // in lockstep mode the handshake's config.env holds every PS2_* setting that changes what the game computes
+    // (host/lockstep_id.cpp), so both peers must pass the same ones; render and logging settings are each peer's own
+    for (const [key, value] of params) if (key.startsWith('PS2_')) Module.ENV[key] = value;
     if (lockstepMode) {
-      // pinned config: the handshake compares lsConfig, and nothing else from the URL may change emulation
-      for (const [key, value] of params) if (RENDER_ONLY.has(key)) Module.ENV[key] = value;
-      if (!lsConfig.vuThread) Module.ENV.PS2_NO_VU_THREAD = '1';
+      if (params.get('lsvu') === '0') Module.ENV.PS2_NO_VU_THREAD = '1';
       try { FS.mkdir('/session'); } catch (e) {}
-    } else {
-      for (const [key, value] of params) if (key.startsWith('PS2_')) Module.ENV[key] = value;
     }
     Module.ENV.PS2_SCALE = scale;
     Module.addRunDependency('disc');
@@ -763,7 +759,7 @@ async function showInvite(id) {
 
 async function startSession() {
   const mod = await import('./lockstep-emu.js');
-  const build = await mod.buildId();
+  const { build, config, patchFiles } = mod.identity(Module);
   let id = room;
   if (!id || id === 'new') {
     id = await mod.Lockstep.createRoom({ build });
@@ -776,7 +772,7 @@ async function startSession() {
   const test = { dropIn: Number(params.get('lsdrop')) || 0, delayMs: Number(params.get('lsdelay')) || 0,
                  blockIce: params.has('lsrelay'), p2pTimeoutMs: Number(params.get('lsrelay')) || undefined };
   const s = new mod.Session({
-    Module, room: id, build, disc, config: lsConfig, rtc: Module.rtcEpoch, readPad, test,
+    Module, room: id, build, disc, config, patchFiles, rtc: Module.rtcEpoch, readPad, test,
     log: (...a) => console.log(...a),
     onStatus: (text) => {
       lsStatus = text;

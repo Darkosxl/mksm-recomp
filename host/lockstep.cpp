@@ -9,6 +9,7 @@
 // and worker do. libdatachannel's callbacks are queued for the network thread.
 
 #include "lockstep.hpp"
+#include "lockstep_id.hpp"
 
 #include "lockstep_json.hpp"
 #include "lockstep_net.hpp"
@@ -39,8 +40,6 @@
 #include <random>
 #include <sstream>
 #include <thread>
-
-extern char **environ;
 
 namespace {
 
@@ -401,24 +400,6 @@ std::string disc_id(const std::string &path) {
     in.seekg(0);
     in.read(reinterpret_cast<char *>(first.data()), static_cast<std::streamsize>(first.size()));
     return std::to_string(size) + ":" + sha256_hex(first.data(), first.size());
-}
-
-std::string basename(const std::string &path) {
-    const std::size_t slash = path.find_last_of('/');
-    return slash == std::string::npos ? path : path.substr(slash + 1);
-}
-
-// Settings that only change how frames look or what is logged: each player picks their own. Every other PS2_*
-// variable must be identical on both sides (it goes into config.env), like the browser's RENDER_ONLY list.
-bool local_only(const std::string &name) {
-    static const char *kNames[] = {"PS2_ASPECT", "PS2_SCALE", "PS2_TEX_PACK", "PS2_TEX_DUMP", "PS2_GS", "PS2_NO_DEINTERLACE", "PS2_DECODE",
-                                   "PS2_GPU_FALLBACK", "PS2_GPU_LOW_POWER", "PS2_GPU_PROFILE", "PS2_SDL_RENDERER", "PS2_FPS", "PS2_HASH_LOG",
-                                   "PS2_HASH_LOG_EVERY", "PS2_HASH_SPLIT", "PS2_NO_VU_THREAD", "PS2_THREADS", "PS2_ONE_THREAD", "PS2_PNACH",
-                                   "PS2_RTC", "PS2_PROFILE", "PS2_PROFILE_FROM", "PS2_CENSUS", "PS2_DRAW_DUMP", "PS2_DUMP_AUDIO",
-                                   "PS2_DUMP_STEMS", "PS2_DUMP_VRAM", "PS2_NETPLAY_ASYNC"};
-    for (const char *n : kNames)
-        if (name == n) return true;
-    return name.rfind("PS2_TRACE_", 0) == 0 || name.rfind("PS2_LOCKSTEP_", 0) == 0;
 }
 
 // ---- invite cookies: one line per signalling origin, "<origin> <cookie>" ----
@@ -1548,60 +1529,31 @@ bool lockstep_start(const LockstepOptions &options_in) {
         std::string error;
         if (lockstep::Url::parse(options.signal, url, error)) options.cookie = read_cookies()[url.origin()];
     }
-    // build: the executable itself. Peers must run bit-identical code (a different compiler or flags can change
-    // floating-point results), and this is what the signalling room is pinned to.
-    std::vector<std::uint8_t> bytes;
-    if (!read_file("/proc/self/exe", bytes)) {
-        log("cannot read the executable for the build hash");
+    // build and config (host/lockstep_id.cpp) are computed exactly as a browser build of the same sources computes
+    // them, so desktop and browser peers can play together. build is a hash of the emulation sources, not of this
+    // binary: the binary's hash is only logged (a desync between two builds of the same sources would point at it).
+    const lockstep::Identity id = lockstep::identity();
+    if (!id.error.empty()) {
+        log("%s", id.error.c_str());
         return false;
     }
-    const std::string build = hex16(ps2::hash_bytes(bytes.data(), bytes.size()));
+    std::vector<std::uint8_t> bytes;
+    const std::string binary = read_file("/proc/self/exe", bytes) ? hex16(ps2::hash_bytes(bytes.data(), bytes.size())) : "unknown";
     const std::string disc = disc_id(options.disc_path);
     if (disc.empty()) {
         log("cannot read the disc image %s", options.disc_path.c_str());
         return false;
     }
-    // game patch set: PS2_PNACH files (runtime apply_pnach) by content, in order; they change what the game computes
-    Json patch_files = Json::array();
-    std::string patches = "none";
-    if (const char *spec = std::getenv("PS2_PNACH"); spec && *spec) {
-        std::vector<std::uint8_t> all;
-        const std::string list = spec;
-        for (std::size_t at = 0; at < list.size();) {
-            const std::size_t end = std::min(list.find(',', at), list.size());
-            const std::string file = list.substr(at, end - at);
-            at = end + 1;
-            if (!read_file(file, bytes)) {
-                log("cannot read the game patch %s", file.c_str());
-                return false;
-            }
-            const std::uint64_t size = bytes.size();
-            all.insert(all.end(), reinterpret_cast<const std::uint8_t *>(&size), reinterpret_cast<const std::uint8_t *>(&size) + 8);
-            all.insert(all.end(), bytes.begin(), bytes.end());
-            patch_files.push(basename(file));
-        }
-        patches = hex16(ps2::hash_bytes(all.data(), all.size()));
-    }
-    std::vector<std::string> env;
-    for (char **e = environ; *e; ++e) {
-        const std::string kv = *e;
-        if (kv.rfind("PS2_", 0) == 0 && !local_only(kv.substr(0, kv.find('=')))) env.push_back(kv);
-    }
-    std::sort(env.begin(), env.end());
-    Json env_json = Json::array();
-    for (const std::string &kv : env) env_json.push(kv);
-    const char *rate = ps2::g_options.rate_forced ? (ps2::g_options.pal ? "pal" : "ntsc") : "auto";
-    // no start state in the config: the guest drops into the host's game (W4), whatever it booted from
-    Json config = Json::object().set("lockstep", 1).set("rate", rate).set("patches", patches).set("env", env_json);
     Json hello = Json::object()
                      .set("t", "hello")
                      .set("proto", kProtocol)
-                     .set("build", build)
+                     .set("build", id.build)
                      .set("disc", disc)
-                     .set("config", config)
-                     .set("patchFiles", patch_files);  // not compared: names the patches in a refusal
-    log("build %s, disc %s, game patches %s%s, config %s", build.c_str(), disc.c_str(), patches.c_str(),
-        patch_files.items().empty() ? "" : (" " + patch_files.dump()).c_str(), config.dump().c_str());
+                     .set("config", id.config)
+                     .set("patchFiles", id.patch_files);  // not compared: names the patches in a refusal
+    log("build %s, disc %s, game patches %s%s, config %s", id.build.c_str(), disc.c_str(), id.config["patches"].str().c_str(),
+        id.patch_files.items().empty() ? "" : (" " + id.patch_files.dump()).c_str(), id.config.dump().c_str());
+    log("binary %s", binary.c_str());
     log("transport: %s; signalling %s", lockstep::RtcChannels::available() ? "WebRTC data channels, relay as fallback" : "relay only (built without libdatachannel)",
         options.signal.c_str());
 

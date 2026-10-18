@@ -6,6 +6,10 @@ set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
 set(PS2_GENERATED "" CACHE PATH "Folder with the C++ generated for a game")
 
+# lockstep co-op: the same sources must compute the same floats on every peer (desktop and browser), so no FMA
+# contraction even when a -march allows it
+add_compile_options(-ffp-contract=off)
+
 if(EMSCRIPTEN)
     add_compile_options(-msimd128 -mtail-call -fwasm-exceptions -sWASM_LEGACY_EXCEPTIONS=0 -pthread)
     add_link_options(-msimd128 -mtail-call -fwasm-exceptions -sWASM_LEGACY_EXCEPTIONS=0 -pthread)
@@ -93,10 +97,18 @@ if(PS2_GENERATED)
     target_link_libraries(ps2game PUBLIC ps2runtime)
     target_compile_options(ps2game PRIVATE -Wno-unused-label -Wno-unused-variable)
 
+    # lockstep build id: a hash of the emulation sources (cmake/build_id.cmake), the same for ps2run and ps2web
+    file(GLOB_RECURSE PS2_ID_SOURCES CONFIGURE_DEPENDS runtime/src/* runtime/include/*)
+    file(GLOB PS2_ID_GENERATED CONFIGURE_DEPENDS "${PS2_GENERATED}/*")
+    set(PS2_BUILD_ID "${CMAKE_BINARY_DIR}/lockstep_build_id.cpp")
+    add_custom_command(OUTPUT "${PS2_BUILD_ID}"
+        COMMAND ${CMAKE_COMMAND} -DROOT=${CMAKE_SOURCE_DIR} -DGENERATED=${PS2_GENERATED} -DOUT=${PS2_BUILD_ID} -P ${CMAKE_SOURCE_DIR}/cmake/build_id.cmake
+        DEPENDS ${PS2_ID_SOURCES} ${PS2_ID_GENERATED} cmake/build_id.cmake)
+
     if(EMSCRIPTEN)
         set(PS2_WEB_ELF "" CACHE FILEPATH "Game executable preloaded as /game/core.elf")
         set(PS2_WEB_BOOT_FILE "" CACHE FILEPATH "Text file holding the argv[0] the game sees, preloaded as /game/boot.txt")
-        add_executable(ps2web host/web.cpp)
+        add_executable(ps2web host/web.cpp host/lockstep_id.cpp "${PS2_BUILD_ID}")
         if(PS2_WEB_BOOT_FILE)
             target_link_options(ps2web PRIVATE "SHELL:--preload-file \"${PS2_WEB_BOOT_FILE}@/game/boot.txt\"")
         endif()
@@ -118,7 +130,7 @@ if(PS2_GENERATED)
     find_package(OpenSSL QUIET)
     find_package(LibDataChannel QUIET)
     if(ZLIB_FOUND AND CMAKE_SYSTEM_NAME STREQUAL "Linux")
-        target_sources(ps2run PRIVATE host/lockstep.cpp host/lockstep_net.cpp host/lockstep_rtc.cpp)
+        target_sources(ps2run PRIVATE host/lockstep.cpp host/lockstep_id.cpp host/lockstep_net.cpp host/lockstep_rtc.cpp "${PS2_BUILD_ID}")
         target_compile_definitions(ps2run PRIVATE PS2_LOCKSTEP)
         target_link_libraries(ps2run PRIVATE ZLIB::ZLIB Threads::Threads)
         if(OpenSSL_FOUND)

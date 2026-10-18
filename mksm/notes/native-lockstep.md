@@ -36,16 +36,26 @@ ps2run <elf> --disc disc.iso --invite 'https://host/invite?t=…&room=<id>'
 ## What both peers must share (the handshake)
 
 `hello {t, proto, build, disc, config, patchFiles}`; `proto`, `build`, `disc` and `config` are compared as JSON text,
-exactly as `lockstep.js` does. A mismatch sends `{t:'refuse', reason, detail}` and both sides stop with the detail.
+exactly as `lockstep.js` does. A mismatch sends `{t:'refuse', reason, detail}` and both sides stop with the detail
+(the page shows a desktop peer's `detail` too). `build`, `config` and `patchFiles` come from one function,
+`lockstep::identity()` (`host/lockstep_id.cpp`), which the desktop calls directly and the browser through the wasm
+export `ps2web_lockstep_identity()` (`lockstep-emu.js` `identity(Module)`), so a desktop and a browser built from
+the same sources announce the same values.
 
-| Field | Native value |
+| Field | Value (desktop and browser) |
 |---|---|
-| `build` | XXH64 of the running executable (`/proc/self/exe`). Peers must run the same binary: another compiler or flags can change float results. The signalling room is pinned to it. |
+| `build` | 16 hex digits of a SHA-256 over the emulation sources: `runtime/src`, `runtime/include` (without the GPU renderer `gs/gpu/` and the texture pack, which only change pixels) and the game's generated C++ (`cmake/build_id.cmake`, regenerated when one of them changes). The signalling room is pinned to it. The executable's own XXH64 is only logged (`[lockstep] binary …`). Everything is compiled with `-ffp-contract=off`, so a `-march` with FMA cannot change float results. |
 | `disc` | `size:sha256(first MB)`, the browser's `discId` format. |
-| `config.patches` | XXH64 of the `PS2_PNACH` files' content, in order (`none` without patches). The widescreen pnach changes game state, so it must match; texture packs, `PS2_SCALE`, `PS2_ASPECT`, post FX and the GS renderer are local and not compared. |
-| `config.rate` | `auto`, or `pal`/`ntsc` when forced. |
-| `config.env` | Every `PS2_*` variable that is not on the local-only list (`local_only()` in `host/lockstep.cpp`), as `NAME=value`. |
+| `config.lockstep` | `1`. |
+| `config.rate` | `auto`, or `pal`/`ntsc` when forced (`--pal`/`--ntsc`; the browser cannot force it). |
+| `config.patches` | XXH64 of the `PS2_PNACH` files' content, in order (`none` without patches). The widescreen pnach changes game state, so it must match. The page passes no patch today, so a browser peer only plays with an unpatched desktop. |
+| `config.env` | Every `PS2_*` variable that is not on the local-only list (`local_only()`), as `NAME=value`, sorted. The page now copies every `PS2_*` URL parameter into the environment in lockstep mode too, so the same rule applies on both sides. Local-only: renderer, scale, aspect, texture packs, deinterlace, hash/trace/profile/dump logging, threading (`PS2_THREADS`, `PS2_NO_VU_THREAD`, the page's `lsvu=0`), `PS2_VU_JIT` (pinned in the browser's lockstep mode, absent on the desktop), `PS2_PNACH` (compared by content), `PS2_RTC`. |
 | `patchFiles` | File names of the patches, only used to word a refusal. |
+
+The browser's old fields are gone: `gs` (presentation), `vuThread` (threaded and single-threaded peers compute the
+same state; measured natively and browser against desktop below) and `vuJit` (always on in the browser's lockstep
+mode; the browser runs the same AOT VU1 programs and JITs only programs missing from them, where the desktop
+interprets). The old browser build id (a hash of the wasm's HTTP headers) is replaced by the source hash.
 
 The host's RTC epoch (its `PS2_RTC` or the wall clock) travels in the drop-in meta and the guest installs it with the
 state.

@@ -274,8 +274,8 @@ export class Lockstep {
 
   async handshake() {
     this.setStatus('handshake');
-    const { build, disc, config } = this.opts;
-    const hello = { t: 'hello', proto: PROTOCOL, build, disc, config };
+    const { build, disc, config, patchFiles = [] } = this.opts;
+    const hello = { t: 'hello', proto: PROTOCOL, build, disc, config, patchFiles }; // patchFiles: not compared
     this.sendCtl(hello);
     const peer = await this.waitCtl('hello', 10000);
     const why = ['proto', 'build', 'disc', 'config'].find((k) => JSON.stringify(peer[k]) !== JSON.stringify(hello[k]));
@@ -316,12 +316,12 @@ export class Lockstep {
   }
 
   // Mismatch found here (local) or by the peer: both stop; a pending connect() rejects.
-  refuse(reason, local) {
+  refuse(reason, local, detail) {
     const err = new Error('lockstep handshake refused: ' + reason);
     if (!this.refused) {
       this.refused = reason;
       this.setStatus('refused: ' + reason);
-      this.emit('refused', { reason, local });
+      this.emit('refused', { reason, local, detail });
       for (const list of this.ctlWaiters.values()) for (const w of list.splice(0)) w(null, err);
       this.close();
     }
@@ -656,7 +656,7 @@ export class Lockstep {
         this.remoteHashes.set(msg.f, msg.h);
         if (msg.x) this.remoteExtra.set(msg.f, msg.x);
         return this.compareHash(msg.f);
-      case 'refuse': return this.refuse(msg.reason, false);
+      case 'refuse': return this.refuse(msg.reason, false, msg.detail); // detail: a desktop peer words the mismatch
       case 'delay': this.setDelay(msg.D); this.rtts.push(msg.rtt.p50); this.emit('resync', { D: msg.D, rtt: msg.rtt }); return this.log(`host set D=${msg.D}`);
       case 'resync-request': if (this.isHost) this.resync(); return;
       case 'resync-begin': return;

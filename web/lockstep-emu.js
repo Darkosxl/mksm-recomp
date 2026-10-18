@@ -112,12 +112,15 @@ export class Emu {
   }
 }
 
-// Build and disc ids for the handshake (a mismatch refuses the join).
-export async function buildId(url = 'ps2web.wasm') {
-  const r = await fetch(url, { method: 'HEAD', cache: 'no-store' });
-  const text = `${r.headers.get('content-length')}|${r.headers.get('last-modified')}|${r.headers.get('etag')}`;
-  const digest = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(text));
-  return [...new Uint8Array(digest)].slice(0, 8).map((b) => b.toString(16).padStart(2, '0')).join('');
+// Build id, config and patch file names for the handshake (a mismatch refuses the join), from the emulator itself
+// (host/lockstep_id.cpp), so a desktop ps2run built from the same sources announces the same values:
+// build = hash of the emulation sources, config = {lockstep, rate, patches, env}. Call after the runtime is
+// initialized and Module.ENV is set (config.env lists the game-affecting PS2_* variables).
+export function identity(M) {
+  const p = M._ps2web_lockstep_identity();
+  const id = JSON.parse(new TextDecoder().decode(M.HEAPU8.slice(p, M.HEAPU8.indexOf(0, p))));
+  if (id.error) throw new Error(id.error);
+  return id;
 }
 export async function discIdOf(url, size) {
   const r = await fetch(url, { headers: { Range: 'bytes=0-1048575' } });
@@ -125,7 +128,7 @@ export async function discIdOf(url, size) {
 }
 
 export class Session {
-  // opts: Module, room, build, disc, config, readPad, signal, rtc, log, test, onStatus, overlay (bool)
+  // opts: Module, room, build, disc, config, patchFiles, readPad, signal, rtc, log, test, onStatus, overlay (bool)
   constructor(opts) {
     this.opts = { log: console.log, overlay: true, ...opts };
     this.emu = new Emu(opts.Module);
@@ -141,9 +144,9 @@ export class Session {
   status(text) { this.statusText = text; this.opts.onStatus?.(text); }
 
   newLockstep() {
-    const { Module, room, build, disc, config, readPad, signal, test } = this.opts;
+    const { Module, room, build, disc, config, patchFiles, readPad, signal, test } = this.opts;
     const ls = new Lockstep({
-      buffer: Module.HEAPU8.buffer, base: this.emu.base, room, build, disc, config, readPad, test: test || {},
+      buffer: Module.HEAPU8.buffer, base: this.emu.base, room, build, disc, config, patchFiles, readPad, test: test || {},
       ...(signal ? { signal } : {}),
       log: (...a) => this.opts.log('[lockstep]', ...a), overlay: this.opts.overlay,
       sync: (l, isHost) => (isHost ? this.hostSync(l) : this.guestSync(l)),
@@ -154,7 +157,7 @@ export class Session {
     ls.onMessage = (m) => this.onMessage(m);
     ls.onSolo = () => this.onSolo();
     ls.onStart = (d) => { this.status(`playing as P${d.slot + 1}, input delay ${d.D} frames`); this.opts.onStart?.(d); };
-    ls.onRefused = ({ reason }) => this.status('the other player runs a different ' + reason);
+    ls.onRefused = ({ reason, detail }) => this.status(detail || 'the other player runs a different ' + reason);
     return ls;
   }
 

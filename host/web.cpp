@@ -1,3 +1,4 @@
+#include "lockstep_id.hpp"
 #include "ps2/disc.hpp"
 #include "ps2/memory.hpp"
 #include "ps2/system.hpp"
@@ -639,6 +640,13 @@ extern "C" EMSCRIPTEN_KEEPALIVE void *ps2web_audio_ring() { return &g_audio; }
 extern "C" EMSCRIPTEN_KEEPALIVE void *ps2web_lockstep() { return &g_ls; }
 extern "C" EMSCRIPTEN_KEEPALIVE void *ps2web_alloc(int size) { return std::malloc(static_cast<std::size_t>(size)); }
 extern "C" EMSCRIPTEN_KEEPALIVE void ps2web_free(void *p) { std::free(p); }
+// The hello's build and config as a desktop peer computes them (host/lockstep_id.cpp), JSON for web/lockstep-emu.js
+extern "C" EMSCRIPTEN_KEEPALIVE const char *ps2web_lockstep_identity() {
+    static std::string json;
+    const lockstep::Identity id = lockstep::identity();
+    json = lockstep::Json::object().set("build", id.build).set("config", id.config).set("patchFiles", id.patch_files).set("error", id.error).dump();
+    return json.c_str();
+}
 // test hook for the forced-desync test: flips one byte of EE RAM on this peer only
 extern "C" EMSCRIPTEN_KEEPALIVE void ps2web_debug_corrupt(int offset) { ps2::g_ram[static_cast<std::uint32_t>(offset) & (ps2::kRamSize - 1)] ^= 0x5A; }
 extern "C" EMSCRIPTEN_KEEPALIVE double ps2web_audio_queued_ms() { return audio_queued_ms(); }
