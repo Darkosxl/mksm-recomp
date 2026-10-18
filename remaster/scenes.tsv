@@ -1,0 +1,13 @@
+# scene	state (remaster-data/states)	capture frame	inputs (@story/@koop = mksm/inputs/*.args)
+menu	menu.state	2400	@story
+charsel	charsel.state	2700	@story
+fmv	fmv.state	4200	@story
+raiden	raiden.state	6200	@story
+goro	g7600.state	8000	@story
+pause	g7600.state	7900	--press 7700:start
+koop	koop.state	7000	@koop
+academy	academy.state	10000	
+forest	forest.state	11000	
+nether	nether.state	11400	
+kahn	kahn.state	10200	
+foundry	foundry.state	14200	
