@@ -109,8 +109,10 @@ if(PS2_GENERATED)
         return()
     endif()
 
-    add_executable(ps2run host/main.cpp)
-    target_link_libraries(ps2run PRIVATE ps2game ps2runtime)
+    # lockstep co-op (host/lockstep.hpp): web/lockstep.js's protocol over the signalling server's relay, POSIX sockets only
+    find_package(Threads REQUIRED)
+    add_executable(ps2run host/main.cpp host/lockstep.cpp host/lockstep_net.cpp)
+    target_link_libraries(ps2run PRIVATE ps2game ps2runtime Threads::Threads)
     if(CMAKE_SYSTEM_NAME STREQUAL "Linux" AND CMAKE_SYSTEM_PROCESSOR MATCHES "x86_64|AMD64")
         target_sources(ps2run PRIVATE host/profile.cpp)
         target_compile_definitions(ps2run PRIVATE PS2_PROFILE)

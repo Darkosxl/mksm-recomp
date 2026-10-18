@@ -141,3 +141,11 @@ Results from 2026-10-16 (Chromium 152, one laptop, mock emulator). Stall counts 
 | Pause | Host `setPaused` or guest `visibilitychange`: both freeze on the same frame and game frame, and resume on the same frame. Hashes stay identical. |
 | 40 MB random blob | sha256 intact. 1.29 s end to end (31 MB/s); gzip is 41.96 MB because the data is random. During the transfer the running game stalled 17 / 11 frames (≈0.5 s). |
 | Guest page closed | Overlay after 3.02 s; solo after 15.02 s with `active=0`, 60 fps. |
+
+## Native peers
+
+`ps2run --lockstep ws://… --room id|new` (`host/lockstep.cpp`) speaks this protocol from the desktop build; see
+`mksm/notes/native-lockstep.md`. It has no WebRTC: it sends `{type:'transport', mode:'relay'}` as soon as it is in
+a room with a peer (or in answer to a browser's offer), and both data channels then run over the signalling relay,
+which this file's `useRelay` already handles. Its `hello` adds `patchFiles` (ignored here) and its refusals add a
+human-readable `detail` next to `reason`; its `start` adds the host's `rtc` epoch.

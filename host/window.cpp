@@ -71,6 +71,10 @@ SDL_GameController *g_pads[2] = {};
 bool g_keyboard_pad2 = false;
 bool g_remote_pad2 = false;
 std::function<std::string()> g_status;
+// lockstep co-op: the frame gate replaces pace() (it waits for both inputs and keeps 59.94 Hz), and the first
+// controller goes to the pad sink instead of straight to the guest
+std::function<void()> g_frame_gate;
+WindowPadSink g_pad_sink;
 std::uint32_t g_tex_w = 0, g_tex_h = 0;
 std::uint64_t g_last = 0;
 std::vector<std::uint32_t> g_pixels;
@@ -190,6 +194,10 @@ void poll_port(int port) {
         ry = axis(pad, SDL_CONTROLLER_AXIS_RIGHTY);
     }
     rumble(port);
+    if (g_pad_sink && port == 0) {
+        g_pad_sink(pressed, lx, ly, rx, ry, l2, r2);
+        return;
+    }
     static std::uint64_t last[2] = {~0ull, ~0ull};
     const std::uint64_t state = pressed | (static_cast<std::uint64_t>(rx) << 16) | (static_cast<std::uint64_t>(ry) << 24) | (static_cast<std::uint64_t>(lx) << 32) |
                                 (static_cast<std::uint64_t>(ly) << 40) | (static_cast<std::uint64_t>(l2) << 48) | (static_cast<std::uint64_t>(r2) << 56);
@@ -319,7 +327,8 @@ void on_vblank() {
     show_speed();
     poll();
     present();
-    pace();
+    if (g_frame_gate) g_frame_gate();
+    else pace();
 }
 
 void queue_audio(const std::int16_t *samples, std::size_t frames) {
@@ -334,6 +343,13 @@ void window_queue_audio(const std::int16_t *samples, std::size_t frames) {
 }
 
 void set_window_status(std::function<std::string()> status) { g_status = std::move(status); }
+
+void set_window_lockstep(std::function<void()> frame_gate, WindowPadSink pad_sink) {
+    g_frame_gate = std::move(frame_gate);
+    g_pad_sink = std::move(pad_sink);
+}
+
+double window_audio_queued_ms() { return g_audio ? SDL_GetQueuedAudioSize(g_audio) / static_cast<double>(kAudioBytesPerMs) : 0.0; }
 
 bool open_window(bool fullscreen, bool keyboard_pad2, bool remote_pad2) {
     g_keyboard_pad2 = keyboard_pad2;
@@ -377,7 +393,8 @@ int run_window(const std::function<int()> &emulate) {
     }
     ps2::g_options.on_vblank = [] {
         ps2::post_present();
-        pace();
+        if (g_frame_gate) g_frame_gate();
+        else pace();
     };
     ps2::start_render_thread();
     if (!std::getenv("PS2_NO_VU_THREAD")) {

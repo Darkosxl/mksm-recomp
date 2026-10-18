@@ -9,6 +9,7 @@
 #ifdef PS2_NETPLAY
 #include "netplay.hpp"
 #endif
+#include "lockstep.hpp"
 
 #include <atomic>
 #include <cctype>
@@ -25,11 +26,17 @@ void register_generated_vu();
 
 namespace {
 
+// runs at every vblank after the frame is handed to the renderer: lockstep waits there for both players' inputs
+std::function<void()> g_frame_gate;
+
 // PS2_THREADS=1 (debug): headless run with the browser's thread layout (render thread on main, VU1 thread unless
 // PS2_NO_VU_THREAD, emulation on its own thread), unpaced, so thread-timing determinism can be tested without a window.
 int run_threaded_headless(const std::function<int()> &emulate) {
     ps2::init_graphics();
-    ps2::g_options.on_vblank = [] { ps2::post_present(); };
+    ps2::g_options.on_vblank = [] {
+        ps2::post_present();
+        if (g_frame_gate) g_frame_gate();
+    };
     ps2::start_render_thread();
     if (!std::getenv("PS2_NO_VU_THREAD")) {
         ps2::start_vu_thread();
@@ -59,7 +66,8 @@ int usage() {
                  "              [--stick frame:[p2:]lx,ly[:frames]]... [--stick2 frame:lx,ly[:frames]]... [--pad2]\n"
                  "              [--window] [--fullscreen]\n"
                  "              [--host [port]] [--stun stun:host:port] [--bitrate kbit/s] [--encoder h264_nvenc|libx264]\n"
-                 "              [--save-state frame:file] [--load-state file]\n");
+                 "              [--save-state frame:file] [--load-state file]\n"
+                 "              [--lockstep ws://signal-server [--room id|new]]   (invite cookie: PS2_LOCKSTEP_COOKIE)\n");
     return 2;
 }
 
@@ -73,6 +81,8 @@ int main(int argc, char **argv) {
     // a second controller is plugged into port 2 when asked for, or when the input script drives it
     bool pad2 = false;
     [[maybe_unused]] bool host = false;
+    bool lockstep = false;
+    LockstepOptions ls;
 #ifdef PS2_NETPLAY
     NetplayOptions net;
 #endif
@@ -102,6 +112,11 @@ int main(int argc, char **argv) {
             ps2::g_options.presses.push_back(press);
         }
         else if (a == "--pad2") pad2 = true;
+        else if (a == "--lockstep" && i + 1 < argc) {
+            lockstep = true;
+            ls.signal = argv[++i];
+        }
+        else if (a == "--room" && i + 1 < argc) ls.room = argv[++i];
 #ifdef PS2_NETPLAY
         else if (a == "--host") {
             host = true;
@@ -127,11 +142,36 @@ int main(int argc, char **argv) {
         else return usage();
     }
 
+    if (lockstep && host) {
+        std::fprintf(stderr, "--lockstep and --host are different kinds of co-op: pick one\n");
+        return 2;
+    }
+    if (lockstep) {
+        // lockstep co-op (host/lockstep.hpp): both ports come from the input ring; scripted presses become the local
+        // player's lines (p1 for the room's host, p2 for the guest), applied by lockstep frame
+        ps2::g_options.lockstep = true;
+        if (const char *cookie = std::getenv("PS2_LOCKSTEP_COOKIE")) ls.cookie = cookie;
+        ls.disc_path = ps2::g_options.disc_path;
+        ls.load_path = load_path;
+        ls.memcard_path = ps2::g_options.memcard_path;
+        ls.boot_args = args;
+        ls.script = std::move(ps2::g_options.presses);
+        ps2::g_options.presses.clear();
+        g_frame_gate = lockstep_vblank;
+    }
     // a network player owns controller 2, which stays plugged in from boot so the game always sees it
-    if (pad2 || host) ps2::set_pad_connected(1, true);
+    if (pad2 || host || lockstep) ps2::set_pad_connected(1, true);
 #ifdef PS2_WINDOW
-    if (window && !open_window(fullscreen, pad2 && !host, host)) return 1;
+    if (window && !open_window(fullscreen, pad2 && !host && !lockstep, host || lockstep)) return 1;
+    if (window && lockstep) {
+        ls.audio_queued_ms = window_audio_queued_ms;
+        set_window_lockstep(lockstep_vblank, [](std::uint16_t buttons, std::uint8_t lx, std::uint8_t ly, std::uint8_t rx, std::uint8_t ry, std::uint8_t l2, std::uint8_t r2) {
+            lockstep_local_pad({buttons, lx, ly, rx, ry, l2, r2});
+        });
+        set_window_status(lockstep_status);
+    }
 #endif
+    if (lockstep && !lockstep_start(ls)) return 1;
 #ifdef PS2_NETPLAY
     if (host) {
         if (!netplay_start(net)) return 1;
@@ -149,7 +189,7 @@ int main(int argc, char **argv) {
 #endif
     register_generated_code();
     register_generated_vu();
-    const auto emulate = [&]() -> int {
+    const auto boot_and_run = [&]() -> int {
         std::uint32_t entry = 0;
         if (!ps2::load_elf(argv[1], entry)) {
             std::fprintf(stderr, "cannot load %s\n", argv[1]);
@@ -161,12 +201,20 @@ int main(int argc, char **argv) {
         const char *profile = std::getenv("PS2_PROFILE");
         const char *profile_from = std::getenv("PS2_PROFILE_FROM");
         if (profile) start_profile(profile_from ? std::strtoull(profile_from, nullptr, 10) : 0);
-        const int result = ps2::run();
+        int result = ps2::run();
         if (profile) write_profile(profile);
-        return result;
 #else
-        return ps2::run();
+        int result = ps2::run();
 #endif
+        return result;
+    };
+    const auto emulate = [&]() -> int {
+        int result = boot_and_run();
+        if (lockstep) {
+            const int session = lockstep_finish();  // also stops the network thread
+            if (!result) result = session;
+        }
+        return result;
     };
 #ifdef PS2_WINDOW
     if (window) return run_window(emulate);
@@ -175,5 +223,6 @@ int main(int argc, char **argv) {
     if (host) return run_netplay_headless(emulate);
 #endif
     if (std::getenv("PS2_THREADS")) return run_threaded_headless(emulate);
+    if (g_frame_gate) ps2::g_options.on_vblank = g_frame_gate;
     return emulate();
 }
