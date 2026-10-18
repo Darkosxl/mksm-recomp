@@ -3,7 +3,7 @@
 # from boot, the state is at 7600; maps load in 800-1400) and dumps every texture drawn into
 # remaster-data/textures/dump (texdump.sh does the same for the reference scenes). One run at a time, a pause between
 # runs, and a RAM/VRAM check before each (HARVEST_MIN_RAM=MB, default 4096; waits up to 10 min, then stops).
-# ponytail: only what the camera sees at the map's spawn point gets dumped; walking the maps would add more.
+# Only what the camera sees at the spawn point is dumped; walking (stick loops + fights, map 67) found 0 new of 87.
 # usage: remaster/harvest.sh [map id...]   (hex, default: every story map; runs on the Pi too, with PS2_GS=soft)
 set -uo pipefail
 here=$(cd "$(dirname "$0")/.." && pwd)
