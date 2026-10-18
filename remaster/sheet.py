@@ -12,7 +12,8 @@ thumbs = []
 for f in files:
     im = Image.open(f).convert('RGB')
     im = im.resize((width, im.height * width // im.width))
-    ImageDraw.Draw(im).text((4, 4), Path(f).stem.replace('frame_', 'f'), fill=(255, 255, 0))
+    label = Path(f).parent.name if Path(f).stem == 'frame' else Path(f).stem.replace('frame_', 'f')
+    ImageDraw.Draw(im).text((4, 4), label, fill=(255, 255, 0))
     thumbs.append(im)
 h = thumbs[0].height
 rows = (len(thumbs) + cols - 1) // cols
