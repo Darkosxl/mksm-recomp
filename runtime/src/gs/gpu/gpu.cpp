@@ -1,4 +1,5 @@
 #include "gpu.hpp"
+#include "../drawdbg.hpp"
 #include "ps2/system.hpp"
 
 #include <webgpu/webgpu.h>
@@ -82,7 +83,7 @@ struct Command {
 
 struct CommandInfo {
     std::size_t index;
-    std::uint32_t values[8];
+    std::uint32_t values[9];
 };
 std::vector<CommandInfo> g_command_info;
 std::FILE *g_profile_out = nullptr;
@@ -144,6 +145,7 @@ struct Batch {
     std::size_t run_start = 0;
     int rx0 = 0, ry0 = 0, rx1 = -2, ry1 = -2;
     Range fb_range, z_range;
+    std::vector<std::pair<std::uint32_t, std::uint32_t>> dbg_draws;  // frame debugger: (draw id, primitives) in this batch
 } g_batch;
 
 struct SetupCache {
@@ -540,7 +542,9 @@ void note_raster(std::uint32_t prims, std::uint32_t tiles, std::uint32_t entries
     const std::uint32_t *first = b.setups.data();
     std::uint32_t textured = 0;
     for (std::uint32_t i = 0; i < prims; ++i) textured += (b.setups[b.prims[i * kPrimWords] * kSetupWords] & 2u) ? 1u : 0u;
-    g_command_info.push_back({g_commands.size(), {prims, tiles, entries, snapshot, b.prims[1], first[3] | (first[14] << 8) | (first[6] << 16), first[0], textured}});
+    static std::uint32_t seq = 0;
+    g_command_info.push_back({g_commands.size(), {prims, tiles, entries, snapshot, b.prims[1], first[3] | (first[14] << 8) | (first[6] << 16), first[0], textured, ++seq}});
+    if (drawdbg::enabled()) drawdbg::batch(seq, b.dbg_draws);
 }
 
 void flush_batch() {
@@ -606,6 +610,7 @@ void flush_batch() {
     b.prims.clear();
     b.setups.clear();
     b.boxes.clear();
+    b.dbg_draws.clear();
     g_batch_reads.clear();
     b.key = ~0ull;
     b.minx = b.miny = 1 << 30;
@@ -1457,6 +1462,12 @@ void draw(const State &st, const Vertex *v, int count, texcache::Run run) {
     rec[2] = static_cast<std::uint32_t>(minx) | (static_cast<std::uint32_t>(miny) << 16);
     rec[3] = static_cast<std::uint32_t>(maxx) | (static_cast<std::uint32_t>(maxy) << 16);
     b.prims.insert(b.prims.end(), rec, rec + kPrimWords);
+    if (drawdbg::enabled()) {
+        if (const std::uint32_t id = drawdbg::current_draw(); id != ~0u) {
+            if (!b.dbg_draws.empty() && b.dbg_draws.back().first == id) ++b.dbg_draws.back().second;
+            else b.dbg_draws.emplace_back(id, 1u);
+        }
+    }
     b.boxes.push_back(rec[2]);
     b.boxes.push_back(rec[3]);
     b.minx = std::min(b.minx, minx);

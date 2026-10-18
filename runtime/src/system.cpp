@@ -1,6 +1,7 @@
 #include "debug.hpp"
 #include "dmac.hpp"
 #include "hash64.hpp"
+#include "gs/drawdbg.hpp"
 #include "gs/gif.hpp"
 #include "vif.hpp"
 #include "vu_micro.hpp"
@@ -835,7 +836,10 @@ void run_vu_thread() {
         while (in.peek(h, payload)) {
             debug::jitter(2);
             switch (h.type) {
-            case gs::queue::kVif1: vif::transfer(1, payload, h.arg0); break;
+            case gs::queue::kVif1:
+                if (gs::drawdbg::enabled()) gs::drawdbg::set_vif1_ra(h.arg1);
+                vif::transfer(1, payload, h.arg0);
+                break;
             case gs::queue::kVif1Write: vif::write(1, h.arg0, h.arg1); break;
             case gs::queue::kVuReset:
                 vif::reset_vu_side();

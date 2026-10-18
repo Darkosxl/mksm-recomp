@@ -2,6 +2,7 @@
 
 #include "hash64.hpp"
 
+#include "gs/drawdbg.hpp"
 #include "gs/gif.hpp"
 #include "gs/queue.hpp"
 #include "vu_jit_web.hpp"
@@ -451,6 +452,7 @@ float u2f(std::uint32_t v) {
 struct PendingKick {
     std::uint32_t start, count;
     std::vector<std::uint8_t> data;
+    gs::drawdbg::Source source{};
 };
 std::vector<PendingKick> g_pending_kicks;
 
@@ -477,7 +479,8 @@ void xgkick(Unit &u, std::uint32_t address) {
         done = eop;
     }
     if (u.regs == &g_vu1) {
-        g_pending_kicks.push_back(PendingKick{address & (u.data_qwords - 1), count, std::vector<std::uint8_t>(buffer, buffer + count * 16)});
+        g_pending_kicks.push_back(PendingKick{address & (u.data_qwords - 1), count, std::vector<std::uint8_t>(buffer, buffer + count * 16),
+                                              gs::drawdbg::enabled() ? gs::drawdbg::vu1_source() : gs::drawdbg::Source{}});
         return;
     }
     gif::transfer(1, buffer, count);
@@ -685,7 +688,10 @@ void flush_kicks() {
     if (g_pending_kicks.empty() || !vu1_on_this_thread()) return;
     std::vector<PendingKick> kicks;
     kicks.swap(g_pending_kicks);
-    for (const PendingKick &k : kicks) gif::transfer(1, k.data.data(), k.count);
+    for (const PendingKick &k : kicks) {
+        if (gs::drawdbg::enabled()) gs::drawdbg::set_kick_source(k.source);
+        gif::transfer(1, k.data.data(), k.count);
+    }
 }
 
 bool kicks_pending() { return !g_pending_kicks.empty(); }

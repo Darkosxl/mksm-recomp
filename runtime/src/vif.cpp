@@ -1,6 +1,7 @@
 #include "vif.hpp"
 
 #include "dmac.hpp"
+#include "gs/drawdbg.hpp"
 #include "gs/gif.hpp"
 #include "gs/queue.hpp"
 #include "hw.hpp"
@@ -279,7 +280,10 @@ void execute(int unit, std::uint32_t cmd, const std::uint32_t *data, std::uint32
     case 0x10: case 0x11: case 0x13:
         if (unit == 1 && !shadow(unit)) vu::flush_kicks();
         break;
-    case 0x14: case 0x15: run_vu(unit, imm * 8u); break;
+    case 0x14: case 0x15:
+        if (unit == 1 && !shadow(unit) && gs::drawdbg::enabled()) gs::drawdbg::vu1_start(imm * 8u, g_vu1_code);
+        run_vu(unit, imm * 8u);
+        break;
     case 0x17: run_vu(unit, shadow(unit) ? 0u : vu::tpc(unit)); break;
     case 0x20: u.mask = data[0]; break;
     case 0x30: std::memcpy(u.row, data, 16); break;
@@ -355,7 +359,7 @@ void stats() {
 }
 
 void transfer(int unit, const std::uint8_t *data, std::uint32_t qwc) {
-    if (shadow(unit)) gs::queue::vu().post(gs::queue::kVif1, qwc, 0, data, qwc * 16);
+    if (shadow(unit)) gs::queue::vu().post(gs::queue::kVif1, qwc, gs::drawdbg::enabled() ? gs::drawdbg::vif1_ra() : 0, data, qwc * 16);
     Unit &u = state(unit);
     if (u.pending.empty() && !u.stalled) {
         const auto *words = reinterpret_cast<const std::uint32_t *>(data);

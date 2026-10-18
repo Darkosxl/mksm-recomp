@@ -1,5 +1,6 @@
 #include "gif.hpp"
 
+#include "drawdbg.hpp"
 #include "gs.hpp"
 #include "queue.hpp"
 #include "../vu_micro.hpp"
@@ -7,6 +8,7 @@
 #include "ps2/state.hpp"
 
 #include <algorithm>
+#include <chrono>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
@@ -168,11 +170,19 @@ void render_reset() {
 
 void render(int path, const std::uint8_t *data, std::uint32_t qwc) {
     GsSink sink{path};
+    if (!gs::drawdbg::enabled()) return walk(g_paths[path], data, qwc, sink);
+    const auto start = std::chrono::steady_clock::now();
     walk(g_paths[path], data, qwc, sink);
+    gs::drawdbg::gif_time(static_cast<std::uint64_t>(std::chrono::duration_cast<std::chrono::nanoseconds>(std::chrono::steady_clock::now() - start).count()));
 }
 
 void transfer(int path, const std::uint8_t *data, std::uint32_t qwc) {
     if (path != 1) vu::flush_kicks();
+    if (gs::drawdbg::enabled()) {
+        const gs::drawdbg::Source src = gs::drawdbg::packet_source(path);
+        if (gs::queue::active()) gs::queue::post(gs::queue::kTag, static_cast<std::uint32_t>(path), 0, &src, sizeof src);
+        else gs::drawdbg::set_tag(path, src);
+    }
     if (!gs::queue::active()) {
         render(path, data, qwc);
         return;

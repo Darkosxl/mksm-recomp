@@ -3,6 +3,7 @@
 
 #include "kernel.hpp"
 
+#include "gs/drawdbg.hpp"
 #include "gs/gif.hpp"
 #include "gs/gs.hpp"
 #include "ipu/ipu.hpp"
@@ -299,6 +300,7 @@ void start(int ch) {
     c.paused = false;
     c.tag_end = c.qwc && chain_ends_after_current(c);
     ++g_starts[ch];
+    if (gs::drawdbg::enabled()) gs::drawdbg::dma_start(ch, g_cpu.r[31].w[0], c.madr);
     static const bool trace = std::getenv("PS2_TRACE_DMA") != nullptr;
     if (trace) std::fprintf(stderr, "[dma] ch%d chcr 0x%08X madr 0x%08X qwc %u tadr 0x%08X thread %d%s\n", ch, c.chcr, c.madr, c.qwc, c.tadr,
                             kernel::current_thread(), kernel::in_handler() ? " (handler)" : "");

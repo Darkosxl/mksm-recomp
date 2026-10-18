@@ -660,4 +660,20 @@ void draw(const State &st, const Vertex *v, int count, texcache::Run run) {
     }
 }
 
+bool dump_texture(const State &st, const char *path) {
+    const Setup s = make_setup(st);
+    if (!s.tme || s.tw > 10 || s.th > 10) return false;
+    std::FILE *f = std::fopen(path, "wb");
+    if (!f) return false;
+    std::fprintf(f, "P7\nWIDTH %u\nHEIGHT %u\nDEPTH 4\nMAXVAL 255\nTUPLTYPE RGB_ALPHA\nENDHDR\n", 1u << s.tw, 1u << s.th);
+    const Level l = level(s, 0);
+    for (int y = 0; y < (1 << s.th); ++y)
+        for (int x = 0; x < (1 << s.tw); ++x) {
+            const std::uint32_t t = fetch(s, l, x, y);
+            std::fwrite(&t, 4, 1, f);
+        }
+    std::fclose(f);
+    return true;
+}
+
 }

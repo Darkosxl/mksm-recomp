@@ -1,5 +1,6 @@
 #include "gs.hpp"
 
+#include "drawdbg.hpp"
 #include "gif.hpp"
 #include "queue.hpp"
 #include "raster.hpp"
@@ -532,11 +533,16 @@ void kick(bool draw) {
     const int needed = prim == 0 ? 1 : (prim == 1 || prim == 2 || prim == 6) ? 2 : prim == 7 ? 1 : 3;
     if (s.count < needed) return;
     if (draw) {
+        const bool dbg = drawdbg::enabled();
+        const auto start = dbg ? std::chrono::steady_clock::now() : std::chrono::steady_clock::time_point{};
         const texcache::Run run = texcache::next(s, s.queue, needed);
-        if (cpu_raster()) raster::draw(s, s.queue, needed, run);
+        if (!dbg || drawdbg::begin_prim(s, needed)) {
+            if (cpu_raster()) raster::draw(s, s.queue, needed, run);
 #ifdef PS2_GPU
-        if (gpu_on()) gpu::draw(s, s.queue, needed, run);
+            if (gpu_on()) gpu::draw(s, s.queue, needed, run);
 #endif
+        }
+        if (dbg) drawdbg::end_prim(static_cast<std::uint64_t>(std::chrono::duration_cast<std::chrono::nanoseconds>(std::chrono::steady_clock::now() - start).count()));
         ++g_primitives;
     }
     switch (prim) {
@@ -875,10 +881,13 @@ void vblank(bool start) {
         vu::flush_kicks();
         g_odd_field = !g_odd_field;
         raise(8);
-        if (queue::active()) queue::post(queue::kVblank, 0, 0, nullptr, 0);
+        if (queue::active()) queue::post(queue::kVblank, static_cast<std::uint32_t>(frame_count()), 0, nullptr, 0);
+        else {
 #ifdef PS2_GPU
-        else if (gpu_on()) gpu::flush();
+            if (gpu_on()) gpu::flush();
 #endif
+            if (drawdbg::enabled()) drawdbg::vblank(frame_count());
+        }
     }
 }
 
@@ -1052,7 +1061,14 @@ Rendered render_pending(const std::function<void(const DisplayRegs &)> &on_prese
 #ifdef PS2_GPU
             if (gpu_on()) gpu::flush();
 #endif
+            if (drawdbg::enabled()) drawdbg::vblank(h.arg0);
             break;
+        case queue::kTag: {
+            drawdbg::Source src;
+            std::memcpy(&src, payload, sizeof src);
+            drawdbg::set_tag(static_cast<int>(h.arg0), src);
+            break;
+        }
         case queue::kPresent: {
             DisplayRegs regs;
             std::memcpy(&regs, payload, sizeof regs);
