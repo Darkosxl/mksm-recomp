@@ -268,3 +268,52 @@ hashes 12/12 unchanged, images changed in 11/12 (all but fmv), replay-identical 
 - Not done yet: the all-map harvest (warp through every story map with `PS2_TEX_DUMP`) — heavy laptop runs, waits for
   Cem's go. Alternative models (e.g. a gentler one for grainy walls) or fal.ai (Cem allowed ~$10) only if needed.
 - Laptop rules from today: ask before every heavy job; one GPU job at a time; RAM/VRAM guard before each step.
+- Cem approved the v1 look from in-game review sheets (`remaster-data/pack-v1/<scene>-review.png`): "the grass looks
+  cleaner and less blurry ... i like it" — and this is the faithful mode only; modern mode must be a bigger change.
+- Model check (`remaster-data/pack-v1/models.png`, 10 noisiest textures): x4plus stays; x4plus-anime and
+  animevideov3 smear walls and the crowd; a 50/50 x4plus+Lanczos blend is the fallback if grain shows in game.
+
+### Step 7b — story-map harvest, pack v2 (2026-10-18)
+- `remaster/harvest.sh`: warps the g7600 state to each of the 67 story maps (banks 0–4, 6 and Netherealm 0xA0;
+  not the versus arenas or dev maps) and runs 1400 frames with `PS2_TEX_DUMP`. Every map had drawn all its textures
+  within ~550 frames of the warp. Only what the camera sees at the spawn point is dumped.
+- Ran split: the Pi (soft GS, ~340 s/map, a one-off — MK:SM work stays on the laptop) from the front of the list, the
+  laptop GPU (~30 s/map, two instances, `PS2_LOCK` per instance, `HARVEST_MIN_RAM=2560` as Cem chose) from the back.
+  Keys from soft and GPU renderers are identical, so the dumps merge by file name.
+- Result: 1232 textures in `remaster-data/textures/dump` (was 284), upscaled into `textures/pack-v2`: 1211 textures
+  (fonts and textures under 16 px skipped as before), 3.8 GB as raw 4× PAM — compressed packing (BC7) and a check that a
+  scene's replacements fit the GPU region are step 10. New maps not yet reviewed in game.
+
+### Step 8 — faithful post FX (2026-10-18)
+- The game's glow (all gameplay scenes): clear by blend, 2:1 point downsample of the frame (640×224 → 320×112) into a
+  buffer at FBP 0x8c, self-multiply (FIX 32; 42–45 in nether/kahn/foundry), tint add/subtract, 18 in-place 1:1
+  copies shifted by XYOFFSET (blur, FIX 18–23), 1:2 bilinear upsample lerped onto the frame at 25%. Shadow prep reads
+  Z as a texture (2:1 too). Fog is per-vertex GS fog, nothing post. (drawdbg now records the first primitive's
+  vertices, which settled the ratios: 2:1 in both axes.)
+- Bug at scale > 1: render targets were read with the pixel's own sample index at a native texel, so the downsample
+  covered half its footprint and the upsample mixed one sample plane — a sawtooth step at every native row of the
+  glow (faint scanline banding; step ratio 2.0 across vs inside a native row).
+- Fix (a08480d): sprites that are not 1:1 and read a direct-format render target sample it on the supersampled grid
+  (`F_RT_HIRES`, own `kRasterHi` pipeline so the common raster path is unchanged). Uploads clear a page's
+  render-target mark (the FMV reuses rendered pages). Step ratio now 0.92–1.05, glow level unchanged.
+- Checks: 1× `check.sh` PASS 12/12; 3×6 state hashes identical in all 12 scenes; menu/charsel/pause/fmv images
+  unchanged; texture pack unaffected. Evidence: `remaster-data/step8/` (sheet.png, crops/).
+- fps at 3×6 (Balanced): before 42.8 goro / 36.5 nether; a first version cost 3–4 %, the final split-pipeline build
+  is not measured yet (A/B with `PS2RUN=` against the pre-fix binary).
+- Faithful side effect: sharper content now shows the 18 blur taps as faint echo bands (nether ring, kahn glove) —
+  that is the PS2 kernel; the modern variant removes it.
+- Modern variant (design): detect the chain by structure at the downsample, read its parameters from the chain
+  (FIX values, XYOFFSET shifts), run an rgba16f dual-Kawase pyramid matched to the game's kernel (σ ≈ 7×6 px, ~5 px
+  left shift, DC gain), composite +25 % with dither, behind `PS2_POSTFX=modern`, scale > 1 only.
+
+### Step 9 — desktop online co-op (2026-10-18, branch `remaster-coop`)
+- Native lockstep client speaking the browser's protocol (`web/lockstep.js` + `server/signal.mjs`): wss:// via
+  OpenSSL, WebRTC data channels via libdatachannel (`in` unreliable, `ctl` reliable; ICE from `/turn`) with the
+  WebSocket relay as fallback, drop-in (host sends state + card gzipped, guest needs no files), `--invite <link>`.
+  The handshake carries the build hash and a patch-set hash (widescreen pnach), so mismatched peers are refused.
+- Tests (localhost only): identical per-frame hashes 2000/2000 (relay), 795/795 (P2P over wss, drop-in), 769/769
+  (forced relay fallback), 497/497 (build without the optional libraries); unmodified lockstep.js as host against a
+  native guest passes the handshake, drop-in and inputs. One early P2P test leaked STUN lookups to public servers
+  (bug, fixed; `PS2_LOCKSTEP_STUN`).
+- Details and what's left (shared build id/config with the browser, real-browser WebRTC test, desync repair, UI,
+  macOS/Windows): `mksm/notes/native-lockstep.md` on `remaster-coop`.
