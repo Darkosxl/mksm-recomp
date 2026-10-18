@@ -156,6 +156,8 @@ bool parse_press(const std::string &spec, Press &press);
 // "frame:[p1:|p2:]lx,ly[:frames]", axis values 0..255 (decimal or 0x hex)
 bool parse_stick(const std::string &spec, Press &press);
 double gpu_busy_ms();
+// Width/height the frame is shown at: PS2_ASPECT=16:9 (with a widescreen game patch), default 4:3.
+float display_aspect();
 void browser_yield();
 std::uint64_t frames_run();
 std::uint64_t primitives_drawn();

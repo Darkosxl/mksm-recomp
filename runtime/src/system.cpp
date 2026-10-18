@@ -250,6 +250,33 @@ void watch_frame() {
 
 void hash_frame();
 
+// PS2_PNACH=file[,file...]: PCSX2-style "patch=1,EE,<addr>,word,<value>" lines, written to EE RAM at every vblank
+// like PCSX2's continuous patches. Only data patches take effect (code is recompiled). Game patches change what the
+// game computes: lockstep peers must use the same set.
+void apply_pnach() {
+    struct Poke { std::uint32_t addr, value; };
+    static const std::vector<Poke> pokes = [] {
+        std::vector<Poke> v;
+        const char *spec = std::getenv("PS2_PNACH");
+        const std::string list = spec ? spec : "";
+        for (std::size_t at = 0; at < list.size();) {
+            const std::size_t end = std::min(list.find(',', at), list.size());
+            const std::string file = list.substr(at, end - at);
+            at = end + 1;
+            std::ifstream in(file);
+            if (!in) std::fprintf(stderr, "[pnach] cannot read %s\n", file.c_str());
+            for (std::string line; std::getline(in, line);) {
+                unsigned addr = 0, value = 0;
+                if (std::sscanf(line.c_str(), " patch=%*[^,],EE,%x,word,%x", &addr, &value) == 2 && (addr & 0x1FFFFFFu) + 4 <= kRamSize)
+                    v.push_back({addr & 0x1FFFFFFu, value});
+            }
+            std::fprintf(stderr, "[pnach] %s: %zu word patches total\n", file.c_str(), v.size());
+        }
+        return v;
+    }();
+    for (const Poke &p : pokes) std::memcpy(g_ram + p.addr, &p.value, 4);
+}
+
 // PS2_FPS=from,to prints the emulated frame rate over that window of frames to stderr (remaster/perf.sh).
 void fps_window() {
     static const char *spec = std::getenv("PS2_FPS");
@@ -268,6 +295,7 @@ void vblank() {
     hash_frame();
     time_frames();
     fps_window();
+    apply_pnach();
     watch_frame();
     apply_presses();
     if (g_options.on_vblank) g_options.on_vblank();
@@ -975,6 +1003,15 @@ bool parse_stick(const std::string &spec, Press &press) {
 }
 
 double gpu_busy_ms() { return gs::gpu_busy_ms(); }
+
+float display_aspect() {
+    static const float aspect = [] {
+        float a = 4.0f, b = 3.0f;
+        if (const char *e = std::getenv("PS2_ASPECT")) std::sscanf(e, "%f:%f", &a, &b);
+        return a > 0.0f && b > 0.0f ? a / b : 4.0f / 3.0f;
+    }();
+    return aspect;
+}
 
 namespace debug {
 

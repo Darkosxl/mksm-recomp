@@ -13,10 +13,12 @@
 #endif
 
 #include "ps2/state.hpp"
+#include "ps2/system.hpp"
 
 #include <algorithm>
 #include <atomic>
 #include <chrono>
+#include <cmath>
 #include <stdexcept>
 #include <string>
 #include <functional>
@@ -29,6 +31,7 @@
 namespace ps2::gs {
 
 State g_state;
+int g_render_path = 0;
 std::uint32_t g_setup_generation = 0;
 
 void serve_state(const void *payload);
@@ -527,6 +530,29 @@ void reset() {
     else render_reset();
 }
 
+// Widescreen (display aspect wider than 4:3): 2D overlays on paths 2/3 (depth test ALWAYS) narrower than the frame
+// are squeezed back to their 4:3 width around the frame centre, so the HUD keeps its shape while the game patch widens
+// the 3D view. Full-width ones stay (clears, cinematic bars, fades), except textured path-3 sprites: full-screen
+// images such as movie frames, which keep their 4:3 shape (pillarboxed). Presentation only.
+const Vertex *hud_squeeze(const State &s, int n, Vertex (&out)[3]) {
+    static const float squeeze = (4.0f / 3.0f) / display_aspect();
+    if (squeeze >= 0.999f || g_render_path == 1) return s.queue;
+    const std::uint64_t eff = (s.prmodecont & 1u) ? s.prim : s.prmode;
+    const Context &c = s.ctx[(eff >> 9) & 1u];
+    if (((c.test >> 16) & 1u) && ((c.test >> 17) & 3u) != 1u) return s.queue;
+    const int width = static_cast<int>((c.frame >> 16) & 0x3Fu) * 64;
+    int x0 = s.queue[0].x, x1 = s.queue[0].x;
+    for (int i = 1; i < n; ++i) x0 = std::min<int>(x0, s.queue[i].x), x1 = std::max<int>(x1, s.queue[i].x);
+    const bool image = g_render_path == 3 && (s.prim & 7u) == 6u && ((eff >> 4) & 1u);
+    if (x1 - x0 >= (width - 40) * 16 && !image) return s.queue;
+    const int centre = static_cast<int>(c.xyoffset & 0xFFFFu) + width * 8;
+    for (int i = 0; i < n; ++i) {
+        out[i] = s.queue[i];
+        out[i].x = static_cast<std::uint32_t>(centre + static_cast<int>(std::lround((static_cast<int>(s.queue[i].x) - centre) * squeeze)));
+    }
+    return out;
+}
+
 void kick(bool draw) {
     State &s = g_state;
     const std::uint32_t prim = static_cast<std::uint32_t>(s.prim) & 7u;
@@ -537,9 +563,11 @@ void kick(bool draw) {
         const auto start = dbg ? std::chrono::steady_clock::now() : std::chrono::steady_clock::time_point{};
         const texcache::Run run = texcache::next(s, s.queue, needed);
         if (!dbg || drawdbg::begin_prim(s, needed)) {
-            if (cpu_raster()) raster::draw(s, s.queue, needed, run);
+            Vertex squeezed[3];
+            const Vertex *v = hud_squeeze(s, needed, squeezed);
+            if (cpu_raster()) raster::draw(s, v, needed, run);
 #ifdef PS2_GPU
-            if (gpu_on()) gpu::draw(s, s.queue, needed, run);
+            if (gpu_on()) gpu::draw(s, v, needed, run);
 #endif
         }
         if (dbg) drawdbg::end_prim(static_cast<std::uint64_t>(std::chrono::duration_cast<std::chrono::nanoseconds>(std::chrono::steady_clock::now() - start).count()));

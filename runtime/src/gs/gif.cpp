@@ -170,6 +170,7 @@ void render_reset() {
 
 void render(int path, const std::uint8_t *data, std::uint32_t qwc) {
     GsSink sink{path};
+    gs::g_render_path = path;
     if (!gs::drawdbg::enabled()) return walk(g_paths[path], data, qwc, sink);
     const auto start = std::chrono::steady_clock::now();
     walk(g_paths[path], data, qwc, sink);

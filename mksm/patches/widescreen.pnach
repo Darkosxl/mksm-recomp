@@ -1,0 +1,4 @@
+// MK:SM (SLUS-21087) 16:9, Hor+: the game's own dormant aspect-scale variable (1.0 -> 0.75) widens projection and
+// frustum culling. From PCSX2's SLUS-21087_455DD546.pnach (data write only; its code writes for the cinematic bars
+// and FMV height don't apply to the recompile). Changes game state: co-op peers must both use it.
+patch=1,EE,004f4b38,word,3f400000

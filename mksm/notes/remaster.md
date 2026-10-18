@@ -131,7 +131,7 @@ primitives, character program) changes no pixel of the final frame when left out
 | ui | 212 | path-2 triangles (main menu, character select) | high-res UI textures | same |
 | shadow | 141 | VU1 8a4e53a2 untextured (blob shadows) | smooth edges at high res | shadow maps |
 | clear | 11 | path 3 EE 0x275194 full-screen untextured sprite | — | — |
-| movie | 1 | path 3 EE 0x272ccc CT32 sprite | pillarbox 4:3 in 16:9 | optional upscaled movie files |
+| movie | 1 | path 3 EE 0x272ccc CT32 sprite | unchanged (Cem: keep movies as they are), 4:3 in 16:9 | unchanged |
 
 Step 4 groundwork — GPU cost per frame by stage (`PS2_GPU_PROFILE`, 60 frames, ms; dispatches per frame in brackets):
 
@@ -210,3 +210,22 @@ Where the time goes:
   which is why it sits at ~44 fps (Balanced) at any scale.
 - Open perf items (own track, not blocking the remaster features): VU1 thread (hottest program vu1_C824C29B 2 s,
   Ring::post 1.1 s, vif::run 0.9 s self), EE CSR polling, raster per-sample cost at 3×6.
+
+### Step 5 — widescreen (2026-10-18)
+Usage: `PS2_PNACH=mksm/patches/widescreen.pnach PS2_ASPECT=16:9 PS2_SCALE=4x6` (4x6 renders 2560×1344, ~1:1 at
+1440p 16:9; 2x4 is the cheaper choice).
+- **Game patch** — `PS2_PNACH=file[,file]` (runtime, generic): PCSX2-style `patch=1,EE,addr,word,value` lines written
+  to EE RAM at every vblank, as PCSX2 does. `mksm/patches/widescreen.pnach` sets the game's own aspect variable
+  0x4f4b38 to 0.75 (from PCSX2's SLUS-21087 patch): projection and frustum culling widen (Hor+). Works after loading a
+  savestate too. Changes game state: Goro widescreen state hash a0a79cca16735bee (same across runs and builds) vs
+  db151828af4addc7 at 4:3 → co-op peers must share the patch set (step 9: part of the session config).
+- **Display** — `PS2_ASPECT=16:9` (presentation): present viewport and window size follow it.
+- **HUD** (presentation, gs.cpp `hud_squeeze`): with a wider aspect, path 2/3 primitives drawn with depth test ALWAYS
+  and narrower than the frame are squeezed to their 4:3 width around the centre — HUD, text, pause menu, main-menu
+  and character-select UI keep their shape (HUD sits where it was on a 4:3 TV). Full-width ones stay (clears,
+  cinematic bars). Textured full-width path-3 sprites (movie frames, full-screen art) keep 4:3 (pillarboxed). 3D
+  particles on path 2 use ZTST GREATER/GEQUAL and are not touched.
+- Not applied from the community patch: its code writes (cinematic bar height, FMV height) — code is recompiled.
+- Modern-mode option for later: HUD anchored to the screen edges (left/right elements).
+- Movies (pre-rendered cutscenes) stay exactly as they are — no upscaling or cropping (Cem, 2026-10-18).
+- `check.sh` with widescreen off: PASS 12/12 at 1× and 3×.

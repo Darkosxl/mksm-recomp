@@ -44,6 +44,7 @@ struct State {
 };
 
 extern State g_state;
+extern int g_render_path;  // GIF path of the packet being rendered (render side)
 extern std::uint32_t g_setup_generation;
 std::uint8_t *memory();
 

@@ -55,8 +55,9 @@ WGPUBuffer g_blit_params = nullptr;
 std::uint32_t g_field = 0, g_last_width = 0, g_last_height = 0;
 bool g_have_previous = false;
 // Samples per GS word: g_sx across, g_sy down (PS2_SCALE=n or nxm). Sample k = sub_y * g_sx + sub_x; sample 0 is the
-// native position. Display output is g_sx per pixel both ways: with g_sy = 2 * g_sx a 224-line field fills a full frame.
-std::uint32_t g_sx = 1, g_sy = 1, g_samples = 1, g_copy_words = 1u << 20, g_field_words = 1u << 19;
+// native position. Display output is g_sx per pixel across and g_rows per line down (g_sx, or g_sy / 2 when g_sy > g_sx:
+// then a 224-line field fills a full frame, e.g. 3x6 -> 1920x1344, 4x6 -> 2560x1344 for 16:9).
+std::uint32_t g_sx = 1, g_sy = 1, g_rows = 1, g_samples = 1, g_copy_words = 1u << 20, g_field_words = 1u << 19;
 
 std::uint32_t field_base(std::uint32_t field) { return g_copy_words + (field & 1u) * g_field_words; }
 
@@ -934,7 +935,7 @@ void submit(WGPUTextureView present_view = nullptr) {
         rd.colorAttachments = &color;
         WGPURenderPassEncoder rp = wgpuCommandEncoderBeginRenderPass(enc, &rd);
         const float w = static_cast<float>(g_surface_width), h = static_cast<float>(g_surface_height);
-        const float vw = std::min(w, h * 4.0f / 3.0f), vh = vw * 3.0f / 4.0f;
+        const float vw = std::min(w, h * display_aspect()), vh = vw / display_aspect();
         wgpuRenderPassEncoderSetViewport(rp, (w - vw) * 0.5f, (h - vh) * 0.5f, vw, vh, 0.0f, 1.0f);
         wgpuRenderPassEncoderSetPipeline(rp, g_blit);
         wgpuRenderPassEncoderSetBindGroup(rp, 0, g_blit_group, 0, nullptr);
@@ -1213,16 +1214,17 @@ bool init(Mode m) {
         }
     }
     if (const char *scale = std::getenv("PS2_SCALE")) {
-        g_sx = g_sy = std::clamp<std::uint32_t>(static_cast<std::uint32_t>(std::atoi(scale)), 1u, 3u);
+        g_sx = g_sy = std::clamp<std::uint32_t>(static_cast<std::uint32_t>(std::atoi(scale)), 1u, 4u);
         if (const char *y = std::strchr(scale, 'x')) g_sy = std::clamp<std::uint32_t>(static_cast<std::uint32_t>(std::atoi(y + 1)), 1u, 6u);
     }
     g_samples = g_sx * g_sy;
+    g_rows = g_sy > g_sx ? g_sy / 2 : g_sx;
     g_copy_words = (1u << 20) * g_samples;
     g_tiles_per_row = (2048 * static_cast<int>(g_sx) + 15) / 16;
     const int tile_rows = (2048 * static_cast<int>(g_sy) + 15) / 16;
     g_tile_count.assign(static_cast<std::size_t>(g_tiles_per_row) * tile_rows, 0);
     g_tile_fill.assign(static_cast<std::size_t>(g_tiles_per_row) * tile_rows, 0);
-    g_field_words = (1u << 19) * g_sx * g_sx;
+    g_field_words = (1u << 19) * g_sx * g_rows;
     g_vram = make_buffer(static_cast<std::uint64_t>(kMemorySize) * g_samples, WGPUBufferUsage_Storage | WGPUBufferUsage_CopySrc | WGPUBufferUsage_CopyDst);
     std::vector<std::uint32_t> tables;
     swizzle_tables(tables);
@@ -1807,10 +1809,10 @@ bool present(const DisplaySource &src) {
     // g_sy > g_sx renders fields at full output height: blending two of them would only ghost motion
     const bool blend = src.halved && g_have_previous && g_last_width == src.width && g_last_height == src.height && !weave_off && g_sy == g_sx;
     const std::uint32_t param = push_params({src.fbp, src.fbw, src.psm, src.dbx, src.dby, src.width, src.height, src.halved ? 1u : 0u, current});
-    g_commands.push_back({kDisplay, (src.width * g_sx + 7) / 8, (src.height * g_sx + 7) / 8, param});
+    g_commands.push_back({kDisplay, (src.width * g_sx + 7) / 8, (src.height * g_rows + 7) / 8, param});
     const float sw = static_cast<float>(g_surface_width), sh = static_cast<float>(g_surface_height);
-    const float vw = std::min(sw, sh * 4.0f / 3.0f), vh = vw * 3.0f / 4.0f;
-    const std::uint32_t blit[8] = {src.width * g_sx, src.height * g_sx, current, previous, blend ? 1u : 0u, static_cast<std::uint32_t>(vw), static_cast<std::uint32_t>(vh), 0};
+    const float vw = std::min(sw, sh * display_aspect()), vh = vw / display_aspect();
+    const std::uint32_t blit[8] = {src.width * g_sx, src.height * g_rows, current, previous, blend ? 1u : 0u, static_cast<std::uint32_t>(vw), static_cast<std::uint32_t>(vh), 0};
     wgpuQueueWriteBuffer(g_queue, g_blit_params, 0, blit, sizeof blit);
     ++g_field;
     g_have_previous = true;
@@ -1877,7 +1879,7 @@ bool display_async(const DisplaySource &src, std::vector<std::uint32_t> &rgba, s
     for (Copy &c : g_copies)
         if (!c.busy) slot = &c;
     if (slot) {
-        const std::uint64_t bytes = static_cast<std::uint64_t>(src.width) * src.height * g_sx * g_sx * 4;
+        const std::uint64_t bytes = static_cast<std::uint64_t>(src.width) * src.height * g_sx * g_rows * 4;
         if (slot->size < bytes) {
             if (slot->buffer) wgpuBufferRelease(slot->buffer);
             slot->size = bytes;
@@ -1885,7 +1887,7 @@ bool display_async(const DisplaySource &src, std::vector<std::uint32_t> &rgba, s
         }
         flush_all();
         const std::uint32_t param = push_params({src.fbp, src.fbw, src.psm, src.dbx, src.dby, src.width, src.height, src.halved ? 1u : 0u});
-        g_commands.push_back({kDisplay, (src.width * g_sx + 7) / 8, (src.height * g_sx + 7) / 8, param});
+        g_commands.push_back({kDisplay, (src.width * g_sx + 7) / 8, (src.height * g_rows + 7) / 8, param});
         submit();
         WGPUCommandEncoder enc = wgpuDeviceCreateCommandEncoder(g_device, nullptr);
         wgpuCommandEncoderCopyBufferToBuffer(enc, g_scratch, 0, slot->buffer, 0, bytes);
@@ -1896,7 +1898,7 @@ bool display_async(const DisplaySource &src, std::vector<std::uint32_t> &rgba, s
         slot->busy = true;
         slot->order = ++g_copy_order;
         slot->width = src.width * g_sx;
-        slot->height = src.height * g_sx;
+        slot->height = src.height * g_rows;
         WGPUBufferMapCallbackInfo cb = WGPU_BUFFER_MAP_CALLBACK_INFO_INIT;
         cb.mode = WGPUCallbackMode_AllowProcessEvents;
         cb.callback = [](WGPUMapAsyncStatus status, WGPUStringView, void *copy, void *) {
@@ -1913,10 +1915,10 @@ bool display_async(const DisplaySource &src, std::vector<std::uint32_t> &rgba, s
 bool display(const DisplaySource &src, std::vector<std::uint32_t> &rgba, std::uint32_t &width, std::uint32_t &height) {
     flush_all();
     const std::uint32_t param = push_params({src.fbp, src.fbw, src.psm, src.dbx, src.dby, src.width, src.height, src.halved ? 1u : 0u});
-    g_commands.push_back({kDisplay, (src.width * g_sx + 7) / 8, (src.height * g_sx + 7) / 8, param});
+    g_commands.push_back({kDisplay, (src.width * g_sx + 7) / 8, (src.height * g_rows + 7) / 8, param});
     submit();
     width = src.width * g_sx;
-    height = src.height * g_sx;
+    height = src.height * g_rows;
     rgba.resize(static_cast<std::size_t>(width) * height);
     read_back(g_scratch, rgba.size() * 4, rgba.data());
     return true;

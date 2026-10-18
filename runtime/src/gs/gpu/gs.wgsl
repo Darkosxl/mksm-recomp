@@ -400,19 +400,20 @@ fn load_clut(@builtin(local_invocation_index) k: u32, @builtin(workgroup_id) wg:
 
 @compute @workgroup_size(8, 8)
 fn display(@builtin(global_invocation_id) gid: vec3<u32>) {
+    // Output rows per display line: SCALE (square scales, field rows repeat) or SCALE_Y / 2 when the field is sampled
+    // more finely down than across (3x6, 4x6: every sample row of a field shows once).
+    let out_rows = select(SCALE, SCALE_Y / 2u, SCALE_Y > SCALE);
     let w = prm(5u) * SCALE;
-    let h = prm(6u) * SCALE;
+    let h = prm(6u) * out_rows;
     if (gid.x >= w || gid.y >= h) {
         return;
     }
     let psm = prm(2u);
-    // Output is SCALE per pixel both ways. Sample row of output row gid.y: a halved (field) display shows each frame
-    // row twice, so with SCALE_Y = SCALE rows repeat and with SCALE_Y = 2 * SCALE every sample row shows once.
     var rows = 2u * SCALE_Y;
     if (prm(7u) != 0u) {
         rows = SCALE_Y;
     }
-    let sy = gid.y * rows / (2u * SCALE);
+    let sy = gid.y * rows / (2u * out_rows);
     var c = read_sample(psm, prm(0u), prm(1u), prm(3u) + gid.x / SCALE, prm(4u) + sy / SCALE_Y, (sy % SCALE_Y) * SCALE + gid.x % SCALE);
     if (psm == PSMCT16 || psm == PSMCT16S) {
         c = ((c & 0x1Fu) << 3u) | ((c & 0x3E0u) << 6u) | ((c & 0x7C00u) << 9u);
