@@ -30,8 +30,9 @@ namespace ps2::gs::gpu {
 
 namespace {
 
-enum Pipeline { kUpload, kCopyRead, kCopyWrite, kLoadClut, kDisplay, kRaster, kResolve, kSnapshot, kDecode, kPipelines };
-const char *const kEntryPoints[kPipelines] = {"upload", "copy_read", "copy_write", "load_clut", "display", "raster", "resolve", "snapshot", "decode"};
+// kRasterHi: raster with RT_HIRES on, for batches holding F_RT_HIRES sprites (scale > 1 only).
+enum Pipeline { kUpload, kCopyRead, kCopyWrite, kLoadClut, kDisplay, kRaster, kResolve, kSnapshot, kDecode, kRasterHi, kPipelines };
+const char *const kEntryPoints[kPipelines] = {"upload", "copy_read", "copy_write", "load_clut", "display", "raster", "resolve", "snapshot", "decode", "raster"};
 
 constexpr std::uint32_t kParamStride = 256;
 constexpr std::uint32_t kClutSlots = 2048;
@@ -40,7 +41,12 @@ constexpr std::uint32_t kPrimWords = 28;
 constexpr std::uint32_t kSetupWords = 32;
 constexpr std::uint32_t kDecodedWords = 4u << 20;
 // Texture-pack replacements live after the per-batch decodes in the same buffer (only allocated with PS2_TEX_PACK).
-constexpr std::uint32_t kReplWords = 64u << 20, kReplaced = 1u << 16;
+constexpr std::uint32_t kReplaced = 1u << 16, kRtHires = 1u << 17;
+// Texture-pack replacements live in this many words after kDecodedWords (PS2_TEX_PACK_MB, default 256 MB).
+const std::uint32_t kReplWords = [] {
+    const char *e = std::getenv("PS2_TEX_PACK_MB");
+    return static_cast<std::uint32_t>(std::clamp(e ? std::atoi(e) : 256, 16, 1024)) << 18;
+}();
 constexpr std::uint32_t kDecodePrims = 64;
 
 Mode g_mode = Mode::off;
@@ -74,6 +80,9 @@ WGPUQueue g_queue = nullptr;
 WGPUBuffer g_vram = nullptr, g_tables = nullptr, g_params = nullptr, g_data = nullptr, g_clut = nullptr, g_scratch = nullptr, g_readback = nullptr, g_decoded = nullptr;
 std::uint32_t g_decoded_used = 0;
 bool g_rendered[512] = {};
+// Pages whose last write was rendering, with no upload since (not even into part of them): render targets whose samples
+// may differ, which F_RT_HIRES sprites read on the fine grid. Uploaded data holds one value per texel.
+bool g_rt_pages[512] = {};
 bool g_decode = true;
 std::uint64_t g_params_size = 0, g_data_size = 0;
 WGPUBindGroupLayout g_layout = nullptr;
@@ -460,7 +469,7 @@ Range pages(std::uint32_t bp, std::uint32_t bw, std::uint32_t psm, int x0, int y
 }
 
 void mark_rendered(const Range &r) {
-    for (std::uint64_t at = r.lo; at < r.hi; at += 8192) g_rendered[(at >> 13) & 511u] = true;
+    for (std::uint64_t at = r.lo; at < r.hi; at += 8192) g_rendered[(at >> 13) & 511u] = g_rt_pages[(at >> 13) & 511u] = true;
 }
 
 bool rendered(const Range &r) {
@@ -610,7 +619,9 @@ void flush_batch() {
     const std::uint32_t snapshot = snapshot_batch(prims, snapshot_lo, snapshot_hi);
     const std::uint32_t param = push_params({tile_offset, prim_offset, setup_offset, tiles, list_offset, snapshot_lo, snapshot_hi});
     note_raster(prims, tiles, total, snapshot);
-    g_commands.push_back({kRaster, std::min(tiles, 1024u), (tiles + 1023) / 1024, param});
+    bool hires = false;
+    for (std::size_t i = 0; i < b.setups.size(); i += kSetupWords) hires = hires || (b.setups[i] & kRtHires);
+    g_commands.push_back({hires ? kRasterHi : kRaster, std::min(tiles, 1024u), (tiles + 1023) / 1024, param});
     mark_rendered(pages(b.fbp, b.fbw, b.fpsm, b.minx, b.miny, b.maxx, b.maxy));
     if (b.zwrite) mark_rendered(pages(b.zbp, b.fbw, b.zpsm, b.minx, b.miny, b.maxx, b.maxy));
     b.prims.clear();
@@ -723,6 +734,13 @@ void finish_image_if_done() {
     im.active = false;
     im.pending.clear();
     const std::uint32_t psm = im.dpsm;
+    if (im.rrw && im.total >= im.rrw) {
+        std::uint32_t pw, ph;
+        page_size(psm, pw, ph);
+        const std::uint32_t per_row = std::max<std::uint32_t>(1, im.dbw * 64 / pw), last = im.dsay + im.total / im.rrw - 1;
+        for (std::uint32_t py = im.dsay / ph; py <= last / ph; ++py)
+            for (std::uint32_t px = im.dsax / pw; px <= (im.dsax + im.rrw - 1) / pw; ++px) g_rt_pages[((im.dbp * 256 + (px + py * per_row) * 8192) >> 13) & 511u] = false;
+    }
     if (psm != PSMCT32 && psm != PSMCT16 && psm != PSMCT16S && psm != PSMT8 && psm != PSMT4 && psm != PSMZ32 && psm != PSMZ16 && psm != PSMZ16S) return;
     std::uint32_t pw, ph;
     page_size(psm, pw, ph);
@@ -1277,16 +1295,19 @@ bool init(Mode m) {
     md.nextInChain = &source.chain;
     WGPUShaderModule module = wgpuDeviceCreateShaderModule(g_device, &md);
     for (int i = 0; i < kPipelines; ++i) {
+        if (i == kRasterHi && g_samples == 1) continue;
         WGPUComputePipelineDescriptor cd = WGPU_COMPUTE_PIPELINE_DESCRIPTOR_INIT;
         cd.layout = g_pipeline_layout;
         cd.compute.module = module;
         cd.compute.entryPoint = view(kEntryPoints[i]);
-        WGPUConstantEntry constants[2] = {WGPU_CONSTANT_ENTRY_INIT, WGPU_CONSTANT_ENTRY_INIT};
+        WGPUConstantEntry constants[3] = {WGPU_CONSTANT_ENTRY_INIT, WGPU_CONSTANT_ENTRY_INIT, WGPU_CONSTANT_ENTRY_INIT};
         constants[0].key = view("SCALE");
         constants[0].value = static_cast<double>(g_sx);
         constants[1].key = view("SCALE_Y");
         constants[1].value = static_cast<double>(g_sy);
-        cd.compute.constantCount = 2;
+        constants[2].key = view("RT_HIRES");
+        constants[2].value = 1.0;
+        cd.compute.constantCount = i == kRasterHi ? 3 : 2;
         cd.compute.constants = constants;
         g_pipelines[i] = wgpuDeviceCreateComputePipeline(g_device, &cd);
         if (!g_pipelines[i]) return false;
@@ -1311,17 +1332,24 @@ void replace_texture(const State &st, SetupCache &cache) {
     auto it = replaced.find(key);
     if (it == replaced.end()) {
         std::uint32_t scale = 0;
-        const std::vector<std::uint32_t> *px = texpack::replacement(key, tw, th, scale);
-        if (!px) return;
-        if (used + px->size() > kReplWords) {
-            static bool warned = false;
-            if (!warned) std::fprintf(stderr, "[texpack] replacement memory full (%u MB)\n", kReplWords / (1u << 18));
-            warned = true;
-            return;
+        const std::vector<std::uint32_t> px = texpack::replacement(key, tw, th, scale);
+        if (px.empty()) return;
+        if (used + px.size() > kReplWords) {
+            // Full, usually after a few maps: start the region over. At most every 600 frames, so a scene that needs
+            // more than the region keeps the textures it has instead of reloading every frame.
+            // ponytail: drops everything at once; per-texture LRU if a scene ever needs more than the region.
+            static std::uint64_t last_reset = 0;
+            if (frame_count() - last_reset < 600 || px.size() > kReplWords) return;
+            flush();  // commands recorded so far read the old contents
+            replaced.clear();
+            used = 0;
+            last_reset = frame_count();
+            std::fprintf(stderr, "[texpack] replacement memory full (%u MB), starting over at frame %llu\n", kReplWords >> 18,
+                         static_cast<unsigned long long>(last_reset));
         }
-        wgpuQueueWriteBuffer(g_queue, g_decoded, (static_cast<std::uint64_t>(kDecodedWords) + used) * 4, px->data(), px->size() * 4);
+        wgpuQueueWriteBuffer(g_queue, g_decoded, (static_cast<std::uint64_t>(kDecodedWords) + used) * 4, px.data(), px.size() * 4);
         it = replaced.emplace(key, std::make_pair(kDecodedWords + used, scale)).first;
-        used += static_cast<std::uint32_t>(px->size());
+        used += static_cast<std::uint32_t>(px.size());
     }
     w[0] |= kReplaced;
     cache.flags = w[0];
@@ -1353,6 +1381,31 @@ void draw(const State &st, const Vertex *v, int count, texcache::Run run) {
             for (std::uint32_t n = 1; n <= cache.mips; ++n) cache.levels[n] = level_range(w, n);
             if (texpack::active()) replace_texture(st, cache);
         }
+    }
+    // Scale > 1: a sprite sampling a render target in a direct format (g_rt_pages, or drawn by the batch still pending)
+    // may read its samples on the fine grid (gs.wgsl F_RT_HIRES; the shader keeps 1:1 copies per sample). Uploaded
+    // textures hold one value per texel and keep the native path (bilinear between texels, not between equal samples).
+    if (g_samples > 1 && prim == 6 && (cache.flags & 2u) && !(cache.flags & kReplaced)) {
+        std::uint32_t *w = cache.setup;
+        const std::uint32_t psm = w[14];
+        bool rt = false;
+        int rect[4];
+        if ((psm <= PSMCT16 || psm == PSMCT16S || psm >= PSMZ32) && texel_rect(w, v, count, prim, cache.flags & 16u, rect)) {
+            Batch &b = g_batch;
+            if (!b.prims.empty()) batch_ranges();
+            std::uint32_t pw, ph;
+            page_size(psm, pw, ph);
+            const std::uint64_t per_row = std::max<std::uint32_t>(1, w[13] * 64 / pw);
+            rt = true;  // every page under the texel rectangle
+            for (int py = rect[1] / static_cast<int>(ph); rt && py <= rect[3] / static_cast<int>(ph); ++py)
+                for (int px = rect[0] / static_cast<int>(pw); rt && px <= rect[2] / static_cast<int>(pw); ++px) {
+                    const std::uint64_t at = static_cast<std::uint64_t>(w[12]) * 256 + (static_cast<std::uint64_t>(px) + static_cast<std::uint64_t>(py) * per_row) * 8192;
+                    rt = g_rt_pages[(at >> 13) & 511u] ||
+                         (!b.prims.empty() && (b.fb_range.overlaps(at, at + 8192) || (b.zwrite && b.z_range.overlaps(at, at + 8192))));
+                }
+        }
+        w[0] = rt ? w[0] | kRtHires : w[0] & ~kRtHires;
+        cache.flags = w[0];
     }
     const std::uint32_t *setup = cache.setup;
     const std::uint32_t flags = cache.flags;
@@ -1703,6 +1756,7 @@ void write_state(const std::vector<std::uint32_t> &vram, std::uint32_t scale, co
     const std::uint32_t from = from_x * from_y, to = g_samples;
     const bool same = from_x == g_sx && from_y == g_sy;
     std::fill(std::begin(g_rendered), std::end(g_rendered), same && to > 1);
+    std::fill(std::begin(g_rt_pages), std::end(g_rt_pages), same && to > 1);
     if (same && vram.size() == words * to) {
         wgpuQueueWriteBuffer(g_queue, g_vram, 0, vram.data(), vram.size() * 4);
     } else {

@@ -57,8 +57,6 @@ std::uint64_t fnv(std::uint64_t h, std::uint64_t v) {
 
 struct Pack {
     std::unordered_set<std::uint64_t> files;
-    std::unordered_map<std::uint64_t, std::vector<std::uint32_t>> loaded;
-    std::unordered_map<std::uint64_t, std::uint32_t> scale;
     Pack() {
         if (!pack_dir()) return;
         std::error_code ec;
@@ -155,27 +153,20 @@ std::uint64_t key(const State &st) {
     return k;
 }
 
-const std::vector<std::uint32_t> *replacement(std::uint64_t key, std::uint32_t tw, std::uint32_t th, std::uint32_t &scale) {
+std::vector<std::uint32_t> replacement(std::uint64_t key, std::uint32_t tw, std::uint32_t th, std::uint32_t &scale) {
     Pack &p = pack();
-    if (!p.files.count(key)) return nullptr;
-    if (const auto it = p.loaded.find(key); it != p.loaded.end()) {
-        scale = p.scale[key];
-        return &it->second;
-    }
+    if (!p.files.count(key)) return {};
     char name[64];
     std::snprintf(name, sizeof name, "/%016llx.pam", static_cast<unsigned long long>(key));
     std::vector<std::uint32_t> px;
     std::uint32_t w, h;
-    p.files.erase(key);  // one attempt per key
-    if (!read_pam(std::string(pack_dir()) + name, px, w, h)) return nullptr;
-    for (std::uint32_t s = 1; s <= 3; ++s)
-        if (w == (1u << (tw + s)) && h == (1u << (th + s))) {
-            p.files.insert(key);
-            p.scale[key] = scale = s;
-            return &(p.loaded[key] = std::move(px));
-        }
-    std::fprintf(stderr, "[texpack] %s: %ux%u is not 2, 4 or 8 times %ux%u\n", name + 1, w, h, 1u << tw, 1u << th);
-    return nullptr;
+    if (read_pam(std::string(pack_dir()) + name, px, w, h)) {
+        for (std::uint32_t s = 1; s <= 3; ++s)
+            if (w == (1u << (tw + s)) && h == (1u << (th + s))) return scale = s, px;
+        std::fprintf(stderr, "[texpack] %s: %ux%u is not 2, 4 or 8 times %ux%u\n", name + 1, w, h, 1u << tw, 1u << th);
+    }
+    p.files.erase(key);  // unreadable or the wrong size: one attempt per key
+    return {};
 }
 
 }

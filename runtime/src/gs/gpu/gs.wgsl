@@ -477,6 +477,7 @@ const F_TCC: u32 = 8192u;
 const F_BILINEAR: u32 = 16384u;
 const F_AEM: u32 = 32768u;
 const F_REPLACED: u32 = 65536u;
+const F_RT_HIRES: u32 = 131072u;
 
 fn load_setup(at: u32) -> Setup {
     var s: Setup;
@@ -644,7 +645,59 @@ fn convert(s: Setup, raw: u32) -> u32 {
     }
 }
 
+// Scale > 1 (gpu.cpp sets F_RT_HIRES): a sprite that scales a render target (not 1:1) reads the target's samples as one
+// texel grid SCALE x SCALE_Y times finer, at its own sample's position, instead of its own sample index at a native
+// texel: a 2:1 downsample then covers its whole footprint and an upsample filters between neighbouring samples.
+var<private> rt_hires: bool = false;
+// Pipeline constant, on only for batches that hold F_RT_HIRES sprites (gpu.cpp kRasterHi): elsewhere the fine-grid
+// path compiles out and the common raster costs nothing extra.
+override RT_HIRES: bool = false;
+
+fn floor_div(a: i32, b: i32) -> i32 {
+    return select(a / b, (a - b + 1) / b, a < 0);
+}
+
+// Fine texel (jx, jy): native texel (jx / SCALE, jy / SCALE_Y), sample (jy % SCALE_Y) * SCALE + jx % SCALE. A clamped
+// coordinate keeps the edge sample on the side it was clamped to.
+fn fetch_hi(s: Setup, l: Level, jx: i32, jy: i32) -> u32 {
+    let nx = floor_div(jx, i32(SCALE));
+    let ny = floor_div(jy, i32(SCALE_Y));
+    let x = texel_x(s, l, nx);
+    let y = texel_y(s, l, ny);
+    if (l.dec != 0xFFFFFFFFu) {
+        return decoded[l.dec + (y << l.tw) + x];
+    }
+    var sx = u32(jx - nx * i32(SCALE));
+    var sy = u32(jy - ny * i32(SCALE_Y));
+    let wu = mode(s, 24u, 2u);
+    let wv = mode(s, 26u, 2u);
+    if ((wu == 1u || wu == 2u) && i32(x) != nx) {
+        sx = select(SCALE - 1u, 0u, i32(x) > nx);
+    }
+    if ((wv == 1u || wv == 2u) && i32(y) != ny) {
+        sy = select(SCALE_Y - 1u, 0u, i32(y) > ny);
+    }
+    return convert(s, load_texel(addr(l.f, x, y), sy * SCALE + sx));
+}
+
+fn sample_hi(s: Setup, l: Level, uin: f32, vin: f32, linear: bool) -> u32 {
+    let u = uin * f32(SCALE);
+    let v = vin * f32(SCALE_Y);
+    if (!linear) {
+        // 1/100 sample of slack: exact sample boundaries (2:1 at sample 1 of 3) must not round down
+        return fetch_hi(s, l, i32(floor(u + 0.01)), i32(floor(v + 0.01)));
+    }
+    let x0 = i32(floor(u - 0.5));
+    let y0 = i32(floor(v - 0.5));
+    return blend4(fetch_hi(s, l, x0, y0), fetch_hi(s, l, x0 + 1, y0), fetch_hi(s, l, x0, y0 + 1), fetch_hi(s, l, x0 + 1, y0 + 1), u - 0.5 - f32(x0), v - 0.5 - f32(y0));
+}
+
 fn sample(s: Setup, l: Level, uin: f32, vin: f32, k: u32, linear: bool) -> u32 {
+    if (RT_HIRES) {
+        if (rt_hires) {
+            return sample_hi(s, l, uin, vin, linear);
+        }
+    }
     if (!linear) {
         return fetch(s, l, i32(floor(uin)), i32(floor(vin)), k);
     }
@@ -1048,6 +1101,7 @@ fn edge_in(w: f32, inclusive: u32) -> bool {
 fn shade_at(p: u32, s: Setup, x: i32, y: i32, k: u32, px: f32, py: f32) {
     let kind = data[p + 1u];
     var at: Attr;
+    rt_hires = false;
     switch kind {
         case 0u {
             let x0 = fat(p + 4u);
@@ -1099,10 +1153,11 @@ fn shade_at(p: u32, s: Setup, x: i32, y: i32, k: u32, px: f32, py: f32) {
             var uy = py;
             let direct = s.tpsm == 0x00u || s.tpsm == 0x01u || s.tpsm == 0x02u || s.tpsm == 0x0Au || s.tpsm >= 0x30u;
             let point = has(s, F_TME) && (!has(s, F_BILINEAR) || direct);
-            if (point && abs(du) >= abs(dx) * 0.999) {
+            rt_hires = RT_HIRES && has(s, F_RT_HIRES) && (abs(abs(du) - abs(dx)) > abs(dx) * 0.001 || abs(abs(dv) - abs(dy)) > abs(dy) * 0.001);
+            if (point && !rt_hires && abs(du) >= abs(dx) * 0.999) {
                 ux = f32(x);
             }
-            if (point && abs(dv) >= abs(dy) * 0.999) {
+            if (point && !rt_hires && abs(dv) >= abs(dy) * 0.999) {
                 uy = f32(y);
             }
             let cx = f32(x);
