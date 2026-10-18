@@ -1899,8 +1899,9 @@ bool present(const DisplaySource &src) {
     flush_all();
     const std::uint32_t current = field_base(g_field), previous = field_base(g_field + 1);
     static const bool weave_off = std::getenv("PS2_NO_DEINTERLACE") != nullptr;
-    // g_sy > g_sx renders fields at full output height: blending two of them would only ghost motion
-    const bool blend = src.halved && g_have_previous && g_last_width == src.width && g_last_height == src.height && !weave_off && g_sy == g_sx;
+    // Blend at every scale: the game draws alternate fields half a line apart, which shows unblended as a 3-row bounce
+    // every frame at 3x6 (the original blends too)
+    const bool blend = src.halved && g_have_previous && g_last_width == src.width && g_last_height == src.height && !weave_off;
     const std::uint32_t param = push_params({src.fbp, src.fbw, src.psm, src.dbx, src.dby, src.width, src.height, src.halved ? 1u : 0u, current});
     g_commands.push_back({kDisplay, (src.width * g_sx + 7) / 8, (src.height * g_rows + 7) / 8, param});
     const float sw = static_cast<float>(g_surface_width), sh = static_cast<float>(g_surface_height);

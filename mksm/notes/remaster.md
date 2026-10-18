@@ -169,12 +169,13 @@ square scale.
   with the wasm VU JIT forced on (native-lockstep.md, third round).
 
 ### Step 4 — resolution (2026-10-18)
-- **Fields:** the game draws a 640×224 field every frame at the same XYOFFSET (no half-line jitter between fields),
-  so there is no hidden 448-line detail to weave. A true 1440p image needs twice as many samples down as across.
+- **Fields:** the game draws a 640×224 field every frame, alternate fields half a line apart (measured 2026-10-19:
+  raw 3x6 output moves ±3 rows every frame on the menu), so there is no hidden 448-line detail to weave. A true 1440p image needs twice as many samples down as across.
 - **`PS2_SCALE=AxB`** (gpu.cpp, gs.wgsl): A samples across (1–3), B down (1–6) per GS pixel; sample k = sub_y·A +
   sub_x, sample 0 stays the native one. Display output is A per pixel both ways, so `3x6` turns a 224-line field into
-  a full 1920×1344 frame (fills a 1440p 4:3 viewport ~1:1) and `2x4` into 1280×896. With B ≠ A the field blend is
-  off (it would only ghost motion). Square scales are unchanged: `check.sh` PASS 12/12 at 1× and at 3×
+  a full 1920×1344 frame (fills a 1440p 4:3 viewport ~1:1) and `2x4` into 1280×896. The window blends each field with
+  the previous one at every scale, like the original (step 4 had it off at B ≠ A, which showed as a constant 3-row
+  bounce; fixed 2026-10-19). Frame dumps (`--frames-dir`) stay single unblended fields. Square scales are unchanged: `check.sh` PASS 12/12 at 1× and at 3×
   (`golden-s3.json`, new; replay-identical 12/12).
 - **load_clut** in parallel (one workgroup per load, value = newest load covering the entry): bit-identical,
   Foundry 3× 55 → 60 fps (Performance profile).
