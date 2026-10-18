@@ -66,6 +66,8 @@ struct Draw {
     Context ctx{};
     int x0 = 0, y0 = 0, x1 = 0, y1 = 0;
     std::uint32_t tex = 0;
+    int verts = 0;
+    float v[3][4] = {};  // first primitive: x, y (pixels from XYOFFSET), u, v (texels)
 };
 int g_path = 0;
 Source g_src;
@@ -98,6 +100,9 @@ void flush_draw() {
                  static_cast<unsigned long long>(c.alpha), static_cast<unsigned long long>(c.test), static_cast<unsigned long long>(c.frame),
                  static_cast<unsigned long long>(c.zbuf), static_cast<unsigned long long>(c.fba), static_cast<unsigned long long>(d.texa),
                  static_cast<unsigned long long>(c.scissor), static_cast<unsigned long long>(c.xyoffset));
+    std::fputs(",\"v\":[", g_draws);
+    for (int i = 0; i < d.verts; ++i) std::fprintf(g_draws, "%s[%g,%g,%g,%g]", i ? "," : "", d.v[i][0], d.v[i][1], d.v[i][2], d.v[i][3]);
+    std::fputs("]", g_draws);
     if (d.tex) std::fprintf(g_draws, ",\"tex\":\"%08x\"}\n", d.tex);
     else std::fputs(",\"tex\":null}\n", g_draws);
     d.prims = 0;
@@ -184,6 +189,16 @@ bool begin_prim(const State &s, int vertices) {
         d.texa = s.texa;
         d.ctx = c;
         d.x0 = x0, d.y0 = y0, d.x1 = x1, d.y1 = y1;
+        d.verts = std::min(vertices, 3);
+        for (int i = 0; i < d.verts; ++i) {
+            const Vertex &q = s.queue[i];
+            const bool fst = (eff >> 8) & 1u;
+            const float w = q.q != 0.0f ? q.q : 1.0f;
+            d.v[i][0] = (static_cast<float>(q.x & 0xFFFFu) - static_cast<float>(ofx)) / 16.0f;
+            d.v[i][1] = (static_cast<float>(q.y & 0xFFFFu) - static_cast<float>(ofy)) / 16.0f;
+            d.v[i][2] = fst ? static_cast<float>(q.u) / 16.0f : q.s / w * static_cast<float>(1u << ((c.tex0 >> 26) & 0xFu));
+            d.v[i][3] = fst ? static_cast<float>(q.v) / 16.0f : q.t / w * static_cast<float>(1u << ((c.tex0 >> 30) & 0xFu));
+        }
         ++g_frame_draws;
         if ((flags & 0x10u) && config().textures) {
             std::uint32_t key = fnv(fnv(2166136261u, c.tex0), s.texa);
