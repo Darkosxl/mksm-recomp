@@ -91,13 +91,13 @@ void flush_draw() {
                  "{\"id\":%u,\"after_vblank\":%llu,\"path\":%d,\"ra\":\"%08x\",\"madr\":\"%08x\",\"vu1\":%d,\"vu1_hash\":\"%08x\","
                  "\"group\":\"%08x\",\"prims\":%u,\"bbox\":[%d,%d,%d,%d],\"cpu_ns\":%llu,\"prim\":\"%llx\",\"tex0\":\"%llx\",\"tex1\":\"%llx\","
                  "\"clamp\":\"%llx\",\"alpha\":\"%llx\",\"test\":\"%llx\",\"frame\":\"%llx\",\"zbuf\":\"%llx\",\"fba\":\"%llx\",\"texa\":\"%llx\","
-                 "\"scissor\":\"%llx\"",
+                 "\"scissor\":\"%llx\",\"xyoffset\":\"%llx\"",
                  d.id, static_cast<unsigned long long>(d.frame), d.path, d.src.ra, d.src.madr, d.src.vu1_entry == ~0u ? -1 : static_cast<int>(d.src.vu1_entry),
                  d.src.vu1_hash, d.group, d.prims, d.x0, d.y0, d.x1, d.y1, static_cast<unsigned long long>(d.ns), static_cast<unsigned long long>(d.prim),
                  static_cast<unsigned long long>(c.tex0), static_cast<unsigned long long>(c.tex1), static_cast<unsigned long long>(c.clamp),
                  static_cast<unsigned long long>(c.alpha), static_cast<unsigned long long>(c.test), static_cast<unsigned long long>(c.frame),
                  static_cast<unsigned long long>(c.zbuf), static_cast<unsigned long long>(c.fba), static_cast<unsigned long long>(d.texa),
-                 static_cast<unsigned long long>(c.scissor));
+                 static_cast<unsigned long long>(c.scissor), static_cast<unsigned long long>(c.xyoffset));
     if (d.tex) std::fprintf(g_draws, ",\"tex\":\"%08x\"}\n", d.tex);
     else std::fputs(",\"tex\":null}\n", g_draws);
     d.prims = 0;

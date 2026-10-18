@@ -250,11 +250,24 @@ void watch_frame() {
 
 void hash_frame();
 
+// PS2_FPS=from,to prints the emulated frame rate over that window of frames to stderr (remaster/perf.sh).
+void fps_window() {
+    static const char *spec = std::getenv("PS2_FPS");
+    if (!spec || !std::strchr(spec, ',')) return;
+    static const std::uint64_t from = std::strtoull(spec, nullptr, 10), to = std::strtoull(std::strchr(spec, ',') + 1, nullptr, 10);
+    static std::chrono::steady_clock::time_point t0;
+    if (g_frames == from) t0 = std::chrono::steady_clock::now();
+    if (g_frames == to && to > from)
+        std::fprintf(stderr, "[fps] frames %llu-%llu: %.1f fps\n", static_cast<unsigned long long>(from), static_cast<unsigned long long>(to),
+                     static_cast<double>(to - from) / std::chrono::duration<double>(std::chrono::steady_clock::now() - t0).count());
+}
+
 void vblank() {
     ++g_frames;
     debug::jitter(4);
     hash_frame();
     time_frames();
+    fps_window();
     watch_frame();
     apply_presses();
     if (g_options.on_vblank) g_options.on_vblank();
