@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Texture harvest over the story maps: warps the g7600 state to each map, runs 2400 frames past it (--frames counts
+# Texture harvest over the story maps: warps the g7600 state to each map, runs 1400 frames past it (--frames counts
 # from boot, the state is at 7600; maps load in 800-1400) and dumps every texture drawn into
 # remaster-data/textures/dump (texdump.sh does the same for the reference scenes). One run at a time, a pause between
 # runs, and a RAM/VRAM check before each (waits up to 10 min, then stops).
@@ -30,7 +30,7 @@ for m in "$@"; do
   python3 -I "$here/mksm/tools/scripts/poke_state.py" "$D/states/g7600.state" "$L/$m.state" \
     4d8c04=$m 4d8c08=1 4b0d9c=0 4d8bfc=1 4fee68=1 > /dev/null
   t=$SECONDS
-  PS2_TEX_DUMP=$out "$here/remaster/run.sh" "$L/$m" 10000 "$L/$m.state" > /dev/null; rc=$?
+  PS2_TEX_DUMP=$out "$here/remaster/run.sh" "$L/$m" 9000 "$L/$m.state" > /dev/null; rc=$?
   rm -f "$L/$m.state"
   echo "map $i/$# $m rc=$rc $((SECONDS - t))s: $(ls "$out" | grep -c '\.pam$') textures"
   sleep 10
