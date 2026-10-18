@@ -23,5 +23,11 @@ std::uint64_t key(const State &st);
 // The pack's pixels for a key, 2^scale times the given size, read from disk (the caller keeps what it needs); empty
 // when the pack has none.
 std::vector<std::uint32_t> replacement(std::uint64_t key, std::uint32_t tw, std::uint32_t th, std::uint32_t &scale);
+// Texture-pack work on the render thread since the last call (PS2_FRAME_LOG).
+struct Stats {
+    std::uint32_t decodes = 0, loads = 0;
+    double decode_ms = 0, load_ms = 0, load_mb = 0;
+};
+Stats take_stats();
 
 }

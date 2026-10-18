@@ -134,8 +134,15 @@ T get(std::uint32_t a) {
     return v;
 }
 
+// Set when a write changes the CPU copy: uploads that rewrite the same bytes (the game streams its textures again every
+// frame) leave the texture pack's page generations, and so its cached keys, alone.
+bool g_changed = false;
+
 template <typename T>
-void put(std::uint32_t a, T v) { std::memcpy(g_memory + wrap(a), &v, sizeof v); }
+void put(std::uint32_t a, T v) {
+    std::uint8_t *p = g_memory + wrap(a);
+    if (std::memcmp(p, &v, sizeof v)) std::memcpy(p, &v, sizeof v), g_changed = true;
+}
 
 std::uint32_t page_address(std::uint32_t bp, std::uint32_t bw, std::uint32_t x, std::uint32_t y, std::uint32_t pw, std::uint32_t ph) {
     const std::uint32_t per_row = std::max<std::uint32_t>(1, bw * 64 / pw);
@@ -263,11 +270,8 @@ void feed_image(const std::uint8_t *data, std::size_t bytes) {
     if (!cpu_memory()) return;
     if (!g_transfer.active || (g_state.trxdir & 3u) != 0) return;
     const std::uint32_t psm = static_cast<std::uint32_t>(g_state.bitbltbuf >> 56) & 0x3Fu;
-    if (texpack::active()) {
-        const std::uint64_t buf = g_state.bitbltbuf, pos = g_state.trxpos, reg = g_state.trxreg;
-        texpack::touched(static_cast<std::uint32_t>(buf >> 32) & 0x3FFFu, static_cast<std::uint32_t>(buf >> 48) & 0x3Fu, psm, static_cast<std::uint32_t>(pos >> 32) & 0x7FFu,
-                         static_cast<std::uint32_t>(pos >> 48) & 0x7FFu, static_cast<std::uint32_t>(reg) & 0xFFFu, static_cast<std::uint32_t>(reg >> 32) & 0xFFFu);
-    }
+    const std::uint64_t buf = g_state.bitbltbuf, pos = g_state.trxpos, reg = g_state.trxreg;  // before the transfer ends
+    g_changed = false;
     const std::uint32_t bits = bits_per_pixel(psm);
     if (bits == 24) {
         for (std::size_t i = 0; i < bytes && g_transfer.active; ++i) {
@@ -277,14 +281,17 @@ void feed_image(const std::uint8_t *data, std::size_t bytes) {
                 g_carried = 0;
             }
         }
-        return;
+    } else {
+        for (std::size_t bit = 0; bit + bits <= bytes * 8 && g_transfer.active; bit += bits) {
+            std::uint32_t v = 0;
+            if (bits == 4) v = (data[bit / 8] >> (bit & 4)) & 15u;
+            else std::memcpy(&v, data + bit / 8, bits / 8);
+            transfer_pixel(v);
+        }
     }
-    for (std::size_t bit = 0; bit + bits <= bytes * 8 && g_transfer.active; bit += bits) {
-        std::uint32_t v = 0;
-        if (bits == 4) v = (data[bit / 8] >> (bit & 4)) & 15u;
-        else std::memcpy(&v, data + bit / 8, bits / 8);
-        transfer_pixel(v);
-    }
+    if (texpack::active() && g_changed)
+        texpack::touched(static_cast<std::uint32_t>(buf >> 32) & 0x3FFFu, static_cast<std::uint32_t>(buf >> 48) & 0x3Fu, psm, static_cast<std::uint32_t>(pos >> 32) & 0x7FFu,
+                         static_cast<std::uint32_t>(pos >> 48) & 0x7FFu, static_cast<std::uint32_t>(reg) & 0xFFFu, static_cast<std::uint32_t>(reg >> 32) & 0xFFFu);
 }
 
 void local_copy() {
@@ -707,8 +714,9 @@ void write(std::uint32_t reg, std::uint64_t value) {
 #endif
         if ((value & 3u) == 0) g_transfer.active = true;
         else if ((value & 3u) == 2) {
+            g_changed = false;
             if (cpu_memory()) local_copy();
-            if (texpack::active())
+            if (texpack::active() && g_changed)
                 texpack::touched(static_cast<std::uint32_t>(s.bitbltbuf >> 32) & 0x3FFFu, static_cast<std::uint32_t>(s.bitbltbuf >> 48) & 0x3Fu,
                                  static_cast<std::uint32_t>(s.bitbltbuf >> 56) & 0x3Fu, static_cast<std::uint32_t>(s.trxpos >> 32) & 0x7FFu,
                                  static_cast<std::uint32_t>(s.trxpos >> 48) & 0x7FFu, static_cast<std::uint32_t>(s.trxreg) & 0xFFFu,

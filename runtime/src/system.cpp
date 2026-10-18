@@ -7,6 +7,7 @@
 #include "vu_micro.hpp"
 #include "gs/gs.hpp"
 #include "gs/queue.hpp"
+#include "gs/texpack.hpp"
 #include "hw.hpp"
 #include "iop/iop.hpp"
 #include "iop/sif.hpp"
@@ -918,10 +919,27 @@ void set_frame_tap(std::function<void(const std::uint32_t *, std::uint32_t, std:
     g_frame_tap_wait = wait;
 }
 
+// PS2_FRAME_LOG=file: one line per displayed frame on the render thread: wall ms since the previous one, then the
+// texture pack's work in it (key decodes, ms; file loads, ms, MB).
+void log_frame() {
+    static std::FILE *file = [] {
+        const char *path = std::getenv("PS2_FRAME_LOG");
+        return path ? std::fopen(path, "w") : nullptr;
+    }();
+    if (!file) return;
+    static auto last = std::chrono::steady_clock::now();
+    const auto now = std::chrono::steady_clock::now();
+    const gs::texpack::Stats s = gs::texpack::take_stats();
+    std::fprintf(file, "%.2f %u %.2f %u %.2f %.1f\n", std::chrono::duration<double, std::milli>(now - last).count(), s.decodes, s.decode_ms,
+                 s.loads, s.load_ms, s.load_mb);
+    last = now;
+}
+
 Rendered render_pending(bool surface, const std::function<void(const std::uint32_t *, std::uint32_t, std::uint32_t)> &copy,
                         const std::function<void()> &before_present, double budget_ms) {
     static std::vector<std::uint32_t> frame;
     return gs::render_pending([&](const gs::DisplayRegs &regs) {
+        log_frame();
         if (before_present) before_present();
         if (surface) gs::present(regs);
         const bool show = copy && !surface, tap = g_frame_tap && g_frame_tap_on.load(std::memory_order_relaxed);

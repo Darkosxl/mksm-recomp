@@ -3,12 +3,15 @@
 #include "ps2/system.hpp"
 
 #include <algorithm>
+#include <chrono>
 #include <cstdio>
 #include <cstdlib>
+#include <cstring>
 #include <filesystem>
 #include <string>
 #include <unordered_map>
 #include <unordered_set>
+#include <utility>
 
 namespace ps2::gs::texpack {
 namespace {
@@ -50,10 +53,26 @@ void page_span(std::uint32_t bp, std::uint32_t bw, std::uint32_t psm, std::uint3
     last = bp / 32 + (x + std::max<std::uint32_t>(w, 1) - 1) / pw + ((y + std::max<std::uint32_t>(h, 1) - 1) / ph) * per_row;
 }
 
+// Hash of one 8 KB page of the CPU copy of GS memory.
+std::uint64_t hash_page(std::uint32_t page) {
+    const std::uint8_t *m = memory() + static_cast<std::size_t>(page % kPages) * 8192;
+    std::uint64_t h = 0;
+    for (std::size_t i = 0; i < 8192; i += 8) {
+        std::uint64_t w;
+        std::memcpy(&w, m + i, 8);
+        h = (h ^ w) * 0x9E3779B97F4A7C15ull;
+        h ^= h >> 29;
+    }
+    return h;
+}
+
 std::uint64_t fnv(std::uint64_t h, std::uint64_t v) {
     for (int i = 0; i < 8; ++i) h = (h ^ ((v >> (i * 8)) & 0xFFu)) * 0x100000001B3ull;
     return h;
 }
+
+Stats g_stats;
+double ms_since(std::chrono::steady_clock::time_point t) { return std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - t).count(); }
 
 struct Pack {
     std::unordered_set<std::uint64_t> files;
@@ -121,20 +140,27 @@ std::uint64_t key(const State &st) {
     }
     std::uint32_t first, last;
     page_span(tbp, tbw, psm, 0, 0, 1u << tw, 1u << th, first, last);
+    std::uint64_t content = id;
     for (std::uint32_t p = first; p <= last && p < first + kPages; ++p) {
         if (g_drawn[p % kPages]) return 0;
         id = fnv(id, g_generation[p % kPages]);
     }
-    static std::unordered_map<std::uint64_t, std::uint64_t> known;
+    static std::unordered_map<std::uint64_t, std::uint64_t> known, by_content;
     if (const auto it = known.find(id); it != known.end()) return it->second;
+    // The pages were rewritten: the game cycles its textures through the same pages every frame, so look the content up
+    // (a hash of the raw pages, microseconds) before decoding it (milliseconds).
+    for (std::uint32_t p = first; p <= last && p < first + kPages; ++p) content = fnv(content, hash_page(p));
+    if (known.size() > (1u << 20)) known.clear(), by_content.clear();
+    if (const auto it = by_content.find(content); it != by_content.end()) return known[id] = it->second;
+    const auto t0 = std::chrono::steady_clock::now();
     std::vector<std::uint32_t> texels;
     std::uint32_t w = 0, h = 0;
-    if (!raster::decode_texture(st, texels, w, h)) return known[id] = 0;
+    if (!raster::decode_texture(st, texels, w, h)) return known[id] = by_content[content] = 0;
     std::uint64_t k = fnv(fnv(0xCBF29CE484222325ull, w), h);
     for (std::uint32_t t : texels) k = fnv(k, t);
     k = k ? k : 1;
-    if (known.size() > (1u << 20)) known.clear();
-    known[id] = k;
+    ++g_stats.decodes, g_stats.decode_ms += ms_since(t0);
+    known[id] = by_content[content] = k;
     static std::unordered_set<std::uint64_t> dumped;
     if (dump_dir() && dumped.insert(k).second) {
         char name[64];
@@ -160,7 +186,10 @@ std::vector<std::uint32_t> replacement(std::uint64_t key, std::uint32_t tw, std:
     std::snprintf(name, sizeof name, "/%016llx.pam", static_cast<unsigned long long>(key));
     std::vector<std::uint32_t> px;
     std::uint32_t w, h;
-    if (read_pam(std::string(pack_dir()) + name, px, w, h)) {
+    const auto t0 = std::chrono::steady_clock::now();
+    const bool read = read_pam(std::string(pack_dir()) + name, px, w, h);
+    ++g_stats.loads, g_stats.load_ms += ms_since(t0), g_stats.load_mb += px.size() * 4.0 / (1 << 20);
+    if (read) {
         for (std::uint32_t s = 1; s <= 3; ++s)
             if (w == (1u << (tw + s)) && h == (1u << (th + s))) return scale = s, px;
         std::fprintf(stderr, "[texpack] %s: %ux%u is not 2, 4 or 8 times %ux%u\n", name + 1, w, h, 1u << tw, 1u << th);
@@ -168,5 +197,7 @@ std::vector<std::uint32_t> replacement(std::uint64_t key, std::uint32_t tw, std:
     p.files.erase(key);  // unreadable or the wrong size: one attempt per key
     return {};
 }
+
+Stats take_stats() { return std::exchange(g_stats, {}); }
 
 }
