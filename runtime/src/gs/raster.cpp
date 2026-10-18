@@ -503,16 +503,19 @@ Attr attr_of(const Setup &s, const Vertex &v) {
     return a;
 }
 
+// Colour and fog are one vertex plus deltas, as in PCSX2: equal vertex values come out exact. Absolute weights gave
+// 127.99999 for three vertices of alpha 128, which truncates to 127 and fails an alpha test of AREF 0x80 (dark specks
+// where a hidden surface then shows through).
 Attr lerp3(const Attr &a, const Attr &b, const Attr &c, float wa, float wb, float wc) {
     Attr r;
-    r.r = a.r * wa + b.r * wb + c.r * wc;
-    r.g = a.g * wa + b.g * wb + c.g * wc;
-    r.b = a.b * wa + b.b * wb + c.b * wc;
-    r.a = a.a * wa + b.a * wb + c.a * wc;
+    r.r = c.r + (a.r - c.r) * wa + (b.r - c.r) * wb;
+    r.g = c.g + (a.g - c.g) * wa + (b.g - c.g) * wb;
+    r.b = c.b + (a.b - c.b) * wa + (b.b - c.b) * wb;
+    r.a = c.a + (a.a - c.a) * wa + (b.a - c.a) * wb;
     r.s = a.s * wa + b.s * wb + c.s * wc;
     r.t = a.t * wa + b.t * wb + c.t * wc;
     r.q = a.q * wa + b.q * wb + c.q * wc;
-    r.f = a.f * wa + b.f * wb + c.f * wc;
+    r.f = c.f + (a.f - c.f) * wa + (b.f - c.f) * wb;
     r.z = a.z * wa + b.z * wb + c.z * wc;
     return r;
 }

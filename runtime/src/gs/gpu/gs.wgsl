@@ -1057,8 +1057,14 @@ fn shade_at(p: u32, s: Setup, x: i32, y: i32, k: u32, px: f32, py: f32) {
                 return;
             }
             let w2 = 1.0 - w0 - w1;
-            let c = vertex_attr(p, 0u) * w0 + vertex_attr(p, 1u) * w1 + vertex_attr(p, 2u) * w2;
-            let t = vertex_tex(p, 0u) * w0 + vertex_tex(p, 1u) * w1 + vertex_tex(p, 2u) * w2;
+            // colour and fog: one vertex plus deltas, exact for equal vertex values (raster.cpp lerp3)
+            let v2 = vertex_attr(p, 2u);
+            let c = v2 + (vertex_attr(p, 0u) - v2) * w0 + (vertex_attr(p, 1u) - v2) * w1;
+            let t0 = vertex_tex(p, 0u);
+            let t1 = vertex_tex(p, 1u);
+            let t2 = vertex_tex(p, 2u);
+            var t = t0 * w0 + t1 * w1 + t2 * w2;
+            t.w = t2.w + (t0.w - t2.w) * w0 + (t1.w - t2.w) * w1;
             at = Attr(c.x, c.y, c.z, c.w, t.x, t.y, t.z, t.w, z_at(p, fat(p + 25u) * w1 + fat(p + 26u) * w2));
         }
         case 1u {
@@ -1142,8 +1148,12 @@ fn shade_at(p: u32, s: Setup, x: i32, y: i32, k: u32, px: f32, py: f32) {
             if (steps != 0) {
                 t = f32(hit) / f32(steps);
             }
-            let c = vertex_attr(p, 0u) * (1.0 - t) + vertex_attr(p, 1u) * t;
-            let tex = vertex_tex(p, 0u) * (1.0 - t) + vertex_tex(p, 1u) * t;
+            let c0 = vertex_attr(p, 0u);
+            let c = c0 + (vertex_attr(p, 1u) - c0) * t;
+            let t0 = vertex_tex(p, 0u);
+            let t1 = vertex_tex(p, 1u);
+            var tex = t0 * (1.0 - t) + t1 * t;
+            tex.w = t0.w + (t1.w - t0.w) * t;
             at = Attr(c.x, c.y, c.z, c.w, tex.x, tex.y, tex.z, tex.w, z_at(p, fat(p + 25u) * t));
         }
         default {

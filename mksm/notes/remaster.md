@@ -229,3 +229,11 @@ Usage: `PS2_PNACH=mksm/patches/widescreen.pnach PS2_ASPECT=16:9 PS2_SCALE=4x6` (
 - Modern-mode option for later: HUD anchored to the screen edges (left/right elements).
 - Movies (pre-rendered cutscenes) stay exactly as they are — no upscaling or cropping (Cem, 2026-10-18).
 - `check.sh` with widescreen off: PASS 12/12 at 1× and 3×.
+
+### Fix — dark specks (2026-10-18, before step 6)
+Isolated dark/bright dots on surfaces (Koop floor, Academy "sparks"; PCSX2 shows none). Cause (agent trace): colour
+was interpolated with absolute float weights, so three vertices of alpha 128 gave 127.99999 → 127 in ~5% of pixels;
+the world passes test alpha ≥ 0x80 with AFAIL = RGB only, so those pixels skipped their Z write and a hidden surface
+drawn later showed through. Fix in both renderers (raster.cpp lerp3, gs.wgsl shade_at): colour and fog as one vertex
+plus deltas, as PCSX2 does — exact for equal vertex values. Re-baselined `golden.json` and `golden-s3.json`: state
+hashes 12/12 unchanged, images changed in 11/12 (all but fmv), replay-identical 12/12.
