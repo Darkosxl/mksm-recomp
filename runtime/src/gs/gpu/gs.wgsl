@@ -348,42 +348,51 @@ fn copy_write(@builtin(global_invocation_id) gid: vec3<u32>) {
     write_sample(prm(2u), prm(0u), prm(1u), (prm(3u) + x) & 0x7FFu, (prm(4u) + y) & 0x7FFu, k, scratch[(sy * w + sx) * n + k]);
 }
 
+// One workgroup per record n of a group of chained CLUT loads (record n turns slot src_n into dst_n = src_n+1).
+// vram doesn't change within a group, so every entry of dst_n is the one written by the newest record m <= n that
+// covers it, else the group's base slot: the values the records would leave one after another, without the serial
+// chain and its barriers.
 @compute @workgroup_size(256)
-fn load_clut(@builtin(local_invocation_index) k: u32) {
-    let count = prm(1u);
-    for (var n = 0u; n < count; n = n + 1u) {
-        let r = prm(0u) + n * 12u;
-        let src = data[r] * CLUT_ENTRIES;
-        let dst = data[r + 1u] * CLUT_ENTRIES;
-        clut[dst + k] = clut[src + k];
-        clut[dst + k + 256u] = clut[src + k + 256u];
-        storageBarrier();
-        let cbp = data[r + 2u];
-        let cpsm = data[r + 3u];
-        let csm = data[r + 4u];
-        let csa = data[r + 5u];
-        let eight = data[r + 6u] != 0u;
-        var entries = 16u;
-        if (eight) {
-            entries = 256u;
-        }
-        if (k < entries) {
-            if (csm != 0u) {
-                clut[dst + ((csa * 16u + k) & 511u)] = read_pixel(cpsm, cbp, data[r + 7u], data[r + 8u] * 16u + k, data[r + 9u]);
-            } else {
-                var x = k & 7u;
-                var y = k >> 3u;
-                var slot = ((csa & 15u) * 16u + k) & 255u;
-                if (eight) {
-                    let j = (k & ~0x18u) | ((k & 0x08u) << 1u) | ((k & 0x10u) >> 1u);
-                    x = j & 15u;
-                    y = j >> 4u;
-                    slot = k;
+fn load_clut(@builtin(local_invocation_index) k: u32, @builtin(workgroup_id) wg: vec3<u32>) {
+    let base = data[prm(0u)] * CLUT_ENTRIES;
+    let dst = data[prm(0u) + wg.x * 12u + 1u] * CLUT_ENTRIES;
+    for (var e = k; e < 512u; e = e + 256u) {
+        var value = clut[base + e];
+        for (var m = i32(wg.x); m >= 0; m = m - 1) {
+            let r = prm(0u) + u32(m) * 12u;
+            let cbp = data[r + 2u];
+            let cpsm = data[r + 3u];
+            let csa = data[r + 5u];
+            let eight = data[r + 6u] != 0u;
+            var entries = 16u;
+            if (eight) {
+                entries = 256u;
+            }
+            if (data[r + 4u] != 0u) {
+                let i = (e - csa * 16u) & 511u;
+                if (i < entries) {
+                    value = read_pixel(cpsm, cbp, data[r + 7u], data[r + 8u] * 16u + i, data[r + 9u]);
+                    break;
                 }
-                clut[dst + slot] = read_pixel(cpsm, cbp, 1u, x, y);
+            } else if (e < 256u) {
+                var i = e;
+                if (!eight) {
+                    i = (e - (csa & 15u) * 16u) & 255u;
+                }
+                if (i < entries) {
+                    var x = i & 7u;
+                    var y = i >> 3u;
+                    if (eight) {
+                        let j = (i & ~0x18u) | ((i & 0x08u) << 1u) | ((i & 0x10u) >> 1u);
+                        x = j & 15u;
+                        y = j >> 4u;
+                    }
+                    value = read_pixel(cpsm, cbp, 1u, x, y);
+                    break;
+                }
             }
         }
-        storageBarrier();
+        clut[dst + e] = value;
     }
 }
 
@@ -1173,6 +1182,11 @@ fn resolve(@builtin(global_invocation_id) gid: vec3<u32>) {
     scratch[i] = atomicLoad(&vram[i * SCALE * SCALE]);
 }
 
+var<workgroup> chunk_prim: array<u32, 256>;
+var<workgroup> chunk_setup: array<u32, 256>;
+var<workgroup> chunk_lo: array<u32, 256>;
+var<workgroup> chunk_hi: array<u32, 256>;
+
 @compute @workgroup_size(16, 16)
 fn raster(@builtin(workgroup_id) wid: vec3<u32>, @builtin(local_invocation_id) lid: vec3<u32>) {
     let index = wid.x + wid.y * 1024u;
@@ -1197,19 +1211,34 @@ fn raster(@builtin(workgroup_id) wid: vec3<u32>, @builtin(local_invocation_id) l
     snapshot_hi = prm(6u);
     var last_setup = 0xFFFFFFFFu;
     var s: Setup;
-    for (var i = 0u; i < count; i = i + 1u) {
-        let h = first + i;
-        let p = prims + ((data[lists + (h >> 1u)] >> ((h & 1u) * 16u)) & 0xFFFFu) * PRIM_WORDS;
-        let si = data[p];
-        if (si != last_setup) {
-            s = load_setup(setups + si * SETUP_WORDS);
-            last_setup = si;
+    // The tile's list in chunks of 256: each thread fetches one entry (list word -> primitive -> setup and bounds)
+    // into workgroup memory, then every thread walks the chunk in order from there instead of repeating the chain
+    // of dependent loads per sample.
+    let li = lid.y * 16u + lid.x;
+    for (var base = 0u; base < count; base = base + 256u) {
+        let n = min(256u, count - base);
+        workgroupBarrier();
+        if (li < n) {
+            let h = first + base + li;
+            let p = prims + ((data[lists + (h >> 1u)] >> ((h & 1u) * 16u)) & 0xFFFFu) * PRIM_WORDS;
+            chunk_prim[li] = p;
+            chunk_setup[li] = data[p];
+            chunk_lo[li] = data[p + 2u];
+            chunk_hi[li] = data[p + 3u];
         }
-        let lo = data[p + 2u];
-        let hi = data[p + 3u];
-        if (x < i32(lo & 0xFFFFu) || y < i32(lo >> 16u) || x > i32(hi & 0xFFFFu) || y > i32(hi >> 16u)) {
-            continue;
+        workgroupBarrier();
+        for (var i = 0u; i < n; i = i + 1u) {
+            let lo = chunk_lo[i];
+            let hi = chunk_hi[i];
+            if (x < i32(lo & 0xFFFFu) || y < i32(lo >> 16u) || x > i32(hi & 0xFFFFu) || y > i32(hi >> 16u)) {
+                continue;
+            }
+            let si = chunk_setup[i];
+            if (si != last_setup) {
+                s = load_setup(setups + si * SETUP_WORDS);
+                last_setup = si;
+            }
+            shade_at(chunk_prim[i], s, x, y, k, px, py);
         }
-        shade_at(p, s, x, y, k, px, py);
     }
 }

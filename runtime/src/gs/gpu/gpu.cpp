@@ -663,7 +663,7 @@ void emit_pre() {
                 total += g_pre[k].rec[7];
             }
         }
-        if (clut) g_commands.push_back({kLoadClut, 1, 1, push_params({offset, count})});
+        if (clut) g_commands.push_back({kLoadClut, count, 1, push_params({offset, count})});  // one workgroup per load
         else dispatch_linear(kUpload, total, push_params({offset, count, total}));
         i = j;
     }
