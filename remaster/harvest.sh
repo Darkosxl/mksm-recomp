@@ -2,7 +2,7 @@
 # Texture harvest over the story maps: warps the g7600 state to each map, runs 1400 frames past it (--frames counts
 # from boot, the state is at 7600; maps load in 800-1400) and dumps every texture drawn into
 # remaster-data/textures/dump (texdump.sh does the same for the reference scenes). One run at a time, a pause between
-# runs, and a RAM/VRAM check before each (waits up to 10 min, then stops).
+# runs, and a RAM/VRAM check before each (HARVEST_MIN_RAM=MB, default 4096; waits up to 10 min, then stops).
 # ponytail: only what the camera sees at the map's spawn point gets dumped; walking the maps would add more.
 # usage: remaster/harvest.sh [map id...]   (hex, default: every story map; runs on the Pi too, with PS2_GS=soft)
 set -uo pipefail
@@ -17,7 +17,7 @@ guard() {
   for _ in $(seq 60); do
     ram=$(awk '/MemAvailable/ {print int($2/1024)}' /proc/meminfo)
     vram=$(nvidia-smi --query-gpu=memory.free --format=csv,noheader,nounits 2>/dev/null | head -1)  # none on the Pi
-    [ "$ram" -ge 4096 ] && [ "${vram:-99999}" -ge 2048 ] && { echo "guard: RAM ${ram} MB, VRAM ${vram} MB"; return 0; }
+    [ "$ram" -ge "${HARVEST_MIN_RAM:-4096}" ] && [ "${vram:-99999}" -ge 2048 ] && { echo "guard: RAM ${ram} MB, VRAM ${vram} MB"; return 0; }
     echo "guard: waiting, RAM ${ram} MB, VRAM ${vram} MB"; sleep 10
   done
   echo "guard: STOP, not enough memory for 10 min"; exit 3
