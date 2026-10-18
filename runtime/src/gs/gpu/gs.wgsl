@@ -720,16 +720,18 @@ fn texture_lod(s: Setup, q: f32) -> f32 {
 // MXL=0 always filters with MMAG on level 0. Otherwise LOD <= 0 magnifies (MMAG, level 0) and LOD > 0 minifies with MMIN:
 // NEAREST/LINEAR stay on level 0, *_MIPMAP_NEAREST rounds the LOD to a level, *_MIPMAP_LINEAR blends floor(LOD) and the next level.
 fn texture(s: Setup, u: f32, v: f32, q: f32, k: u32) -> u32 {
-    if (has(s, F_REPLACED)) {
-        // texture pack: level 0 at 2^n the size in decoded[] (gpu.cpp replace_texture)
-        let n = data[s.mip_at];
-        let l = Level(s.tf, s.tw + n, s.th + n, s.minu << n, ((s.maxu + 1u) << n) - 1u, s.minv << n, ((s.maxv + 1u) << n) - 1u, s.dec);
-        let f = f32(1u << n);
-        return sample(s, l, u * f, v * f, k, has(s, F_BILINEAR));
-    }
     let mxl = (s.mip >> 1u) & 7u;
-    if (mxl == 0u) {
-        return sample(s, level(s, 0u), u, v, k, has(s, F_BILINEAR));
+    if (mxl == 0u || has(s, F_REPLACED)) {
+        // Level 0. A texture-pack replacement is level 0 at 2^n the size in decoded[] (gpu.cpp replace_texture); one
+        // sample() call for both, since every inlined call costs the raster kernel registers.
+        var l = level(s, 0u);
+        var f = 1.0;
+        if (has(s, F_REPLACED)) {
+            let n = data[s.mip_at];
+            l = Level(s.tf, s.tw + n, s.th + n, s.minu << n, ((s.maxu + 1u) << n) - 1u, s.minv << n, ((s.maxv + 1u) << n) - 1u, s.dec);
+            f = f32(1u << n);
+        }
+        return sample(s, l, u * f, v * f, k, has(s, F_BILINEAR));
     }
     let lod = texture_lod(s, q);
     if (!(lod > 0.0)) {
