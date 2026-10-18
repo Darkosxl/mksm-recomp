@@ -254,3 +254,17 @@ hashes 12/12 unchanged, images changed in 11/12 (all but fmv), replay-identical 
   texture of the Goro frame replaced; 4× Lanczos pack at 3×6: pixel-aligned, no seams.
 - `remaster/makepack.py` (Lanczos/tint test packs), `remaster/upscale.py` (Real-ESRGAN, step 7).
 - Off by default: `check.sh` PASS 12/12 at 1× (final build) and at 3×.
+
+### Step 7 — texture upscaling, first pack (2026-10-18)
+- Upscaler: Real-ESRGAN x4plus, ncnn-vulkan build (`PS2_REA/tools-remaster/realesrgan`, not in git) on the laptop
+  GPU — ~20 s for 40 textures. AWS not used: the account is the company's production account (root creds, user-data
+  buckets), and CPU-only boxes would be far slower than the laptop GPU for this.
+- `remaster/upscale.py`: RGB through the model at 4×, alpha (PS2 0–128) with Lanczos clamped to the original range
+  (alpha tests keep their edges), textures padded by wrapping their own edges before upscaling (tiling stays
+  seamless). Greyscale white-on-black sheets (fonts, masks) are left out: the model turned letters into blobs.
+- Pack v1 (`remaster-data/textures/pack-v1`): 276 of the 284 textures of the 12 reference scenes. In game at 3×6:
+  bark, rock, armour and HUD frames clearly sharper with the same colours and mood; HUD text keeps the original font;
+  some noisy low-res walls come out a little grainy. State hashes unchanged with the pack (4/4 scenes).
+- Not done yet: the all-map harvest (warp through every story map with `PS2_TEX_DUMP`) — heavy laptop runs, waits for
+  Cem's go. Alternative models (e.g. a gentler one for grainy walls) or fal.ai (Cem allowed ~$10) only if needed.
+- Laptop rules from today: ask before every heavy job; one GPU job at a time; RAM/VRAM guard before each step.
