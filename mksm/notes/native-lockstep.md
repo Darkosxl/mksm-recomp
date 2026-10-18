@@ -107,16 +107,45 @@ The first P2P run of this round (before `PS2_LOCKSTEP_STUN=none` existed, and wi
 fixed) fell back to the public STUN servers (`stun.l.google.com`, `stun.cloudflare.com`): two STUN lookups left the
 laptop. No other outbound traffic.
 
-Not run: native vs browser hash comparison of the real game (needs a wasm build in headless Chromium; the protocol
-side is covered by the Node test above). The window mode was built, not run (headless only).
+Third round: **browser against desktop** (merged with `shaolin-monks-remastered`, step 8). `remaster/coop/webpeer.mjs`
+runs the real web build (`build/web-mksm`, emsdk 6.0.11 from `tools/emsdk`) in headless Chromium 152
+(`--headless=new`, a private Xvfb DISPLAY so the NVIDIA PRIME Vulkan driver shows WebGPU, a MemoryMax=3G scope)
+against a headless native `ps2run` (`PS2_GS=soft`, single-threaded), on a throwaway `signal.mjs` behind the
+same-origin proxy of `scripts/lockstep_env.mjs`. Local only: the page's ICE servers come from the local `/turn`
+(stun/turn at 127.0.0.1, nothing listens there, host candidates connect), Chromium resolves no host name but
+127.0.0.1, the native side has `PS2_LOCKSTEP_STUN=none`. Both sides write `PS2_HASH_LOG` + `PS2_HASH_SPLIT` every
+frame (the page's copy is read out of MEMFS with `FS.readFile`); `koop.state`, `gen_mash.py` scripts as above. Both
+builds announced the same build id each time (`45e7dea5672268ae`, `b07c22d926d50f85`, `39ceec43055382bb` as the
+sources changed) and config `{"lockstep":1,"rate":"auto","patches":"none","env":[]}`.
+
+| Test | Result |
+|---|---|
+| Native ↔ native after the merge, 600 frames, P2P | Identical **797/797**, 24 windows ok, 0 desyncs. |
+| Desktop hosts, browser (WebGPU on the RTX 4060 via Dawn/Vulkan, VU1 thread on) drops in over **WebRTC** (Chromium's RTCPeerConnection ↔ libdatachannel) | Handshake accepted, state 48.3 MB → 14.1 MB gzip in 0.6 s, load hash equal on both (`6597b2b665a01cc8`). Per-frame hashes identical **432/432** (game frames 6807–7238), 12 protocol windows ok, 0 desyncs. |
+| Same with the **relay forced** (`PS2_LOCKSTEP_RELAY=1` on the desktop, the page follows: `using the relay (peer asked)`) | Identical **444/444**, 13 windows ok, 0 desyncs. |
+| **Browser hosts** (loads `koop.state` with `?state=`), desktop guest drops into the browser's snapshot, WebRTC | The wasm-made state loads natively with the same hash; identical **446/446**, 12 windows ok. |
+| **VU JIT:** browser with `PS2_VU_JIT=all` (all **31** VU1 programs of the scene JIT-compiled to wasm, counted by `ps2web_vu_jit_programs()`), without a GPU (`--disable-gpu`, CPU GS), against the desktop's compiled VU1 code | Identical **442/442** and **413/413** (two runs), 0 desyncs, 0 interpreted VU1 calls. |
+| **Patch mismatch:** desktop host with `widescreen.pnach`, browser without | Refused within 1 s on both sides; the browser noticed first and now words it like the desktop: `game patch set differs: P2 has no game patches, P1 has widescreen.pnach (8dcd818ffc9f7c47). Both players need …`; the desktop stops with exit 3. |
+| Native ↔ native on the final binary, 600 frames | Identical **796/796**, 24 windows ok, 0 desyncs (`-ffp-contract=off` changes nothing on x86-64 without FMA). |
+| `web/lockstep.js` in Node (test.sh interop) against the final native, 300 frames | Handshake accepted (same build and config text), drop-in over the relay, 300 frames, 0 desyncs. |
+
+So the browser and the desktop compute the same machine state frame by frame across WebGPU vs the CPU GS, the VU1
+thread vs none, and the wasm VU JIT vs the compiled VU1 code. A `--solo` comparison (each side alone from the state,
+no session) diverges at frame 6827 in EE RAM/IOP/SIF but not in VU state: outside lockstep the page streams the disc
+asynchronously, so disc timing differs; lockstep mode blocks on the disc (`chunk_blocking`) and is deterministic.
+Rerun: `flock logs/heavy.lock node remaster/coop/webpeer.mjs --out <dir> --state koop.state [--relay]
+[--browser-host] [--no-gpu] [--web-params PS2_VU_JIT=all]` (needs `build/web-mksm` from `scripts/build_web.sh mksm`
+with `PS2_GENERATED=mksm/generated`, and `server/node_modules`).
+
+The window mode was built, not run (headless only).
 
 ## Not done
 
-- **Browser interop beyond the protocol:** a portable build id (the browser hashes wasm headers, native hashes the
-  executable), one config schema (the browser sends `{lockstep, vuThread, gs, vuJit}`, native
-  `{lockstep, rate, patches, env}`; `gs` should leave the browser's config, `patches` join it), and proof that the
-  wasm VU JIT and the native AOT VU code compute the same state (needs a headless Chromium run of the wasm build).
-  A real browser WebRTC peer against the native was not tested (Node has no RTCPeerConnection).
+- **Browser widescreen:** the page passes no `PS2_PNACH`, so a browser only plays with an unpatched desktop. A
+  browser widescreen option needs the pnach in MEMFS and `PS2_PNACH` set before the identity is read.
+- **Longer and other scenes:** the browser runs covered ~430 frames of Ko-op gameplay each; story maps, FMVs (the
+  IPU IDCT table comes from `std::cos`, glibc vs musl) and the VU1 EFU ops (`std::sin/atan/exp`) were not exercised
+  against a browser.
 - **Resync after a desync** (`state-request`/`state-begin`, lockstep-emu.js) and **re-hosting** after the guest
   leaves are not ported: a desync is reported, not repaired; after a guest leaves the host continues solo.
 - **UI:** room code entry/display, waiting/stall/disconnect overlays, a pause key (`lockstep_set_paused` is wired),

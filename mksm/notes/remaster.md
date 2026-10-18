@@ -164,6 +164,9 @@ square scale.
   build with `-ffp-contract=off`, hard-code the IPU IDCT cos table.
   **Step 9 result (branch `remaster-coop`): `mksm/notes/native-lockstep.md`** — the protocol ported without new
   libraries over the signalling relay; the patch set is in the handshake; WebRTC/TLS/W4 wait on a dependency choice.
+  **Browser interop (same day):** desktop and browser share one build id (hash of the emulation sources) and one
+  config; a real headless Chromium peer matches the desktop frame by frame over WebRTC and the relay, both ways round,
+  with the wasm VU JIT forced on (native-lockstep.md, third round).
 
 ### Step 4 — resolution (2026-10-18)
 - **Fields:** the game draws a 640×224 field every frame at the same XYOFFSET (no half-line jitter between fields),
