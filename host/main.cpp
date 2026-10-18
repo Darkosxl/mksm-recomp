@@ -9,7 +9,9 @@
 #ifdef PS2_NETPLAY
 #include "netplay.hpp"
 #endif
+#ifdef PS2_LOCKSTEP
 #include "lockstep.hpp"
+#endif
 
 #include <atomic>
 #include <cctype>
@@ -67,7 +69,7 @@ int usage() {
                  "              [--window] [--fullscreen]\n"
                  "              [--host [port]] [--stun stun:host:port] [--bitrate kbit/s] [--encoder h264_nvenc|libx264]\n"
                  "              [--save-state frame:file] [--load-state file]\n"
-                 "              [--lockstep ws://signal-server [--room id|new]]   (invite cookie: PS2_LOCKSTEP_COOKIE)\n");
+                 "              [--invite https://host/invite?t=…[&room=id]] [--lockstep ws[s]://signal-server] [--room id|new]\n");
     return 2;
 }
 
@@ -81,8 +83,10 @@ int main(int argc, char **argv) {
     // a second controller is plugged into port 2 when asked for, or when the input script drives it
     bool pad2 = false;
     [[maybe_unused]] bool host = false;
-    bool lockstep = false;
+    [[maybe_unused]] bool lockstep = false;
+#ifdef PS2_LOCKSTEP
     LockstepOptions ls;
+#endif
 #ifdef PS2_NETPLAY
     NetplayOptions net;
 #endif
@@ -112,11 +116,17 @@ int main(int argc, char **argv) {
             ps2::g_options.presses.push_back(press);
         }
         else if (a == "--pad2") pad2 = true;
+#ifdef PS2_LOCKSTEP
         else if (a == "--lockstep" && i + 1 < argc) {
             lockstep = true;
             ls.signal = argv[++i];
         }
+        else if (a == "--invite" && i + 1 < argc) {
+            lockstep = true;
+            ls.invite = argv[++i];
+        }
         else if (a == "--room" && i + 1 < argc) ls.room = argv[++i];
+#endif
 #ifdef PS2_NETPLAY
         else if (a == "--host") {
             host = true;
@@ -146,23 +156,23 @@ int main(int argc, char **argv) {
         std::fprintf(stderr, "--lockstep and --host are different kinds of co-op: pick one\n");
         return 2;
     }
+#ifdef PS2_LOCKSTEP
     if (lockstep) {
         // lockstep co-op (host/lockstep.hpp): both ports come from the input ring; scripted presses become the local
         // player's lines (p1 for the room's host, p2 for the guest), applied by lockstep frame
         ps2::g_options.lockstep = true;
-        if (const char *cookie = std::getenv("PS2_LOCKSTEP_COOKIE")) ls.cookie = cookie;
         ls.disc_path = ps2::g_options.disc_path;
-        ls.load_path = load_path;
         ls.memcard_path = ps2::g_options.memcard_path;
-        ls.boot_args = args;
         ls.script = std::move(ps2::g_options.presses);
         ps2::g_options.presses.clear();
         g_frame_gate = lockstep_vblank;
     }
+#endif
     // a network player owns controller 2, which stays plugged in from boot so the game always sees it
     if (pad2 || host || lockstep) ps2::set_pad_connected(1, true);
 #ifdef PS2_WINDOW
     if (window && !open_window(fullscreen, pad2 && !host && !lockstep, host || lockstep)) return 1;
+#ifdef PS2_LOCKSTEP
     if (window && lockstep) {
         ls.audio_queued_ms = window_audio_queued_ms;
         set_window_lockstep(lockstep_vblank, [](std::uint16_t buttons, std::uint8_t lx, std::uint8_t ly, std::uint8_t rx, std::uint8_t ry, std::uint8_t l2, std::uint8_t r2) {
@@ -171,7 +181,10 @@ int main(int argc, char **argv) {
         set_window_status(lockstep_status);
     }
 #endif
+#endif
+#ifdef PS2_LOCKSTEP
     if (lockstep && !lockstep_start(ls)) return 1;
+#endif
 #ifdef PS2_NETPLAY
     if (host) {
         if (!netplay_start(net)) return 1;
@@ -210,10 +223,12 @@ int main(int argc, char **argv) {
     };
     const auto emulate = [&]() -> int {
         int result = boot_and_run();
+#ifdef PS2_LOCKSTEP
         if (lockstep) {
             const int session = lockstep_finish();  // also stops the network thread
             if (!result) result = session;
         }
+#endif
         return result;
     };
 #ifdef PS2_WINDOW

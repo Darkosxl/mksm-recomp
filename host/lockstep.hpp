@@ -12,13 +12,12 @@
 #include <vector>
 
 struct LockstepOptions {
-    std::string signal;          // signalling server, e.g. ws://127.0.0.1:8787 (server/signal.mjs)
+    std::string signal;          // signalling server, ws[s]://host[:port] (server/signal.mjs); from --invite when empty
     std::string room;            // room id, or "new" to create one (its id is printed for the other player)
-    std::string cookie;          // invite cookie for /ws, "__Host-mksm=..." (PS2_LOCKSTEP_COOKIE)
+    std::string invite;          // invite link https://host/invite?t=…[&room=…]: redeemed, its cookie stored
+    std::string cookie;          // invite cookie for /ws, "__Host-mksm=..." (else the stored one; PS2_LOCKSTEP_COOKIE overrides)
     std::string disc_path;       // for the disc id in the handshake
-    std::string load_path;       // start state (--load-state), part of the session config
-    std::string memcard_path;    // memory card at session start, part of the session config
-    std::vector<std::string> boot_args;
+    std::string memcard_path;    // a guest keeps the host's card in <memcard_path>.session
     std::vector<ps2::Press> script;  // scripted input, by lockstep frame; only the local player's lines are used
     // window sound queue in ms (0 = none): nudges the 59.94 Hz clock by up to 0.2% to keep it near 80 ms
     std::function<double()> audio_queued_ms;
@@ -30,8 +29,10 @@ struct LockstepPad {
     std::uint8_t lx = 128, ly = 128, rx = 128, ry = 128, l2 = 0, r2 = 0;
 };
 
-// Builds the session config (build hash, disc id, game patch set, start state) and starts the network thread.
-// The emulator holds at its first vblank until both players have shaken hands. False on a local setup error.
+// Builds the session config (build hash, disc id, game patch set) and starts the network thread. The emulator holds at
+// its first vblank until the room is joined: the host then plays alone until a guest drops in (its state and memory
+// card are sent to the guest, both load them), a guest stays held until it has the host's state. False on a local
+// setup error.
 bool lockstep_start(const LockstepOptions &options);
 // at every vblank, on the emulation thread: waits for both players' inputs for this frame and latches them
 void lockstep_vblank();

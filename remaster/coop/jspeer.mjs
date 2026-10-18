@@ -1,10 +1,13 @@
 // The browser's web/lockstep.js (unmodified) in Node as the room's host (P1), with a mock emulator worker, against a
 // native ps2run guest (P2). Node's WebSocket carries the invite cookie; no RTCPeerConnection is needed because the
-// native peer asks for the relay. usage: node jspeer.mjs <signal> <cookie> <native-hello.json> <room-out> <script> <frames> <report.json>
+// native peer asks for the relay. As the host it drops the native guest into a game: it sends <state> as the W4 blob
+// (gzip by CompressionStream, as the browser does) and starts at frame 1001.
+// usage: node jspeer.mjs <signal> <cookie> <native-hello.json> <room-out> <script> <frames> <report.json> <state>
 import { Worker } from 'node:worker_threads';
 import { readFileSync, writeFileSync } from 'node:fs';
 const { Lockstep, OFF } = await import(new URL('../../web/lockstep.js', import.meta.url));
-const [signal, cookieFile, helloFile, roomFile, scriptFile, framesArg, reportFile] = process.argv.slice(2);
+const [signal, cookieFile, helloFile, roomFile, scriptFile, framesArg, reportFile, statePath] = process.argv.slice(2);
+const SYNC_FRAME = 1000;
 const frames = Number(framesArg);
 const cookie = readFileSync(cookieFile, 'utf8').trim();
 const NodeWS = globalThis.WebSocket;
@@ -30,13 +33,24 @@ const scripted = (frame, port) => {
 };
 
 const sab = new SharedArrayBuffer(OFF.SIZE), ctrl = new SharedArrayBuffer(8);
+const seen = { hashMsgs: 0, hashFrames: [], desyncs: 0, refused: null, sync: null };
 const room = await Lockstep.createRoom({ signal, build: native.build });
 const ls = new Lockstep({
   buffer: sab, base: 0, room, build: native.build, disc: native.disc, config: native.config, signal, firstFrame: 1,
   overlay: false, pauseOnHidden: false, log: (...a) => console.log('[js]', ...a),
   readPad: (frame) => ({ buttons: scripted(frame, 0), lx: 128, ly: 128, rx: 128, ry: 128, l2: 0, r2: 0 }),
+  // lockstep-emu.js hostSync with a state file instead of a live snapshot (the mock emulator has no PS2 state)
+  sync: async (l) => {
+    const bytes = readFileSync(statePath);
+    const loaded = l.waitCtl('loaded', 300000);
+    const sent = await l.sendBlob(bytes, { frame: SYNC_FRAME, stateSize: bytes.length, cardSize: 0, rtc: 1792000000, attempt: 0 });
+    const theirs = await loaded;
+    seen.sync = { sentMB: +(sent.size / 1048576).toFixed(1), gzipMB: +(sent.zsize / 1048576).toFixed(1), loaded: theirs };
+    l.sendCtl({ t: 'sync-result', ok: true, f: SYNC_FRAME });
+    return SYNC_FRAME + 1;
+  },
 });
-const seen = { hashMsgs: 0, hashFrames: [], desyncs: 0, refused: null, pongs: 0 };
+
 const onCtl = ls.onCtl.bind(ls);
 ls.onCtl = (data) => {
   if (typeof data === 'string') {
@@ -47,7 +61,7 @@ ls.onCtl = (data) => {
 };
 ls.onDesync = () => seen.desyncs++;
 ls.onRefused = ({ reason }) => { seen.refused = reason; };
-const worker = new Worker(new URL('./jsmock.mjs', import.meta.url), { workerData: { sab, ctrl, frames } });
+const worker = new Worker(new URL('./jsmock.mjs', import.meta.url), { workerData: { sab, ctrl, frames, first: SYNC_FRAME + 1 } });
 const done = new Promise((resolve) => worker.on('message', resolve));
 await ls.join();
 writeFileSync(roomFile, room);
