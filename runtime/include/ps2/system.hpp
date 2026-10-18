@@ -139,6 +139,7 @@ void start_vu_thread();
 void run_vu_thread();
 double vu_thread_idle_ms();
 std::uint64_t vu1_interpreted_calls();
+std::uint64_t vu1_jit_programs();  // VU1 programs the browser build has JIT-compiled
 void post_present();
 enum class Rendered { idle, presented, busy };
 Rendered render_pending(bool surface, const std::function<void(const std::uint32_t *rgba, std::uint32_t width, std::uint32_t height)> &copy,

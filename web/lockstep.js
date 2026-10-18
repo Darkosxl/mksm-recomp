@@ -109,6 +109,24 @@ export async function discId(size, firstMB) {
   return `${size}:${hex(await crypto.subtle.digest('SHA-256', firstMB))}`;
 }
 
+// A refusal's text, worded as a desktop peer words it (host/lockstep.cpp Session::describe) and naming both players,
+// so both screens show the same sentence whichever side noticed the mismatch first.
+function describeMismatch(why, mine, peer, isHost) {
+  const [me, them] = isHost ? ['P1', 'P2'] : ['P2', 'P1'];
+  const both = (a, b) => `${me} has ${a}, ${them} has ${b}`;
+  if (why !== 'config') return `different ${why} (${both(JSON.stringify(mine[why]), JSON.stringify(peer[why]))})`;
+  const a = mine.config || {}, b = peer.config || {};
+  for (const k of new Set([...Object.keys(a), ...Object.keys(b)])) {
+    if (JSON.stringify(a[k]) === JSON.stringify(b[k])) continue;
+    if (k === 'patches') {
+      const files = (h) => (h.patchFiles?.length ? `${h.patchFiles.join(',')} (${h.config.patches})` : 'no game patches');
+      return `game patch set differs: ${both(files(mine), files(peer))}. Both players need the same PS2_PNACH files (both with or both without widescreen)`;
+    }
+    return `config.${k} differs (${both(JSON.stringify(a[k]), JSON.stringify(b[k]))})`;
+  }
+  return 'config differs';
+}
+
 export class Lockstep {
   // Reserves a room on the signalling server and returns its id (does not join).
   static async createRoom({ signal = location.origin, build } = {}) {
@@ -274,15 +292,16 @@ export class Lockstep {
 
   async handshake() {
     this.setStatus('handshake');
-    const { build, disc, config } = this.opts;
-    const hello = { t: 'hello', proto: PROTOCOL, build, disc, config };
+    const { build, disc, config, patchFiles = [] } = this.opts;
+    const hello = { t: 'hello', proto: PROTOCOL, build, disc, config, patchFiles }; // patchFiles: not compared
     this.sendCtl(hello);
     const peer = await this.waitCtl('hello', 10000);
     const why = ['proto', 'build', 'disc', 'config'].find((k) => JSON.stringify(peer[k]) !== JSON.stringify(hello[k]));
     if (why) {
-      this.sendCtl({ t: 'refuse', reason: why });
+      const detail = describeMismatch(why, hello, peer, this.isHost);
+      this.sendCtl({ t: 'refuse', reason: why, detail });
       await sleep(200);
-      this.refuse(why, true);
+      this.refuse(why, true, detail);
     }
     // opts.sync(ls, isHost) runs between the handshake and the first frame (W4: the host's snapshot is loaded by
     // both peers); on the host it returns the first frame to run.
@@ -316,12 +335,12 @@ export class Lockstep {
   }
 
   // Mismatch found here (local) or by the peer: both stop; a pending connect() rejects.
-  refuse(reason, local) {
+  refuse(reason, local, detail) {
     const err = new Error('lockstep handshake refused: ' + reason);
     if (!this.refused) {
       this.refused = reason;
       this.setStatus('refused: ' + reason);
-      this.emit('refused', { reason, local });
+      this.emit('refused', { reason, local, detail });
       for (const list of this.ctlWaiters.values()) for (const w of list.splice(0)) w(null, err);
       this.close();
     }
@@ -656,7 +675,7 @@ export class Lockstep {
         this.remoteHashes.set(msg.f, msg.h);
         if (msg.x) this.remoteExtra.set(msg.f, msg.x);
         return this.compareHash(msg.f);
-      case 'refuse': return this.refuse(msg.reason, false);
+      case 'refuse': return this.refuse(msg.reason, false, msg.detail); // detail: a desktop peer words the mismatch
       case 'delay': this.setDelay(msg.D); this.rtts.push(msg.rtt.p50); this.emit('resync', { D: msg.D, rtt: msg.rtt }); return this.log(`host set D=${msg.D}`);
       case 'resync-request': if (this.isHost) this.resync(); return;
       case 'resync-begin': return;

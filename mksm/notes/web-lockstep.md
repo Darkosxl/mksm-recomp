@@ -55,10 +55,10 @@ path is behind it (`regress.sh` PASS ×4 on this branch's native build).
 | Stalls | A frame that had to wait for an input (not a hold, not `flags & 1`) counts in `stall_frames`/`stall_ms`. |
 | Hash | Part k of 32 per frame (`ps2::hash_part`): 1 MB of EE RAM each, plus EE CPU (named fields) + scratchpad + scheduler/event times on k=0, IOP RAM + CPU on 8, SPU2 RAM on 16, VU0/VU1 code+data, TOP/ITOP, pending XGKICKs and VU1 registers (behind the non-flushing VU-thread fence) on 24. XXH64 of the 32 part hashes is published at frames ≡ 31 mod 32 once the whole window lies after the last load. Never GS memory, never padded structs. Cost: about 1 MB of XXH64 per frame, 3 MB on parts 8 and 16. |
 | RTC | `set_rtc_epoch()`: the host pins its epoch at boot (`Module.rtcEpoch`, the page's `Date.now()` or `lsrtc`); the guest gets it with every snapshot. Guest time = epoch + emulated seconds. |
-| VU JIT | `vu_jit_web.cpp` `mode()` returns 1 in lockstep (never `check`, which rewrites VU1 memory while it compares). |
+| VU JIT | `vu_jit_web.cpp` `mode()`: `PS2_VU_JIT` is each peer's own (default 1: compiled programs, JIT for the rest; `all`; `0`), never `check` in lockstep (it rewrites VU1 memory while it compares). The JIT matches the desktop's compiled VU1 code frame by frame (native-lockstep.md). |
 | Disc | A cache miss blocks the emulation thread (`chunk_blocking`), retrying a failed fetch forever (backoff 200 ms to 2 s) and publishing `disc_wait` for the overlay. `disc_ready` still issues the prefetch but always answers ready, so the guest never sees an emulated retry (`cdvd.cpp:201`, `cdvdfsv.cpp:47-58`) or a short read. Emulated timing is then the native one. |
 | Memory card | `sio2::card_image()`/`set_card_image()`. The host's card travels with every snapshot; the guest installs it as an in-memory session card (`/session`, MEMFS), so the guest's own card in IndexedDB is untouched and session saves persist only on the host. A host without a card gives the guest no card. |
-| Config | Handshake `config = {lockstep, vuThread, gs: 'gpu', vuJit: 1}`; build id (wasm size/date) and disc id (size + SHA-256 of the first MB) as in W3. |
+| Config | Handshake `build` and `config = {lockstep, rate, patches, env}` from the emulator (`ps2web_lockstep_identity()`, `host/lockstep_id.cpp`), the same values a desktop `ps2run` built from the same sources announces (native-lockstep.md); disc id (size + SHA-256 of the first MB) as in W3. The page copies every `PS2_*` URL parameter into the environment; `config.env` compares the game-affecting ones. |
 
 ## Drop-in and resync (W4)
 
@@ -136,4 +136,4 @@ with a private Xvfb DISPLAY, VU1 thread on.
   (status text "software renderer") although the runtime then gets the NVIDIA adapter and presents through WebGPU;
   the runtime now logs the adapter's vendor and architecture. Headful inside Xvfb, Chromium's present check fails on
   the Intel adapter (`vkAllocateMemory`), so that page renders on Intel but copies frames to a 2D canvas (smoke run).
-- The VU1 thread layout is pinned through the handshake (`lsvu`); both tests used the VU1 thread.
+- The VU1 thread layout was pinned through the handshake (`lsvu`) at the time; both tests used the VU1 thread. It is a local choice now (a threaded browser matches a single-threaded desktop frame by frame).

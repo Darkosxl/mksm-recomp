@@ -20,12 +20,12 @@ std::vector<std::uint32_t> *g_kicks = nullptr;
 int mode() {
     static const int value = [] {
 #ifdef __EMSCRIPTEN__
-        // lockstep peers must agree on one mode, and check mode (3) rewrites VU1 memory while it compares
-        if (ps2::g_options.lockstep) return 1;
+        // The JIT, the compiled programs and the interpreter compute the same state (native-lockstep.md), so a
+        // lockstep peer picks its own mode, but not check mode (3): it rewrites VU1 memory while it compares.
         const char *env = std::getenv("PS2_VU_JIT");
         if (!env) return 1;
         if (std::strcmp(env, "all") == 0) return 2;
-        if (std::strcmp(env, "check") == 0) return 3;
+        if (std::strcmp(env, "check") == 0) return ps2::g_options.lockstep ? 1 : 3;
         return std::strcmp(env, "0") == 0 ? 0 : 1;
 #else
         return 0;

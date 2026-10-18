@@ -768,6 +768,7 @@ Candidate make_candidate(std::vector<std::uint32_t> pcs) {
     return c;
 }
 std::unordered_map<std::uint64_t, ProgramFn> g_jit_programs;
+std::atomic<std::uint64_t> g_jit_compiled{0};
 std::vector<std::uint32_t> *g_kick_log = nullptr;
 std::int64_t *g_capture = nullptr;
 
@@ -776,6 +777,7 @@ ProgramFn jit_program(std::uint64_t key, std::uint32_t address) {
     if (it != g_jit_programs.end()) return it->second;
     const ProgramFn fn = jit::compile(g_vu1_code, address & 16383u);
     g_jit_programs[key] = fn;
+    if (fn) g_jit_compiled.fetch_add(1, std::memory_order_relaxed);
     return fn;
 }
 EntryCache g_entries[2048];
@@ -804,6 +806,7 @@ ProgramFn lookup(std::uint32_t address);
 std::atomic<std::uint64_t> g_interpreted_calls{0};
 
 std::uint64_t interpreted_calls() { return g_interpreted_calls.load(std::memory_order_relaxed); }
+std::uint64_t jit_programs() { return g_jit_compiled.load(std::memory_order_relaxed); }
 
 void check_jit(ProgramFn compiled, ProgramFn jit) {
     static std::uint64_t calls = 0, escapes = 0, mismatches = 0;
