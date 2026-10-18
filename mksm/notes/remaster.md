@@ -45,27 +45,28 @@ and compare), `web_baseline.sh` (Chromium in a private Xvfb, NVIDIA), `sheet.py`
 
 All 12 scenes replay **bit-identically** (image sha256 and emulator state hash, two runs each).
 
-| Scene | Frame | Source | GPU ms/frame (native res) | Browser fps (10 s after capture) | Browser GS-thread busy | Native uncapped fps |
+| Scene | Frame | Source | GPU ms/frame (native res) | Browser fps (10 s after capture) | Browser GS-thread busy | Desktop uncapped fps (3 threads) |
 |---|---|---|---|---|---|---|
-| menu (3D main menu) | 2400 | boot + story | 0.92 | 60.0 | 7% | 249 |
-| charsel | 2700 | boot + story | 0.79 | 59.6 | — | 293 |
-| fmv (intro movie) | 4200 | boot + story | 0.04 | 58.2 | — | 328 |
-| raiden (in-engine cutscene) | 6200 | boot + story | 6.28 | **43.0** | 86% | 64 |
-| goro (gameplay + HUD) | 8000 | g7600 + story | 7.04 | **43.3** | 93% | 77 |
-| pause (pause menu) | 7900 | g7600 + start | 0.26 | 60.0 | — | 232 |
-| koop (2P fight) | 7000 | boot + koop | 5.06 | 59.4 | 80% | 84 |
-| academy (Wu Shi 0x67) | 10000 | warp | 8.27 | 58.0 | — | 65 |
-| forest (0x80) | 11000 | warp | 5.21 | 59.9 | 73% | 89 |
-| nether (0xA0) | 11400 | warp | 8.44 | **46.6** | 66% | 54 |
-| kahn (Foundry 0x49 cutscene) | 10200 | warp | 4.31 | **54.3** | 94% | 83 |
-| foundry (0x49 arena) | 14200 | warp | 13.89 | **43.7** | 50% | 47 |
+| menu (3D main menu) | 2400 | boot + story | 0.92 | 60.0 | 7% | 245 |
+| charsel | 2700 | boot + story | 0.79 | 59.6 | — | 281 |
+| fmv (intro movie) | 4200 | boot + story | 0.04 | 58.2 | — | 309 |
+| raiden (in-engine cutscene) | 6200 | boot + story | 6.28 | **43.0** | 86% | 104 |
+| goro (gameplay + HUD) | 8000 | g7600 + story | 7.04 | **43.3** | 93% | 133 |
+| pause (pause menu) | 7900 | g7600 + start | 0.26 | 60.0 | — | 275 |
+| koop (2P fight) | 7000 | boot + koop | 5.06 | 59.4 | 80% | 128 |
+| academy (Wu Shi 0x67) | 10000 | warp | 8.27 | 58.0 | — | 124 |
+| forest (0x80) | 11000 | warp | 5.21 | 59.9 | 73% | 148 |
+| nether (0xA0) | 11400 | warp | 8.44 | **46.6** | 66% | 110 |
+| kahn (Foundry 0x49 cutscene) | 10200 | warp | 4.31 | **54.3** | 94% | 137 |
+| foundry (0x49 arena) | 14200 | warp | 13.89 | **43.7** | 50% | 81 |
 
 - GPU ms: sum of `PS2_GPU_PROFILE` dispatch times, mean over the 120 frames before the capture (RTX 4050).
 - Browser: `stats` overlay, scale 1, Xvfb (on-screen fps there is limited by Xvfb's software compositing and is not
-  meaningful). Native uncapped: threaded, headless, 800 frames from the state incl. load, i7-12700H, performance profile.
+  meaningful). Desktop uncapped: `PS2_THREADS=1` headless (the windowed layout: emulation, VU1 and render threads),
+  800 frames from the state incl. load, i7-12700H, performance profile. A first measurement without `PS2_THREADS`
+  ran everything on one thread and gave 47–89 fps for the gameplay scenes; that was wrong for the real game.
 - **Finding:** in the slow browser scenes the CPU side of the renderer (GS render thread, wasm) is 86–94 % busy while
-  the GPU is 24–27 % busy. Natively, nether and foundry also stay under 60 uncapped. The remaster needs renderer
-  headroom before it adds work.
+  the GPU is 24–27 % busy. On the desktop every scene runs above 60 uncapped (Foundry lowest at 81).
 - Notes: 0x60 "Wu Shi Map 01" is the new-game map (Goro's Lair opening), so the Academy scene uses 0x67. The Forest's
   large red cloud looks intentional but was never compared with PCSX2. Warp states carry the invulnerability poke.
 
@@ -99,3 +100,11 @@ Render-thread cost per frame (native, single-threaded debug run):
 
 Leads for step 2b: Foundry's GIF parsing is ~7× the other scenes'. Its largest group (410 draws, 10,266
 primitives, character program) changes no pixel of the final frame when left out.
+
+### Decisions after step 2 (2026-10-18, Cem)
+- **Desktop first.** The browser is no longer a target for the remaster; step 2b (browser performance) is dropped.
+  Performance work goes into the remaster features themselves.
+- Target: Cem's laptop (RTX 4050 laptop GPU, i7-12700H) at **1440p, 60 fps**, all 12 scenes. Desktop headroom today:
+  Foundry 81 fps uncapped, everything else 104+.
+- Look: **faithful first** (sharp, same art and mood, toggle to original), modern lighting as a later optional mode.
+- **Online co-op desktop to desktop** is needed: the lockstep netcode moves into the desktop app.
