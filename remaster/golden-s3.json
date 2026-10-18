@@ -1,10 +1,10 @@
 {
  "academy": {
-  "cpu_ms": 71.88,
+  "cpu_ms": 51.95,
   "frame": 10000,
-  "gpu_ms": 20.376,
-  "gpu_ms_max": 25.514,
-  "image_sha256": "3731a0fda214de89d180ee8280f85ea3da3a79af73829dd6d2459e4add641fbe",
+  "gpu_ms": 20.458,
+  "gpu_ms_max": 30.546,
+  "image_sha256": "a5abc0edc13353d3edf869d9c5c7492b9921adb631444be751b925671458a3bd",
   "replay_identical": true,
   "size": [
    1920,
@@ -13,10 +13,10 @@
   "state_hash": "b3afd321d2c0cea3"
  },
  "charsel": {
-  "cpu_ms": 20.46,
+  "cpu_ms": 27.01,
   "frame": 2700,
-  "gpu_ms": 4.426,
-  "gpu_ms_max": 4.459,
+  "gpu_ms": 14.213,
+  "gpu_ms_max": 21.56,
   "image_sha256": "3c805562013006c17a6f1e763e921ce8983f9988676b5e802316d233b7cef560",
   "replay_identical": true,
   "size": [
@@ -26,10 +26,10 @@
   "state_hash": "2676eae774538fe3"
  },
  "fmv": {
-  "cpu_ms": 12.16,
+  "cpu_ms": 12.24,
   "frame": 4200,
-  "gpu_ms": 0.324,
-  "gpu_ms_max": 0.393,
+  "gpu_ms": 0.463,
+  "gpu_ms_max": 0.572,
   "image_sha256": "4f25c7c3bd4c392eff9d49b240866e650cae56ff0e26e636bd2eee08cefce2fd",
   "replay_identical": true,
   "size": [
@@ -39,11 +39,11 @@
   "state_hash": "58d9bb6f236e736a"
  },
  "forest": {
-  "cpu_ms": 54.42,
+  "cpu_ms": 40.99,
   "frame": 11000,
-  "gpu_ms": 14.472,
-  "gpu_ms_max": 20.243,
-  "image_sha256": "d9f2436764dd2d5a1f2fa48e622620bbece386b7d0196fa4c018aad874b03db1",
+  "gpu_ms": 16.305,
+  "gpu_ms_max": 19.016,
+  "image_sha256": "f0512feaf8459cdd7305f69bd1808ae9629c21f11a95a23e32acf5cd3838f15a",
   "replay_identical": true,
   "size": [
    1920,
@@ -52,11 +52,11 @@
   "state_hash": "ba387116cbffa8c3"
  },
  "foundry": {
-  "cpu_ms": 111.37,
+  "cpu_ms": 72.38,
   "frame": 14200,
-  "gpu_ms": 33.083,
-  "gpu_ms_max": 41.906,
-  "image_sha256": "751472dd2002ce1b1d603ed53ed632bfae69553737fc2855261e177fb1537ba9",
+  "gpu_ms": 27.342,
+  "gpu_ms_max": 36.586,
+  "image_sha256": "acbe940e5ee0998df591ff37c2f438c1d67ea5d41f01f1d22a214b4a5c240474",
   "replay_identical": true,
   "size": [
    1920,
@@ -65,11 +65,11 @@
   "state_hash": "8993d04a479bd1ab"
  },
  "goro": {
-  "cpu_ms": 62.05,
+  "cpu_ms": 69.67,
   "frame": 8000,
-  "gpu_ms": 17.275,
-  "gpu_ms_max": 23.311,
-  "image_sha256": "3e1ea7c269ea17b73a1417f556773a4cc627ea2b8bba932c21c6cafc7febcd78",
+  "gpu_ms": 38.63,
+  "gpu_ms_max": 51.791,
+  "image_sha256": "fa05378b5b597cb26940ec78257ad17d3ed6c08d9eccfd4db5e44feecb09f705",
   "replay_identical": true,
   "size": [
    1920,
@@ -78,11 +78,11 @@
   "state_hash": "db151828af4addc7"
  },
  "kahn": {
-  "cpu_ms": 51.28,
+  "cpu_ms": 41.64,
   "frame": 10200,
-  "gpu_ms": 14.697,
-  "gpu_ms_max": 18.522,
-  "image_sha256": "4abd75facea5d14f3e6e2f5cf47343c09058099e8ff39b62d3ba273b95415ec1",
+  "gpu_ms": 16.68,
+  "gpu_ms_max": 21.01,
+  "image_sha256": "7b6e36ddffcb01a690798f476cdccc3092d05eedd5d82891ff8089150c4eeca2",
   "replay_identical": true,
   "size": [
    1920,
@@ -91,11 +91,11 @@
   "state_hash": "d1f00593246c403f"
  },
  "koop": {
-  "cpu_ms": 55.57,
+  "cpu_ms": 41.55,
   "frame": 7000,
-  "gpu_ms": 14.98,
-  "gpu_ms_max": 20.202,
-  "image_sha256": "fd2977a6ef17c6b9abf2aa727658c59b39b4f84013c0e40987fe6faf47f47ec6",
+  "gpu_ms": 15.939,
+  "gpu_ms_max": 26.728,
+  "image_sha256": "74e58b1b0bbb6f84b4fab2e9e68a7ceb14539477f2761a183c15a863815e46eb",
   "replay_identical": true,
   "size": [
    1920,
@@ -104,10 +104,10 @@
   "state_hash": "5a95f931b63e9372"
  },
  "menu": {
-  "cpu_ms": 24.48,
+  "cpu_ms": 27.2,
   "frame": 2400,
-  "gpu_ms": 5.719,
-  "gpu_ms_max": 7.272,
+  "gpu_ms": 11.647,
+  "gpu_ms_max": 22.427,
   "image_sha256": "85b85c3db03aa9384f34d7ee1f8d5c4d793a28300f19ad38324fee7c534823c3",
   "replay_identical": true,
   "size": [
@@ -117,11 +117,11 @@
   "state_hash": "e54c6f3313feb759"
  },
  "nether": {
-  "cpu_ms": 77.38,
+  "cpu_ms": 52.42,
   "frame": 11400,
-  "gpu_ms": 22.738,
-  "gpu_ms_max": 28.583,
-  "image_sha256": "32c5240d19524371acfb610b4cba5884d400aecdc03cbe4eb49ed850fe4795f9",
+  "gpu_ms": 19.439,
+  "gpu_ms_max": 29.58,
+  "image_sha256": "67993d3a1746694cfd0281893437c6ba3e99c90ad3295c9f21a7fe889b7027a2",
   "replay_identical": true,
   "size": [
    1920,
@@ -130,10 +130,10 @@
   "state_hash": "782e6a29d2c066dc"
  },
  "pause": {
-  "cpu_ms": 14.62,
+  "cpu_ms": 10.92,
   "frame": 7900,
-  "gpu_ms": 2.029,
-  "gpu_ms_max": 2.505,
+  "gpu_ms": 1.616,
+  "gpu_ms_max": 1.766,
   "image_sha256": "31464835b44180b102213ce9499e5c3df77bef66f6fae7247ff37689d4f876b6",
   "replay_identical": true,
   "size": [
@@ -143,11 +143,11 @@
   "state_hash": "6ba6c64a8a7b338d"
  },
  "raiden": {
-  "cpu_ms": 70.36,
+  "cpu_ms": 65.6,
   "frame": 6200,
-  "gpu_ms": 20.637,
-  "gpu_ms_max": 25.564,
-  "image_sha256": "fb016ab8dedbea214b37a845827f3fb252d44dd02d467545f500c7556127a9ef",
+  "gpu_ms": 30.886,
+  "gpu_ms_max": 54.885,
+  "image_sha256": "4f52450b14647fed998be8b51d8d826e58ecfadbf203e42dc0b97bf67b699e3f",
   "replay_identical": true,
   "size": [
    1920,
