@@ -68,3 +68,34 @@ All 12 scenes replay **bit-identically** (image sha256 and emulator state hash, 
   headroom before it adds work.
 - Notes: 0x60 "Wu Shi Map 01" is the new-game map (Goro's Lair opening), so the Academy scene uses 0x67. The Forest's
   large red cloud looks intentional but was never compared with PCSX2. Warp states carry the invulnerability poke.
+
+### Step 2 — frame debugger (2026-10-18)
+- `PS2_DRAW_DUMP` / `PS2_DRAW_SKIP` (runtime `gs/drawdbg.*`, debug only, off by default): every GIF packet is tagged
+  with its source (DMA/VIF1 EE call site, VU1 microprogram entry + code hash), every draw recorded with GS state,
+  screen box, render-thread CPU time and its share of the GPU raster dispatches. `remaster/check.sh`: PASS (12/12
+  bit-identical) with the tagger built in.
+- `remaster/framedbg.sh <scene> [n]` → `remaster-data/framedbg/<scene>/html/index.html`: frame with hover outlines,
+  groups by cost with textures (CPU-renderer run) and isolation images (frame with the group left out), all draws
+  with decoded registers. Grouping ignores FBP: the game double-buffers, so FBP alternates every frame.
+- PCSX2 check (agent): the Forest's red cloud is real content (same cloud and colours in PCSX2, mean RGB 53,17,9 vs
+  52,17,9). Small leads for later: a few single bright-red pixels at the Forest's right edge and sparks/stair-stepped
+  edge in the Academy that PCSX2 doesn't show. `remaster-data/pcsx2-forest/side_by_side.png`.
+- Character groups (VU1 programs @0000 #672fef39 and @06f0 #ad5f3626) sample 16-level white/alpha T4 textures
+  (TFX highlight); their colour comes from vertex colours. World geometry: @36f0 #002c80ed and @0b40 #567ce7d8 (fogged).
+  Full-screen sprites @0000 #b27a143b are the lighting/fog overlay passes.
+
+Render-thread cost per frame (native, single-threaded debug run):
+
+| Scene | Draws | Primitives | GIF parse ms | Drawing ms | GPU raster ms |
+|---|---|---|---|---|---|
+| raiden | 732 | 28,364 | 2.06 | 3.23 | 3.14 |
+| goro | 785 | 29,808 | 1.94 | 3.32 | 3.31 |
+| koop | 189 | 22,129 | 1.44 | 2.10 | 2.65 |
+| academy | 916 | 36,953 | 2.64 | 4.52 | 4.74 |
+| forest | 755 | 21,652 | 1.54 | 2.68 | 2.64 |
+| nether | 897 | 41,245 | 2.50 | 4.45 | 4.31 |
+| kahn | 820 | 22,405 | 2.04 | 3.85 | 2.13 |
+| **foundry** | 2,349 | 62,710 | **17.49** | 7.45 | 6.01 |
+
+Leads for step 2b: Foundry's GIF parsing is ~7× the other scenes'. Its largest group (410 draws, 10,266
+primitives, character program) changes no pixel of the final frame when left out.
