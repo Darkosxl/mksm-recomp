@@ -162,3 +162,51 @@ square scale.
   `__Host-mksm` cookie (accept it via subprotocol/query, or use libcurl WS); web `build` id (hash of wasm headers)
   and `config.vuJit` must become portable values. **First job: native vs browser hash comparison** (never done);
   build with `-ffp-contract=off`, hard-code the IPU IDCT cos table.
+
+### Step 4 — resolution (2026-10-18)
+- **Fields:** the game draws a 640×224 field every frame at the same XYOFFSET (no half-line jitter between fields),
+  so there is no hidden 448-line detail to weave. A true 1440p image needs twice as many samples down as across.
+- **`PS2_SCALE=AxB`** (gpu.cpp, gs.wgsl): A samples across (1–3), B down (1–6) per GS pixel; sample k = sub_y·A +
+  sub_x, sample 0 stays the native one. Display output is A per pixel both ways, so `3x6` turns a 224-line field into
+  a full 1920×1344 frame (fills a 1440p 4:3 viewport ~1:1) and `2x4` into 1280×896. With B ≠ A the field blend is
+  off (it would only ghost motion). Square scales are unchanged: `check.sh` PASS 12/12 at 1× and at 3×
+  (`golden-s3.json`, new; replay-identical 12/12).
+- **load_clut** in parallel (one workgroup per load, value = newest load covering the entry): bit-identical,
+  Foundry 3× 55 → 60 fps (Performance profile).
+- Tried and dropped: prefetching tile lists into workgroup memory. +4% at 1×, −14% at 3× (short lists; barriers
+  cost more than they save); 3×6 has even shorter lists.
+- `remaster/perf.sh`: fps over the 600 frames after each capture frame, 3-thread layout (`PS2_FPS` timer).
+
+Desktop fps, Performance profile, before step-4 changes:
+
+| Scene | 1× | 2× | 3× |
+|---|---|---|---|
+| menu / charsel / fmv / pause | 311 / 347 / 385 / 356 | 298 / 341 / 370 / 367 | 268 / 339 / 351 / 329 |
+| raiden | 117 | 108 | 83 |
+| goro | 143 | 135 | 93 |
+| koop | 139 | 143 | 106 |
+| academy | 141 | 106 | 80 |
+| forest | 179 | 151 | 116 |
+| nether | 125 | 95 | 76 |
+| kahn | 156 | 137 | 97 |
+| foundry | 88 | 67 | 56 |
+
+After step 4, **Balanced profile** (Cem asked for quieter fans; lower clocks than above, compare within a table only):
+
+| Scene | 3× | 2×4 | 3×6 |
+|---|---|---|---|
+| foundry | 43.6 | 43.9 | 39.1 |
+| nether | 60.4 | 60.7 | 50.6 |
+| academy | 69.4 | 69.5 | 55.8 |
+| raiden | 68.0 | 67.3 | 53.1 |
+| goro | 83.4 | 82.7 | 59.9 |
+
+Where the time goes:
+- GPU, Foundry 3×6 (`PS2_GPU_PROFILE`, Balanced): raster 21 ms of 30 ms. Inside raster: list walk + setup ~4.7,
+  edge/interpolation/per-pixel logic ~7.8, texture sampling ~6, frame/Z reads and writes ~2.7 (measured by skipping
+  each part). No single hotspot: 3×6 at 60 fps everywhere needs a deeper raster rework.
+- CPU, Foundry (gprofng, 3 threads): render thread 1.6 s, EE thread 10.1 s (part of it spinning on GS CSR reads),
+  VU1 thread 10.0 s (VIF unpack, VU1 microprograms, posting GIF packets). Foundry is CPU-bound on the VU1/EE side,
+  which is why it sits at ~44 fps (Balanced) at any scale.
+- Open perf items (own track, not blocking the remaster features): VU1 thread (hottest program vu1_C824C29B 2 s,
+  Ring::post 1.1 s, vif::run 0.9 s self), EE CSR polling, raster per-sample cost at 3×6.
