@@ -260,6 +260,27 @@ void transfer_pixel(std::uint32_t value) {
     }
 }
 
+// Host->GS pixels of one packet into the CPU copy, with the registers decoded once and `write(x, y, value)` specialised
+// per format (transfer_pixel per texel cost ~5 ms a frame with the texture pack, which keeps this copy).
+template <std::uint32_t Bits, typename W>
+void feed_pixels(const std::uint8_t *data, std::size_t bytes, W write) {
+    const std::uint64_t pos = g_state.trxpos, reg = g_state.trxreg;
+    const std::uint32_t dsax = static_cast<std::uint32_t>(pos >> 32) & 0x7FFu, dsay = static_cast<std::uint32_t>(pos >> 48) & 0x7FFu;
+    const std::uint32_t rrw = static_cast<std::uint32_t>(reg) & 0xFFFu, rrh = static_cast<std::uint32_t>(reg >> 32) & 0xFFFu;
+    if (!rrw) return;
+    const std::size_t count = bytes * 8 / Bits;
+    for (std::size_t i = 0; i < count && g_transfer.active; ++i) {
+        std::uint32_t v = 0;
+        if constexpr (Bits == 4) v = (data[i / 2] >> ((i & 1) * 4)) & 15u;
+        else std::memcpy(&v, data + i * (Bits / 8), Bits / 8);
+        write((dsax + g_transfer.x) & 0x7FFu, (dsay + g_transfer.y) & 0x7FFu, v);
+        if (++g_transfer.x >= rrw) {
+            g_transfer.x = 0;
+            if (++g_transfer.y >= rrh) g_transfer.active = false;
+        }
+    }
+}
+
 std::uint8_t g_carry[4];
 std::size_t g_carried = 0;
 
@@ -272,6 +293,7 @@ void feed_image(const std::uint8_t *data, std::size_t bytes) {
     const std::uint32_t psm = static_cast<std::uint32_t>(g_state.bitbltbuf >> 56) & 0x3Fu;
     const std::uint64_t buf = g_state.bitbltbuf, pos = g_state.trxpos, reg = g_state.trxreg;  // before the transfer ends
     g_changed = false;
+    const auto t0 = std::chrono::steady_clock::now();
     const std::uint32_t bits = bits_per_pixel(psm);
     if (bits == 24) {
         for (std::size_t i = 0; i < bytes && g_transfer.active; ++i) {
@@ -282,13 +304,37 @@ void feed_image(const std::uint8_t *data, std::size_t bytes) {
             }
         }
     } else {
-        for (std::size_t bit = 0; bit + bits <= bytes * 8 && g_transfer.active; bit += bits) {
-            std::uint32_t v = 0;
-            if (bits == 4) v = (data[bit / 8] >> (bit & 4)) & 15u;
-            else std::memcpy(&v, data + bit / 8, bits / 8);
-            transfer_pixel(v);
+        const std::uint32_t dbp = static_cast<std::uint32_t>(buf >> 32) & 0x3FFFu, dbw = static_cast<std::uint32_t>(buf >> 48) & 0x3Fu;
+        const auto any = [&](std::uint32_t x, std::uint32_t y, std::uint32_t v) { write_pixel(psm, dbp, dbw, x, y, v); };
+        switch (psm) {
+        case PSMCT32:
+            feed_pixels<32>(data, bytes, [&](std::uint32_t x, std::uint32_t y, std::uint32_t v) { put<std::uint32_t>(page_address(dbp, dbw, x, y, 64, 32) + g_off32[y & 31][x & 63], v); });
+            break;
+        case PSMCT16:
+            feed_pixels<16>(data, bytes, [&](std::uint32_t x, std::uint32_t y, std::uint32_t v) {
+                put<std::uint16_t>(page_address(dbp, dbw, x, y, 64, 64) + g_off16[y & 63][x & 63], static_cast<std::uint16_t>(v));
+            });
+            break;
+        case PSMT8:
+            feed_pixels<8>(data, bytes, [&](std::uint32_t x, std::uint32_t y, std::uint32_t v) {
+                put<std::uint8_t>(page_address(dbp, dbw, x, y, 128, 64) + g_off8[y & 63][x & 127], static_cast<std::uint8_t>(v));
+            });
+            break;
+        case PSMT4:
+            feed_pixels<4>(data, bytes, [&](std::uint32_t x, std::uint32_t y, std::uint32_t v) {
+                const std::uint32_t n = g_off4[y & 127][x & 127], a = page_address(dbp, dbw, x, y, 128, 128) + n / 2;
+                const std::uint8_t b = get<std::uint8_t>(a);
+                put<std::uint8_t>(a, (n & 1u) ? static_cast<std::uint8_t>((b & 0x0Fu) | (v << 4)) : static_cast<std::uint8_t>((b & 0xF0u) | v));
+            });
+            break;
+        default:
+            if (bits == 4) feed_pixels<4>(data, bytes, any);
+            else if (bits == 8) feed_pixels<8>(data, bytes, any);
+            else if (bits == 16) feed_pixels<16>(data, bytes, any);
+            else feed_pixels<32>(data, bytes, any);
         }
     }
+    texpack::stats().mirror_ms += std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - t0).count();
     if (texpack::active() && g_changed)
         texpack::touched(static_cast<std::uint32_t>(buf >> 32) & 0x3FFFu, static_cast<std::uint32_t>(buf >> 48) & 0x3Fu, psm, static_cast<std::uint32_t>(pos >> 32) & 0x7FFu,
                          static_cast<std::uint32_t>(pos >> 48) & 0x7FFu, static_cast<std::uint32_t>(reg) & 0xFFFu, static_cast<std::uint32_t>(reg >> 32) & 0xFFFu);
@@ -715,7 +761,9 @@ void write(std::uint32_t reg, std::uint64_t value) {
         if ((value & 3u) == 0) g_transfer.active = true;
         else if ((value & 3u) == 2) {
             g_changed = false;
+            const auto t0 = std::chrono::steady_clock::now();
             if (cpu_memory()) local_copy();
+            texpack::stats().mirror_ms += std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - t0).count();
             if (texpack::active() && g_changed)
                 texpack::touched(static_cast<std::uint32_t>(s.bitbltbuf >> 32) & 0x3FFFu, static_cast<std::uint32_t>(s.bitbltbuf >> 48) & 0x3Fu,
                                  static_cast<std::uint32_t>(s.bitbltbuf >> 56) & 0x3Fu, static_cast<std::uint32_t>(s.trxpos >> 32) & 0x7FFu,

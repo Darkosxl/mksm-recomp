@@ -26,8 +26,9 @@ std::vector<std::uint32_t> replacement(std::uint64_t key, std::uint32_t tw, std:
 // Texture-pack work on the render thread since the last call (PS2_FRAME_LOG).
 struct Stats {
     std::uint32_t decodes = 0, loads = 0;
-    double decode_ms = 0, load_ms = 0, load_mb = 0;
+    double decode_ms = 0, load_ms = 0, load_mb = 0, key_ms = 0, mirror_ms = 0;
 };
+Stats &stats();
 Stats take_stats();
 
 }

@@ -66,6 +66,12 @@ std::uint64_t hash_page(std::uint32_t page) {
     return h;
 }
 
+// Word-wise mix for the cache ids (one multiply per word; the texture keys stay FNV over the decoded texels).
+std::uint64_t mix(std::uint64_t h, std::uint64_t v) {
+    h = (h ^ v) * 0x9E3779B97F4A7C15ull;
+    return h ^ (h >> 29);
+}
+
 std::uint64_t fnv(std::uint64_t h, std::uint64_t v) {
     for (int i = 0; i < 8; ++i) h = (h ^ ((v >> (i * 8)) & 0xFFu)) * 0x100000001B3ull;
     return h;
@@ -123,7 +129,15 @@ void drawn(std::uint32_t bp, std::uint32_t bw, std::uint32_t psm, std::uint32_t 
     for (std::uint32_t p = first; p <= last && p < first + kPages; ++p) g_drawn[p % kPages] = true;
 }
 
+std::uint64_t key_uncounted(const State &st);
 std::uint64_t key(const State &st) {
+    const auto t0 = std::chrono::steady_clock::now();
+    const std::uint64_t k = key_uncounted(st);
+    g_stats.key_ms += ms_since(t0);
+    return k;
+}
+
+std::uint64_t key_uncounted(const State &st) {
     const std::uint64_t eff = (st.prmodecont & 1u) ? st.prim : st.prmode;
     const Context &c = st.ctx[(eff >> 9) & 1u];
     const std::uint32_t tbp = static_cast<std::uint32_t>(c.tex0) & 0x3FFFu, tbw = static_cast<std::uint32_t>(c.tex0 >> 14) & 0x3Fu;
@@ -132,24 +146,24 @@ std::uint64_t key(const State &st) {
     if (tw > 10 || th > 10) return 0;
     // What decides the decoded texels: texture registers, the CLUT entries a palettized format uses, TEXA, and the
     // generations of the pages holding the texels.
-    std::uint64_t id = fnv(fnv(0xCBF29CE484222325ull, c.tex0 & 0x7FFFFFFFFFull), st.texa);
+    std::uint64_t id = mix(mix(0xCBF29CE484222325ull, c.tex0 & 0x7FFFFFFFFFull), st.texa);
     const bool palettized = psm == PSMT8 || psm == PSMT4 || psm == PSMT8H || psm == PSMT4HL || psm == PSMT4HH;
     if (palettized) {
         const std::uint32_t eight = psm == PSMT8 || psm == PSMT8H, csa = static_cast<std::uint32_t>(c.tex0 >> 56) & 0x1Fu;
-        for (std::uint32_t i = 0; i < (eight ? 256u : 16u); ++i) id = fnv(id, st.clut[eight ? i : (csa * 16 + i) & 511u]);
+        for (std::uint32_t i = 0; i < (eight ? 256u : 16u); ++i) id = mix(id, st.clut[eight ? i : (csa * 16 + i) & 511u]);
     }
     std::uint32_t first, last;
     page_span(tbp, tbw, psm, 0, 0, 1u << tw, 1u << th, first, last);
     std::uint64_t content = id;
     for (std::uint32_t p = first; p <= last && p < first + kPages; ++p) {
         if (g_drawn[p % kPages]) return 0;
-        id = fnv(id, g_generation[p % kPages]);
+        id = mix(id, g_generation[p % kPages]);
     }
     static std::unordered_map<std::uint64_t, std::uint64_t> known, by_content;
     if (const auto it = known.find(id); it != known.end()) return it->second;
     // The pages were rewritten: the game cycles its textures through the same pages every frame, so look the content up
     // (a hash of the raw pages, microseconds) before decoding it (milliseconds).
-    for (std::uint32_t p = first; p <= last && p < first + kPages; ++p) content = fnv(content, hash_page(p));
+    for (std::uint32_t p = first; p <= last && p < first + kPages; ++p) content = mix(content, hash_page(p));
     if (known.size() > (1u << 20)) known.clear(), by_content.clear();
     if (const auto it = by_content.find(content); it != by_content.end()) return known[id] = it->second;
     const auto t0 = std::chrono::steady_clock::now();
@@ -198,6 +212,7 @@ std::vector<std::uint32_t> replacement(std::uint64_t key, std::uint32_t tw, std:
     return {};
 }
 
+Stats &stats() { return g_stats; }
 Stats take_stats() { return std::exchange(g_stats, {}); }
 
 }

@@ -920,7 +920,7 @@ void set_frame_tap(std::function<void(const std::uint32_t *, std::uint32_t, std:
 }
 
 // PS2_FRAME_LOG=file: one line per displayed frame on the render thread: wall ms since the previous one, then the
-// texture pack's work in it (key decodes, ms; file loads, ms, MB).
+// texture pack's work in it (key decodes, ms; file loads, ms, MB; key lookups ms; CPU copy of GS memory ms).
 void log_frame() {
     static std::FILE *file = [] {
         const char *path = std::getenv("PS2_FRAME_LOG");
@@ -930,8 +930,8 @@ void log_frame() {
     static auto last = std::chrono::steady_clock::now();
     const auto now = std::chrono::steady_clock::now();
     const gs::texpack::Stats s = gs::texpack::take_stats();
-    std::fprintf(file, "%.2f %u %.2f %u %.2f %.1f\n", std::chrono::duration<double, std::milli>(now - last).count(), s.decodes, s.decode_ms,
-                 s.loads, s.load_ms, s.load_mb);
+    std::fprintf(file, "%.2f %u %.2f %u %.2f %.1f %.2f %.2f\n", std::chrono::duration<double, std::milli>(now - last).count(), s.decodes, s.decode_ms,
+                 s.loads, s.load_ms, s.load_mb, s.key_ms, s.mirror_ms);
     last = now;
 }
 
