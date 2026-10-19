@@ -1,0 +1,15 @@
+{
+ "about": "Module of functions that are not in an eh_frame object, have no assert path and no SCE library match. Only used when no stronger evidence exists; each range says why.",
+ "ranges": [
+  {"from": "3876e0", "to": "392000", "module": "havok", "evidence": "no strings; after the last libmc match (sceMcUnformat 0x387610) and before the first Havok timer string (LtSimulate, xref 0x392f44); same no-eh_frame C++ style as the Havok code after it"},
+  {"from": "392000", "to": "3da000", "module": "havok", "evidence": "Havok timer and shape strings: Tt*/Lt*/St* timers, HK_SHAPE_*, 'TthkShapeCollection::castRay', 'Havok client keycode is invalid'"},
+  {"from": "3da000", "to": "40a860", "module": "havok", "evidence": "qhull (convex hull library bundled with Havok's geometry utilities): 'qhull ...' strings, 'computeConvexHullTriangles 3.1 2001/10/19'"},
+  {"from": "40c8c0", "to": "412000", "module": "havok", "evidence": "hkbase: hkPoolMemory.cpp/hkError.cpp assert paths, 'Reference count error on object'"},
+  {"from": "412000", "to": "45d000", "module": "cri", "evidence": "CRI middleware version/error strings: ADXT, ADXF, ADXRT, SRD, DVCI, PS2RNA, ACSSND, AIXP, HTCI, MWSFD/mwPly, SFD, SFX, MPS, M2V (last 'CRI M2V/PS2EE Ver.1.958' xref 0x45cd2c)"},
+  {"from": "4713f0", "to": "4745d8", "module": "cri", "evidence": "'ADXPS2_AttachDolbyDigital' and E0303xxxx AC-3 errors ('This file is not AC-3 format') xref'd at 0x471488-0x4740b8"},
+  {"from": "4745d8", "to": "47f340", "module": "libc", "evidence": "libc matches memcmp 0x4745d8 .. __mcmp 0x47f2d8 (atoi, rand, strrchr, gmtime, fiprintf, mprec), printf/ctype tables"},
+  {"from": "47fa40", "to": "487d20", "module": "sony", "evidence": "EE kernel syscall stubs from 0x47fa40, libkernl matches VSync 0x4802f0 .. _kExitTLBHandler 0x487c00"},
+  {"from": "487d20", "to": "489900", "module": "libc", "evidence": "libgcc matches __divdi3 0x487d20 .. __builtin_vec_new 0x489868"},
+  {"from": "489900", "to": "49a708", "module": "havok", "evidence": "hkMemory.h / hkPoolMemory asserts (xref 0x48991c, 0x49802c) and Havok timer strings (TtCapsCaps, StGsk, TtSphereCapsule)"}
+ ]
+}

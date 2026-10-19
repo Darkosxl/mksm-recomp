@@ -1,0 +1,881 @@
+addr	name	source	confidence	used	detail
+11c070	_start	notes	role	yes	mksm/notes/oracle-boot.md:8
+11c2b0	Crt0_InitCall	notes	role	yes	mksm/notes/ee-syscall-gaps.md:16
+121b28	Fatality_StartCheck	notes	role	yes	mksm/notes/endgame.md:162
+127208	Fatality_InputWindow	notes	role	yes	mksm/notes/finishers-options.md:39
+129180	FrontEnd_MainMenuUpdate	notes	role	yes	mksm/notes/debug-facilities.md:144
+12fe18	FE_NewGameKoop	notes	role	yes	mksm/notes/debug-facilities.md:99
+131050	FE_NewGameSingle	notes	role	yes	mksm/notes/debug-facilities.md:99
+13e040	DevFE_CodeBegin	notes	role	yes	mksm/notes/debug-facilities.md:68
+140390	DevFE_LevelSelect	notes	role	yes	mksm/notes/debug-facilities.md:72
+1417d8	DevFE_MenuCreate	notes	role	yes	mksm/notes/debug-facilities.md:77
+143b18	CameraMgr	notes	named	yes	analysis/exports/web-cheats-mksm.txt:170
+164980	Player_BuildGroundRay	notes	role	yes	mksm/notes/black-maps.md:53
+165418	Player_GetGroundHeight	notes	role	yes	mksm/notes/black-maps.md:63
+165870	Player_ProbeGround	notes	role	yes	mksm/notes/black-maps.md:53
+165c70	Player_GroundProbeStep	notes	role	yes	mksm/notes/black-maps.md:52
+1663e0	SetGameType	notes	named	yes	analysis/exports/web-cheats-mksm.txt:166
+19ea70	Gameplay_PauseInput	notes	role	yes	mksm/notes/debug-facilities.md:43
+1a5320	SaveMenu_Run	notes	role	yes	mksm/notes/debug-facilities.md:54
+1a8788	Menu_OpenItem	notes	role	yes	analysis/exports/web-cheats-mksm.txt:163
+1a8788	DebugMenu_WarpPlayer	notes	role	no	mksm/notes/debug-facilities.md:57
+1a88d8	DebugMenuUpdate	verified-symbols	exact	yes	
+1a88d8	DebugMenuUpdate	notes	named	no	analysis/exports/web-cheats-mksm.txt:182
+1a9698	PauseMenu_Build	notes	role	yes	mksm/notes/debug-facilities.md:43
+1a9c88	MapSelect_BuildLevelList	notes	role	yes	mksm/notes/debug-facilities.md:53
+1a9f50	MapSelect_Commit	notes	role	yes	mksm/notes/debug-facilities.md:53
+1aa518	DebugMenu_MapSelect	notes	role	yes	mksm/notes/debug-facilities.md:53
+1aa538	DebugMenu_SaveMenu	notes	role	yes	mksm/notes/debug-facilities.md:54
+1aa558	SelectFreeCam	verified-symbols	exact	yes	
+1aa558	SelectFreeCam	notes	named	no	analysis/exports/web-cheats-mksm.txt:177
+1aa5b8	SelectFreezeCam	verified-symbols	exact	yes	
+1aa5b8	SelectFreezeCam	notes	named	no	analysis/exports/web-cheats-mksm.txt:178
+1aa630	PauseMenu_Options	notes	role	yes	mksm/notes/debug-facilities.md:45
+1aa678	DebugMenu_ReloadLevel	notes	role	yes	mksm/notes/debug-facilities.md:52
+1aa6f0	PauseMenu_Continue	notes	role	yes	mksm/notes/debug-facilities.md:45
+1aa708	PauseMenu_ExitGame	notes	role	yes	mksm/notes/debug-facilities.md:46
+1aaad8	GodModeToggle	verified-symbols	exact	yes	
+1aaad8	GodModeToggle	notes	named	no	analysis/exports/web-cheats-mksm.txt:179
+1aaad8	DebugMenu_GodModeOnOff	notes	role	no	mksm/notes/debug-facilities.md:55
+1aacf0	DebugMenu_P1FatalityLevel	notes	role	yes	mksm/notes/debug-facilities.md:56
+1aad80	DebugMenu_P2FatalityLevel	notes	role	yes	mksm/notes/debug-facilities.md:56
+1aae10	SetGodModeText	verified-symbols	exact	yes	
+1aae10	SetGodModeText	notes	named	no	analysis/exports/web-cheats-mksm.txt:180
+1aae80	DebugMenuSetup	verified-symbols	exact	yes	
+1aae80	DebugMenuSetup	notes	named	no	analysis/exports/web-cheats-mksm.txt:181
+1bae60	GodMode_Enable	notes	role	yes	mksm/notes/debug-facilities.md:55
+1bb718	SetFatalityLevel	notes	role	yes	mksm/notes/debug-facilities.md:56
+1bb7a8	GodMode_Disable	notes	role	yes	mksm/notes/debug-facilities.md:55
+1c13a8	Dev_UnlockEverything	notes	role	yes	mksm/notes/debug-facilities.md:82
+1c15f0	Unlocks_SetDefaults	notes	role	yes	mksm/notes/debug-facilities.md:142
+1c1a70	Unlock_Set5C	notes	role	yes	mksm/notes/debug-facilities.md:136
+1c1b20	Unlock_SetA6	notes	role	yes	mksm/notes/debug-facilities.md:136
+1c1b78	Unlock_Set157	notes	role	yes	mksm/notes/debug-facilities.md:137
+1c1bd0	Cheat_UnlockMK2	notes	role	yes	mksm/notes/debug-facilities.md:151
+1c3a78	Physics_ApplyGravity	notes	role	yes	mksm/notes/black-maps.md:66
+1d3430	Ending_FmvAndUnlocks	notes	role	yes	mksm/notes/endgame.md:97
+1d4800	Gameplay_Enter	notes	role	yes	mksm/notes/debug-facilities.md:100
+1d6808	Gameplay_Update	notes	role	yes	mksm/notes/debug-facilities.md:102
+1d73c8	GameLoop	notes	named	yes	analysis/exports/web-cheats-mksm.txt:169
+1d98d8	Cheat_UnlockScorpion	notes	role	yes	mksm/notes/debug-facilities.md:149
+1d9908	Cheat_UnlockSubZero	notes	role	yes	mksm/notes/debug-facilities.md:150
+1dd900	ScriptAction_FinalVictory	notes	role	yes	mksm/notes/endgame.md:96
+1ddf90	ScriptCmd_UnlockMap	notes	role	yes	mksm/notes/debug-facilities.md:138
+1ddfc8	ScriptCmd_UnlockChar	notes	role	yes	mksm/notes/debug-facilities.md:138
+1de000	ScriptCmd_UnlockMovie	notes	role	yes	mksm/notes/debug-facilities.md:138
+1de038	ScriptCmd_UnlockArtwork	notes	role	yes	mksm/notes/debug-facilities.md:138
+1de070	ScriptCmd_UnlockPhotos	notes	role	yes	mksm/notes/debug-facilities.md:138
+1dee38	Map_StartLoad	notes	role	yes	mksm/notes/debug-facilities.md:101
+1e1390	Fmv_PlayOnRoomMove	notes	role	yes	mksm/notes/endgame.md:104
+1e15a0	Map_LoadInPlace	notes	role	yes	mksm/notes/debug-facilities.md:103
+1e2878	Map_SpawnAtEntrance	notes	role	yes	mksm/notes/debug-facilities.md:96
+1e6ef0	get_string	notes	named	yes	analysis/exports/web-cheats-mksm.txt:165
+1eaf30	PlayerControl	notes	named	yes	analysis/exports/web-cheats-mksm.txt:169
+1eb378	Player_Update	notes	role	yes	mksm/notes/black-maps.md:52
+1ee858	ResetHealth	notes	named	yes	analysis/exports/web-cheats-mksm.txt:166
+201108	__terminate	sce-db	exact	yes	libgcc
+201130	__throw_type_match	sce-db	exact	yes	libgcc
+201168	new_eh_context	sce-db	exact	yes	libgcc
+2011e8	__get_eh_info	sce-db	exact	yes	libgcc
+201210	eh_context_initialize	sce-db	exact	yes	libgcc
+201238	eh_context_static	sce-db	exact	yes	libgcc
+2012a0	__get_dynamic_handler_chain	sce-db	exact	yes	libgcc
+2012c8	__sjthrow	sce-db	exact	yes	libgcc
+201440	__sjpopnthrow	sce-db	exact	yes	libgcc
+201558	__eh_rtime_match	sce-db	exact	yes	libgcc
+2015b0	old_find_exception_handler	sce-db	exact	yes	libgcc
+201688	find_exception_handler	sce-db	exact	yes	libgcc
+2017d0	get_reg_addr	sce-db	exact	yes	libgcc
+201858	copy_reg	sce-db	exact	yes	libgcc
+2018d8	next_stack_level	sce-db	exact	yes	libgcc
+201970	throw_helper	sce-db	exact	yes	libgcc
+201ca0	__throw	sce-db	exact	yes	libgcc
+201e80	__rethrow	sce-db	exact	yes	libgcc
+202068	exit	sce-db	exact	yes	libgcc
+202098	__floatdisf	sce-db	exact	yes	libgcc
+202180	__pack_d	sce-db	exact	yes	libgcc
+2022b0	__unpack_d	sce-db	exact	yes	libgcc
+202350	_fpadd_parts	sce-db	exact	yes	libgcc
+202590	dpadd	sce-db	exact	yes	libgcc
+2025e8	dpsub	sce-db	exact	yes	libgcc
+202650	dpmul	sce-db	exact	yes	libgcc
+2028f8	dpdiv	sce-db	exact	yes	libgcc
+202a60	__fpcmp_parts_d	sce-db	exact	yes	libgcc
+202b78	dpcmp	sce-db	exact	yes	libgcc
+202bc8	litodp	sce-db	exact	yes	libgcc
+202c80	dptoli	sce-db	exact	yes	libgcc
+202d18	dptoul	sce-db	exact	yes	libgcc
+202db8	__make_dp	sce-db	exact	yes	libgcc
+202de8	dptofp	sce-db	exact	yes	libgcc
+202ea0	__cp_exception_info	sce-db	exact	yes	libgcc
+202ee8	__start_cp_handler	sce-db	exact	yes	libgcc
+202f20	__eh_alloc	sce-db	exact	yes	libgcc
+202f68	__cplus_type_matcher	sce-db	exact	yes	libgcc
+202fd8	__cp_push_exception	sce-db	exact	yes	libgcc
+203068	__cp_pop_exception	sce-db	exact	yes	libgcc
+203130	__uncatch_exception	sce-db	exact	yes	libgcc
+203160	__check_eh_spec	sce-db	exact	yes	libgcc
+203418	uncaught_exception__Fv	sce-db	exact	yes	libgcc
+203450	what__C9exception	sce-db	exact	yes	libgcc
+203598	__pack_f	sce-db	exact	yes	libgcc
+2036a8	__unpack_f	sce-db	exact	yes	libgcc
+203768	fptoui	sce-db	exact	yes	libgcc
+203800	__make_fp	sce-db	exact	yes	libgcc
+203830	fptodp	sce-db	exact	yes	libgcc
+203870	decode_uleb128	sce-db	exact	yes	libgcc
+2038b8	decode_sleb128	sce-db	exact	yes	libgcc
+203908	fde_merge	sce-db	exact	yes	libgcc
+203a08	end_fde_sort	sce-db	exact	yes	libgcc
+203c70	count_fdes	sce-db	exact	yes	libgcc
+203cb8	add_fdes	sce-db	exact	yes	libgcc
+203d40	frame_init	sce-db	exact	yes	libgcc
+203e80	find_fde	sce-db	exact	yes	libgcc
+203f68	extract_cie_info	sce-db	exact	yes	libgcc
+204070	execute_cfa_insn	sce-db	exact	yes	libgcc
+204408	__register_frame_info_table	sce-db	exact	yes	libgcc
+204430	__deregister_frame_info	sce-db	exact	yes	libgcc
+2044a8	__frame_state_for	sce-db	exact	yes	libgcc
+204680	fde_split	sce-db	exact	yes	libgcc
+204870	__builtin_new	sce-db	exact	yes	libgcc
+204998	_$_9type_info	sce-db	exact	yes	libgcc
+2049c8	__eq__C9type_infoRC9type_info	sce-db	exact	yes	libgcc
+204a08	__rtti_class	sce-db	exact	yes	libgcc
+204a70	dcast__C16__user_type_infoRC9type_infoiPvPC9type_infoT3	sce-db	exact	yes	libgcc
+204aa0	dcast__C14__si_type_infoRC9type_infoiPvPC9type_infoT3	sce-db	exact	yes	libgcc
+204b38	dcast__C17__class_type_infoRC9type_infoiPvPC9type_infoT3	sce-db	exact	yes	libgcc
+205068	before__C9type_infoRC9type_info	sce-db	exact	yes	libgcc
+205090	__throw_type_match_rtti	sce-db	exact	yes	libgcc
+205558	__is_pointer__FPv	sce-db	exact	yes	libgcc
+2055c8	__rtti_attr	sce-db	exact	yes	libgcc
+205670	__dynamic_cast	sce-db	exact	yes	libgcc
+205f20	__muldi3	sce-db	exact	yes	libgcc
+206030	sceGsSyncV	sce-db	exact	yes	libgraph
+2060c8	sceGsResetGraph	sce-db	exact	yes	libgraph
+206268	scePadInit	sce-db	exact	yes	libpad
+2063a8	_pad_intr_hdr	sce-db	exact	yes	libpad
+2063f0	scePadInit2	sce-db	exact	yes	libpad
+2064e8	scePadEnd	sce-db	exact	yes	libpad
+206578	_send_to_iop	sce-db	exact	yes	libpad
+206690	scePadPortOpen	sce-db	exact	yes	libpad
+206878	scePadGetDmaStr	sce-db	exact	yes	libpad
+2069d0	scePadRead	sce-db	exact	yes	libpad
+206a48	scePadGetState	sce-db	exact	yes	libpad
+206ac8	scePadSetReqState	sce-db	exact	yes	libpad
+206b80	scePadGetReqState	sce-db	exact	yes	libpad
+206be0	scePadInfoAct	sce-db	exact	yes	libpad
+206d00	scePadInfoMode	sce-db	exact	yes	libpad
+206e38	scePadSetMainMode	sce-db	exact	yes	libpad
+206ef0	scePadSetActDirect	sce-db	exact	yes	libpad
+206fb8	scePadSetActAlign	sce-db	exact	yes	libpad
+207090	scePadGetButtonMask	sce-db	exact	yes	libpad
+207140	scePadSetButtonInfo	sce-db	exact	yes	libpad
+2071f0	scePadInfoPressMode	sce-db	exact	yes	libpad
+207250	scePadEnterPressMode	sce-db	exact	yes	libpad
+2072c0	scePadGetModVersion	sce-db	exact	yes	libpad
+207328	scePadSetDmaCallback	sce-db	exact	yes	libpad
+207450	ceilf	sce-db	exact	yes	libm
+207528	cosf	sce-db	exact	yes	libm
+207610	sinf	sce-db	exact	yes	libm
+207700	tanf	sce-db	exact	yes	libm
+207788	fmod	sce-db	exact	yes	libm
+2079a8	atan2f	sce-db	exact	yes	libm
+207ad0	fmodf	sce-db	exact	yes	libm
+207c10	sqrtf	sce-db	exact	yes	libm
+207d28	__ieee754_fmod	sce-db	exact	yes	libm
+208118	__ieee754_asinf	sce-db	exact	yes	libm
+2084b8	__ieee754_atan2f	sce-db	exact	yes	libm
+2087a0	__ieee754_fmodf	sce-db	exact	yes	libm
+2089f0	__ieee754_rem_pio2f	sce-db	exact	yes	libm
+208dd0	__ieee754_sqrtf	sce-db	exact	yes	libm
+208f08	__kernel_cosf	sce-db	exact	yes	libm
+209060	__kernel_rem_pio2f	sce-db	exact	yes	libm
+2099b0	__kernel_sinf	sce-db	exact	yes	libm
+209ab8	__kernel_tanf	sce-db	exact	yes	libm
+209d88	matherr	sce-db	exact	yes	libm
+209db0	atanf	sce-db	exact	yes	libm
+20a078	floorf	sce-db	exact	yes	libm
+20c5d8	Task_Kill	notes	role	yes	mksm/notes/JOURNAL.md:27
+20ecd0	Memory_Initialise	verified-symbols	exact	yes	
+20ecd0	Memory_Initialise	notes	named	no	analysis/exports/web-cheats-mksm.txt:193
+20ecd0	Memory_Initialise	proto-candidate	candidate	no	reversing-symbol-candidates.json
+20ee28	Memory_ResetBlock	verified-symbols	exact	yes	
+20ee28	Memory_ResetBlock	proto-candidate	candidate	no	reversing-symbol-candidates.json
+20f058	Memory_AllocBlock	verified-symbols	exact	yes	
+20f058	Memory_AllocBlock	notes	named	no	analysis/exports/web-cheats-mksm.txt:193
+20f058	Memory_AllocBlock	proto-candidate	candidate	no	reversing-symbol-candidates.json
+20f518	Memory_StatsString	verified-symbols	exact	yes	
+20f518	Memory_StatsString	proto-candidate	candidate	no	reversing-symbol-candidates.json
+20f750	FastMemset	proto-candidate	candidate	yes	reversing-symbol-candidates.json
+20fde0	FastMemcpy	proto-candidate	candidate	yes	reversing-symbol-candidates.json
+2100d0	FastMemcmp	proto-candidate	candidate	yes	reversing-symbol-candidates.json
+2109c0	Memory_AssignBlock	proto-candidate	candidate	yes	reversing-symbol-candidates.json
+210a20	Memory_UnAssignBlock	proto-candidate	candidate	yes	reversing-symbol-candidates.json
+210a48	Memory_InitMallocBlockInfo	verified-symbols	exact	yes	
+210a48	Memory_InitMallocBlockInfo	proto-candidate	candidate	no	reversing-symbol-candidates.json
+210af0	Memory_GetBlockName	proto-candidate	candidate	yes	reversing-symbol-candidates.json
+210b28	Memory_SetBlock	verified-symbols	exact	yes	
+210b28	Memory_SetBlock	proto-candidate	candidate	no	reversing-symbol-candidates.json
+210d60	Memory_ResetAllBlocks	proto-candidate	candidate	yes	reversing-symbol-candidates.json
+210da8	Memory_Available	verified-symbols	exact	yes	
+210da8	Memory_Available	proto-candidate	candidate	no	reversing-symbol-candidates.json
+210e20	Memory_Used	verified-symbols	exact	yes	
+210e20	Memory_Used	proto-candidate	candidate	no	reversing-symbol-candidates.json
+210ec8	Memory_BlockLength	proto-candidate	candidate	yes	reversing-symbol-candidates.json
+210ef0	Memory_CurrentBlock	proto-candidate	candidate	yes	reversing-symbol-candidates.json
+210f30	Memory_CleanUpFragments	proto-candidate	candidate	yes	reversing-symbol-candidates.json
+211038	Memory_ValidatePointer	proto-candidate	candidate	yes	reversing-symbol-candidates.json
+211100	PxNewFunction	proto-candidate	candidate	yes	reversing-symbol-candidates.json
+211878	GetAsyncFileSize	verified-symbols	exact	yes	
+211878	GetAsyncFileSize	notes	named	no	analysis/exports/web-cheats-mksm.txt:194
+211de0	CD_Initialise	proto-candidate	candidate	yes	reversing-symbol-candidates.json
+212110	AsyncProcessLoad	verified-symbols	exact	yes	
+2121f8	AdjustHDLoadInfo	proto-candidate	candidate	yes	reversing-symbol-candidates.json
+212240	StartAsyncHDLoad	verified-symbols	exact	yes	
+212240	StartAsyncHDLoad	proto-candidate	candidate	no	reversing-symbol-candidates.json
+212350	GetAsyncFileOffset	proto-candidate	candidate	yes	reversing-symbol-candidates.json
+212380	AdjustLoadInfo	verified-symbols	exact	yes	
+2123a0	StartAsyncLoadFile	verified-symbols	exact	yes	
+2123a0	StartAsyncLoadFile	notes	named	no	analysis/exports/web-cheats-mksm.txt:193
+2123c8	AsyncLoadStatus	verified-symbols	exact	yes	
+2126d8	Pad_MotorTask	notes	role	yes	mksm/notes/finishers-options.md:182
+212cc8	Pad_SetMotorMask	notes	role	yes	mksm/notes/finishers-options.md:183
+213e08	sceVu0InnerProduct	sce-db	exact	yes	libvu0
+213e88	sceVu0TransposeMatrix	sce-db	exact	yes	libvu0
+227cd0	packet_anti_alias_or_blur	proto-candidate	candidate	yes	bloom-candidates.json
+227f58	anti_alias_or_blur	proto-candidate	candidate	yes	bloom-candidates.json
+2283b0	RegisterBloomCode	proto-candidate	candidate	yes	bloom-candidates.json
+249e38	Render_Projection3D	notes	role	yes	mksm/notes/remaster.md:175
+26f918	Movie_CreateAndStart	notes	role	yes	mksm/notes/ipu-gaps.md:158
+26fbf0	Movie_UpdateFrame	notes	role	yes	mksm/notes/ipu-gaps.md:159
+2701e8	Movie_InitSfdFx	notes	role	yes	mksm/notes/ipu-gaps.md:161
+2702d8	Movie_FinishSfdFx	notes	role	yes	mksm/notes/ipu-gaps.md:161
+2702f8	Movie_StopDestroy	notes	role	yes	mksm/notes/ipu-gaps.md:161
+2743d8	Gs_FlipFields	notes	role	yes	mksm/notes/remaster.md:174
+284fe0	Actor_ApplyDamage	notes	role	yes	mksm/notes/debug-facilities.md:83
+286358	Actor_GetObject	notes	named	yes	analysis/exports/web-cheats-mksm.txt:171
+289730	GetPlayerActor	notes	named	yes	analysis/exports/web-cheats-mksm.txt:171
+2c0aa8	World_CastGroundRay	notes	role	yes	mksm/notes/black-maps.md:54
+2c7360	PxPad_GetRawButtons	notes	named	yes	analysis/exports/web-cheats-mksm.txt:165
+2c74b8	PxPad_GetButtons	notes	named	yes	analysis/exports/web-cheats-mksm.txt:164
+2f4ec0	PrintText	notes	named	yes	analysis/exports/web-cheats-mksm.txt:171
+2f50d8	PrintTextCentered	notes	named	yes	analysis/exports/web-cheats-mksm.txt:171
+2f8438	MapTable_Lookup	notes	role	yes	mksm/notes/debug-facilities.md:94
+308010	EnemySpawn	notes	named	yes	analysis/exports/web-cheats-mksm.txt:168
+316f58	PxCheats_InitSystem	notes	role	yes	mksm/notes/debug-facilities.md:143
+326318	Ray_ScaleToHavok	notes	role	yes	mksm/notes/black-maps.md:57
+338bc8	hkCollidable_castRay	notes	role	yes	mksm/notes/black-maps.md:58
+338d18	hkWorld_castRay	notes	role	yes	mksm/notes/black-maps.md:57
+36f848	IsWidescreen	notes	role	yes	mksm/notes/remaster.md:153
+370a70	cPxFileInterface_StartFileLoading	verified-symbols	exact	yes	
+370a98	cPxFileInterface_FileLoadStatus	verified-symbols	exact	yes	
+370ae8	cPxFileInterface_CloseFileHandle	verified-symbols	exact	yes	
+378a30	Async_DataLoad	verified-symbols	exact	yes	
+378a30	Async_DataLoad	notes	named	no	analysis/exports/web-cheats-mksm.txt:194
+3829c0	sceSdRemoteInit	sce-db	exact	yes	libsdr
+382a70	sceSdTransToIOP	sce-db	exact	yes	libsdr
+382b00	sceSdRemote	sce-db	exact	yes	libsdr
+382e90	checkModelVersion	sce-db	exact	yes	libgraph
+382f30	_GetGsDxDyOffset	syscall	exact	yes	syscall 128
+382f40	sceGsSetDefDispEnv	sce-db	exact	yes	libgraph
+382f40	GsResetGraph_RomverHelper	notes	role	no	mksm/notes/ee-syscall-gaps.md:17
+3832b8	sceGsPutDispEnv	sce-db	exact	yes	libgraph
+383378	sceGsSetDefDrawEnv	sce-db	exact	yes	libgraph
+383560	sceGsSetDefClear	sce-db	exact	yes	libgraph
+383668	sceGsPutDrawEnv	sce-db	exact	yes	libgraph
+383750	sceGsSetDefDBuff	sce-db	exact	yes	libgraph
+3839e8	sceGsSwapDBuff	sce-db	exact	yes	libgraph
+383a48	sceGsSetDefLoadImage	sce-db	exact	yes	libgraph
+383c30	sceGsExecLoadImage	sce-db	exact	yes	libgraph
+383db0	sceGsSyncVCallback	sce-db	exact	yes	libgraph
+383e90	sceGsSetDefDrawEnv2	sce-db	exact	yes	libgraph
+384090	sceGszbufaddr	sce-db	exact	yes	libgraph
+384158	WaitDma	sce-db	exact	yes	libdma
+3841d0	CheckAddress	sce-db	exact	yes	libdma
+3841f8	memclr	sce-db	exact	yes	libdma
+384230	sceDmaGetChan	sce-db	exact	yes	libdma
+384258	sceDmaReset	sce-db	exact	yes	libdma
+384338	sceDmaPutEnv	sce-db	exact	yes	libdma
+384518	sceDmaSend	sce-db	exact	yes	libdma
+384580	sceDmaSendN	sce-db	exact	yes	libdma
+384600	sceDmaRecvN	sce-db	exact	yes	libdma
+384680	sceDmaSync	sce-db	exact	yes	libdma
+3846c0	sceDmaPause	sce-db	exact	yes	libdma
+384780	sceDevVu0Pause	sce-db	exact	yes	libdev
+3847e0	sceDevVu0Sync	sce-db	exact	yes	libdev
+384860	sceDevVu1Pause	sce-db	exact	yes	libdev
+3848c0	sceDevVu1Sync	sce-db	exact	yes	libdev
+384918	sceDevVif0Reset	sce-db	exact	yes	libdev
+384950	sceDevVif1Reset	sce-db	exact	yes	libdev
+384a18	sceGifPkRefe	sce-db	exact	yes	libpkt
+384c60	sceGifPkCloseGifTag	sce-db	exact	yes	libpkt
+384d30	sceGifPkAddGsAD	sce-db	exact	yes	libpkt
+384e40	sceVif1PkNext	sce-db	exact	yes	libpkt
+384f48	sceVif1PkRet	sce-db	exact	yes	libpkt
+3850d8	sceVif1PkOpenDirectCode	sce-db	exact	yes	libpkt
+385178	sceVif1PkCloseGifTag	sce-db	exact	yes	libpkt
+385360	sceVif1PkAddGsAD	sce-db	exact	yes	libpkt
+3853b0	sceVu0Normalize	sce-db	exact	yes	libvu0
+3853f0	sceVu0TransposeMatrix	sce-db	exact	yes	libvu0
+385470	sceVu0TransMatrix	sce-db	exact	yes	libvu0
+3854c8	_sceVu0ecossin	sce-db	exact	yes	libvu0
+385540	sceVu0RotMatrixZ	sce-db	exact	yes	libvu0
+3855e8	sceVu0RotMatrixX	sce-db	exact	yes	libvu0
+385690	sceVu0RotMatrixY	sce-db	exact	yes	libvu0
+385738	sceVu0RotMatrix	sce-db	exact	yes	libvu0
+385790	sceVu0NormalLightMatrix	sce-db	exact	yes	libvu0
+385850	sceVu0LightColorMatrix	sce-db	exact	yes	libvu0
+3858c0	sceVu0RotTransPers	sce-db	exact	yes	libvu0
+3859d0	_sceCd_cd_read_intr	sce-db	exact	yes	libcdvd
+385a88	cmd_sem_init	sce-db	exact	yes	libcdvd
+385b70	cdvd_exit	sce-db	exact	yes	libcdvd
+385c10	_sceCd_Poff_Intr	sce-db	exact	yes	libcdvd
+385c68	PowerOffCB	sce-db	exact	yes	libcdvd
+385ce0	sceCdLayerSearchFile	sce-db	exact	yes	libcdvd
+386000	_sceCd_ncmd_prechk	sce-db	exact	yes	libcdvd
+386158	sceCdNcmdDiskReady	sce-db	exact	yes	libcdvd
+3861f0	sceCdSync	sce-db	exact	yes	libcdvd
+386290	sceCdSyncS	sce-db	exact	yes	libcdvd
+386300	_sceCd_scmd_prechk	sce-db	exact	yes	libcdvd
+386458	sceCdInit	sce-db	exact	yes	libcdvd
+386740	sceCdMmode	sce-db	exact	yes	libcdvd
+386818	sceCdReadClock	sce-db	exact	yes	libcdvd
+3868d8	sceMcInit	sce-db	exact	yes	libmc
+386b18	sceMcOpen	sce-db	exact	yes	libmc
+386c40	sceMcMkdir	sce-db	exact	yes	libmc
+386c78	sceMcClose	sce-db	exact	yes	libmc
+386d38	mceIntrReadFixAlign	sce-db	exact	yes	libmc
+386de8	sceMcRead	sce-db	exact	yes	libmc
+386f00	sceMcWrite	sce-db	exact	yes	libmc
+387078	sceMcSync	sce-db	exact	yes	libmc
+387140	mceGetInfoApdx	sce-db	exact	yes	libmc
+387198	sceMcGetInfo	sce-db	exact	yes	libmc
+387318	sceMcGetDir	sce-db	exact	yes	libmc
+387470	sceMcFormat	sce-db	exact	yes	libmc
+387548	sceMcFlush	sce-db	exact	yes	libmc
+387610	sceMcUnformat	sce-db	exact	yes	libmc
+3a1598	hkBroadphase_RayWalk	notes	role	yes	mksm/notes/black-maps.md:58
+3a45f8	hkBoxShape_castRay	notes	named	yes	mksm/notes/black-maps.md:150
+3a8468	hkShape_castRay	notes	role	yes	mksm/notes/black-maps.md:59
+3a9088	hkShape2_castRay	notes	role	yes	mksm/notes/black-maps.md:61
+3c9b80	hkMopp_RayVM	notes	role	yes	mksm/notes/black-maps.md:60
+3ca9d8	hkMopp_LongRayQuerySetup	notes	role	yes	mksm/notes/black-maps.md:59
+3cd340	TthkShapeCollection::getMaximumProjection	string-xref	derived	yes	
+3e1218	qh_meminitbuffers	string-xref	derived	yes	
+3e4a38	qh_checkfacet	string-xref	derived	yes	
+3e85e0	qh_printlists	string-xref	derived	yes	
+3eb098	qh_findhorizon	string-xref	derived	yes	
+3ebcb0	qh_partitioncoplanar	string-xref	derived	yes	
+3eda18	qh_settemppop	string-xref	derived	yes	
+3eedc0	qh_settemp	string-xref	derived	yes	
+3eeea8	qh_settemppush	string-xref	derived	yes	
+3f25f0	qh_new_qhull	string-xref	derived	yes	
+3f2a90	qh_distplane	string-xref	derived	yes	
+3f2ea0	qh_findbest	string-xref	derived	yes	
+3f3790	qh_findbestnew	string-xref	derived	yes	
+3f4650	qh_setfacetplane	string-xref	derived	yes	
+3f7088	qh_maxmin	string-xref	derived	yes	
+3f7ff8	qh_rotatepoints	string-xref	derived	yes	
+3f8930	qh_sethalfspace	string-xref	derived	yes	
+3f8e60	qh_voronoi_center	string-xref	derived	yes	
+3fa5b0	qh_detvnorm	string-xref	derived	yes	
+3fac28	qh_detvridge3	string-xref	derived	yes	
+3fdb90	qh_printextremes_2d	string-xref	derived	yes	
+402f20	qh_printvdiagram	string-xref	derived	yes	
+406098	qh_mergecycle	string-xref	derived	yes	
+406208	qh_mergecycle_all	string-xref	derived	yes	
+406c10	qh_mergefacet	string-xref	derived	yes	
+407870	qh_mergevertex_neighbors	string-xref	derived	yes	
+4084d0	qh_renamevertex	string-xref	derived	yes	
+40a6b0	hkTransform_Ray	notes	role	yes	mksm/notes/black-maps.md:58
+40a860	floor	sce-db	exact	yes	libm
+40aa38	sqrt	sce-db	exact	yes	libm
+40ac48	logf	sce-db	exact	yes	libm
+40ad90	powf	sce-db	exact	yes	libm
+40b298	__ieee754_sqrt	sce-db	exact	yes	libm
+40b5a0	__ieee754_acosf	sce-db	exact	yes	libm
+40b9d0	__ieee754_logf	sce-db	exact	yes	libm
+40bcf8	__ieee754_powf	sce-db	exact	yes	libm
+40c588	rint	sce-db	exact	yes	libm
+40c7b0	GetRomName	sce-db	exact	yes	libscf
+40c820	IsT10K	sce-db	exact	yes	libscf
+40c860	sceScfGetLanguage	sce-db	exact	yes	libscf
+412268	adxf_ChkPrmPt	string-xref	derived	yes	
+412708	adxf_GetPtStat	string-xref	derived	yes	
+412ba0	adxf_CreateAdxFs	string-xref	derived	yes	
+412c38	adxf_SetFileInfoEx	string-xref	derived	yes	
+413368	adxf_ReadSj32	string-xref	derived	yes	
+413468	adxf_ReadNw32	string-xref	derived	yes	
+413650	adxf_ReadNw	string-xref	derived	yes	
+413690	adxf_Stop	string-xref	derived	yes	
+413930	adxf_Seek	string-xref	derived	yes	
+413ac0	adxf_GetFsizeSct	string-xref	derived	yes	
+413b80	adxf_GetNumReadSct	string-xref	derived	yes	
+413be8	adxf_GetStat	string-xref	derived	yes	
+41ae78	adxt_StartMem	string-xref	derived	yes	
+41afa8	adxt_StartMemIdx	string-xref	derived	yes	
+41e988	DTX_Create	string-xref	derived	yes	
+41f2f8	dvCiGetFileSize	string-xref	derived	yes	
+41f410	dvCiOpen	string-xref	derived	yes	
+41f6b0	dvCiReqRd	string-xref	derived	yes	
+4204f0	dvCiLoadDirInfo	string-xref	derived	yes	
+420db8	LSC_Create	string-xref	derived	yes	
+421780	LSC_ExecServer	string-xref	derived	yes	
+421bd8	mfci_get_adr_size	string-xref	derived	yes	
+421e50	mfCiOpen	string-xref	derived	yes	
+422030	mfCiReqRd	string-xref	derived	yes	
+422698	PS2RNA_SetupVoice	string-xref	derived	yes	
+422758	ps2rna_init_psj	string-xref	derived	yes	
+422f80	PS2RNA_Init	string-xref	derived	yes	
+424120	PS2RNA_SetBitPerSmpl	string-xref	derived	yes	
+424188	PS2RNA_DiscardData	string-xref	derived	yes	
+4241d0	PS2RNA_SetStmHdInfo	string-xref	derived	yes	
+4317c8	DTR_ExecHndl	string-xref	derived	yes	
+432128	htCiGetFileSize	string-xref	derived	yes	
+432338	htCiOpen	string-xref	derived	yes	
+432620	htCiReqRd	string-xref	derived	yes	
+43a0f0	Mwply_Stop	notes	role	yes	mksm/notes/ipu-gaps.md:160
+43a648	MwsfdCrePrm_CheckBuffmt	notes	role	yes	mksm/notes/ipu-gaps.md:164
+43a7e0	mwPlyCalcWorkCprmSfd	notes	named	yes	mksm/notes/ipu-gaps.md:158
+43b330	mwsfcre_AttachPicUsrBuf	string-xref	derived	yes	
+43b5b0	MWSFCRE_ResetSfdHn	string-xref	derived	yes	
+43b670	mwPlyCreateSofdec	notes	named	yes	mksm/notes/ipu-gaps.md:158
+43bbf0	Mwply_Destroy	notes	role	yes	mksm/notes/ipu-gaps.md:160
+43bf68	mwPlySetFrmSync	notes	named	yes	mksm/notes/ipu-gaps.md:158
+43bfc0	mwPlyGetCurFrm	notes	named	yes	mksm/notes/ipu-gaps.md:159
+43c4a8	mwl_convPtypeFromSFD	string-xref	derived	yes	
+43c510	mwsffrm_DecideFrmType	string-xref	derived	yes	
+43c6a8	mwPlyRelCurFrm	notes	named	yes	mksm/notes/ipu-gaps.md:159
+43cb40	mwPlyInitSfdFx	notes	named	yes	mksm/notes/ipu-gaps.md:160
+43ce78	mwPlyFinishSfdFx	notes	role	yes	mksm/notes/ipu-gaps.md:160
+43cfe8	mwPlySfdInit	notes	named	yes	mksm/notes/ipu-gaps.md:164
+43d3f0	mw_sfd_start_ex	string-xref	derived	yes	
+43d4f8	mwPlyStartFname	notes	named	yes	mksm/notes/ipu-gaps.md:158
+43d630	mwSfdStop	notes	named	yes	mksm/notes/ipu-gaps.md:160
+43d758	mwPlyPause	notes	named	yes	mksm/notes/ipu-gaps.md:164
+43df10	mwPlySetAudioCh	notes	named	yes	mksm/notes/ipu-gaps.md:158
+43e058	mwPlyGetStat	notes	named	yes	mksm/notes/ipu-gaps.md:159
+43e120	mwPlySetOutVol	notes	named	yes	mksm/notes/ipu-gaps.md:158
+43edc8	MWSST_Create	string-xref	derived	yes	
+44bd38	Sfd_BuildIpuDmaChain	notes	role	yes	mksm/notes/ipu-gaps.md:73
+44c0d8	Sfd_SupplyNodata	notes	role	yes	mksm/notes/ipu-gaps.md:40
+454dd8	sfxcnv_MakeTable	string-xref	derived	yes	
+4552d0	sfx_InitHn	string-xref	derived	yes	
+467940	sceCdRead	sce-db	exact	yes	libcdvd
+467b28	sceCdGetError	sce-db	exact	yes	libcdvd
+467bc0	sceCdBreak	sce-db	exact	yes	libcdvd
+467c78	_clearOnce	sce-db	exact	yes	libmpeg
+467d48	sceMpegCreate	sce-db	exact	yes	libmpeg
+467d48	sceMpegCreate	notes	named	no	mksm/notes/ipu-gaps.md:32
+467f80	_clearEach	sce-db	exact	yes	libmpeg
+468048	_getpic	sce-db	exact	yes	libmpeg
+468048	sceMpeg_GetPictureCore	notes	role	no	mksm/notes/ipu-gaps.md:33
+468200	_updateRefImage	sce-db	exact	yes	libmpeg
+4684b8	_decodeOrSkipFrame	sce-db	exact	yes	libmpeg
+468628	_decodeOrSkipField	sce-db	exact	yes	libmpeg
+4687f0	sceMpegInit	sce-db	exact	yes	libmpeg
+4688b0	sceMpegGetPicture	sce-db	exact	yes	libmpeg
+4688b0	sceMpegGetPicture	notes	named	no	mksm/notes/ipu-gaps.md:33
+4688f8	sceMpegGetPictureRAW8	sce-db	exact	yes	libmpeg
+4688f8	sceMpegGetPictureRAW8	notes	named	no	mksm/notes/ipu-gaps.md:33
+468950	sceMpegReset	sce-db	exact	yes	libmpeg
+468950	sceMpegReset	notes	role	no	mksm/notes/ipu-gaps.md:32
+4689e0	sceMpegAddCallback	sce-db	exact	yes	libmpeg
+468a18	sceMpegSetBuffType	sce-db	exact	yes	libmpeg
+468a58	_sceMpegDispatchMpegCallback	sce-db	exact	yes	libmpeg
+468a58	Mpeg_CallbackDispatch	notes	role	no	mksm/notes/ipu-gaps.md:34
+468ad0	_sceMpegDispatchMpegCbNodata	sce-db	exact	yes	libmpeg
+468ad0	Mpeg_CbNodata	notes	role	no	mksm/notes/ipu-gaps.md:34
+468b48	_decodeOrSkip	sce-db	exact	yes	libmpeg
+468b90	sceMpegClearRefBuff	sce-db	exact	yes	libmpeg
+468c10	_decPicture	sce-db	exact	yes	libmpeg
+468d88	M2v_CbStopDMA	notes	role	yes	mksm/notes/ipu-gaps.md:39
+468db0	M2v_CbRestartDMA	notes	role	yes	mksm/notes/ipu-gaps.md:39
+468dd8	_cpr8	sce-db	exact	yes	libmpeg
+469068	_dispRefImage	sce-db	exact	yes	libmpeg
+469328	_dispRefImageField	sce-db	exact	yes	libmpeg
+469748	_sceMpegFlush	sce-db	exact	yes	libmpeg
+469808	_sceMpegOutputFrame	sce-db	exact	yes	libmpeg
+469898	_doCSC2	sce-db	exact	yes	libmpeg
+469a58	_sceMpegCscStoreRefImage	sce-db	exact	yes	libmpeg
+469a58	Mpeg_CscDriver	notes	role	no	mksm/notes/ipu-gaps.md:34
+469f30	_ch3dmaCSC	sce-db	exact	yes	libmpeg
+469f30	Ipu_Ch3DmacHandler	notes	role	no	mksm/notes/ipu-gaps.md:54
+46a078	_ch4dma	sce-db	exact	yes	libmpeg
+46a078	Ipu_Ch4DmacHandler	notes	role	no	mksm/notes/ipu-gaps.md:76
+46a160	_sceMpegStopIpuDma	sce-db	exact	yes	libmpeg
+46a200	_sceMpegErrorBdec	sce-db	exact	yes	libmpeg
+46a200	Mpeg_BdecErrorHandler	notes	role	no	mksm/notes/ipu-gaps.md:35
+46a2c8	_sceMpegError	sce-db	exact	yes	libmpeg
+46a320	_sceMpegError1	sce-db	exact	yes	libmpeg
+46a360	_dualPrimeVector	sce-db	exact	yes	libmpeg
+46a4e8	_getAllRefs	sce-db	exact	yes	libmpeg
+46abf0	_motionComp0	sce-db	exact	yes	libmpeg
+46ae40	_getRef0	sce-db	exact	yes	libmpeg
+46b2c8	_doMC	sce-db	exact	yes	libmpeg
+46b4e8	_sceMpegPictureData0	sce-db	exact	yes	libmpeg
+46b4e8	Mpeg_PictureLoop	notes	role	no	mksm/notes/ipu-gaps.md:35
+46b728	_slice0	sce-db	exact	yes	libmpeg
+46b728	Mpeg_SliceLoop	notes	role	no	mksm/notes/ipu-gaps.md:35
+46ba58	_motionVector	sce-db	exact	yes	libmpeg
+46be80	_motionVectors	sce-db	exact	yes	libmpeg
+46c020	_decMB0	sce-db	exact	yes	libmpeg
+46c020	Mpeg_DecodeMacroblock	notes	role	no	mksm/notes/ipu-gaps.md:36
+46c578	_sceMpegMbAddressIncrement	sce-db	exact	yes	libmpeg
+46c6f0	_sceMpegWaitIpuIdle	sce-db	exact	yes	libmpeg
+46c6f0	Ipu_WaitNotBusyInner	notes	role	no	mksm/notes/ipu-gaps.md:36
+46c858	_sceMpegWaitIpuIdle64	sce-db	exact	yes	libmpeg
+46c858	Ipu_WaitReadCmd	notes	role	no	mksm/notes/ipu-gaps.md:37
+46c9d8	_sceMpegNextBit	sce-db	exact	yes	libmpeg
+46c9d8	Ipu_GetBits	notes	role	no	mksm/notes/ipu-gaps.md:37
+46cac0	_sceMpegPeepBit	sce-db	exact	yes	libmpeg
+46cac0	Ipu_ShowBits	notes	role	no	mksm/notes/ipu-gaps.md:37
+46cb50	_sceMpegFlushBuf	sce-db	exact	yes	libmpeg
+46cb50	Ipu_SkipBits	notes	role	no	mksm/notes/ipu-gaps.md:37
+46cbe8	_waitIpuIdle	sce-db	exact	yes	libmpeg
+46cbe8	Ipu_WaitNotBusy	notes	role	no	mksm/notes/ipu-gaps.md:36
+46cc28	_skipMB0	sce-db	exact	yes	libmpeg
+46cce8	_copyAddRefImage	sce-db	exact	yes	libmpeg
+46cdd8	_copyRefImage	sce-db	exact	yes	libmpeg
+46ce98	dmaRefImage	sce-db	exact	yes	libmpeg
+46d018	_rix_000	sce-db	exact	yes	libmpeg
+46d090	_ri0_000	sce-db	exact	yes	libmpeg
+46d128	_rix_001	sce-db	exact	yes	libmpeg
+46d1e0	_ri0_001	sce-db	exact	yes	libmpeg
+46d2b0	_rix_010	sce-db	exact	yes	libmpeg
+46d360	_ri0_010	sce-db	exact	yes	libmpeg
+46d418	_rix_011	sce-db	exact	yes	libmpeg
+46d510	_ri0_011	sce-db	exact	yes	libmpeg
+46d610	_rix_100	sce-db	exact	yes	libmpeg
+46d6b0	_ri0_100	sce-db	exact	yes	libmpeg
+46d760	_rix_101	sce-db	exact	yes	libmpeg
+46d840	_ri0_101	sce-db	exact	yes	libmpeg
+46d928	_rix_110	sce-db	exact	yes	libmpeg
+46da00	_ri0_110	sce-db	exact	yes	libmpeg
+46dad0	_rix_111	sce-db	exact	yes	libmpeg
+46dbf0	_ri0_111	sce-db	exact	yes	libmpeg
+46dd08	receiveDataFromIPU	sce-db	exact	yes	libmpeg
+46dd08	Ipu_BdecOutputDma	notes	role	no	mksm/notes/ipu-gaps.md:51
+46dda8	_sceMpegSliceA0	sce-db	exact	yes	libmpeg
+46dda8	_sceMpegSliceA0	string-xref	derived	no	
+46df48	_initSeq	sce-db	exact	yes	libmpeg
+46e260	_sequenceHeader	sce-db	exact	yes	libmpeg
+46e510	_groupOfPicturesHeader	sce-db	exact	yes	libmpeg
+46e5b0	_pictureHeader	sce-db	exact	yes	libmpeg
+46e6f8	_sequenceExtension	sce-db	exact	yes	libmpeg
+46e6f8	Mpeg_SequenceExtension	notes	role	no	mksm/notes/ipu-gaps.md:38
+46e838	_quantMatrixExtension	sce-db	exact	yes	libmpeg
+46e940	_pictureCodingExtension	sce-db	exact	yes	libmpeg
+46e940	Mpeg_PictureCodingExtension	notes	role	no	mksm/notes/ipu-gaps.md:38
+46eb48	_extensionAndUserData	sce-db	exact	yes	libmpeg
+46ed18	_waitIpuIdle	sce-db	exact	yes	libmpeg
+46ed18	Ipu_BCLR_Helper	notes	role	no	mksm/notes/ipu-gaps.md:48
+46ed58	_sceMpegNextHeader	sce-db	exact	yes	libmpeg
+46eeb8	flushByteBoundary	sce-db	exact	yes	libmpeg
+46ef08	_sequenceDisplayExtension	sce-db	exact	yes	libmpeg
+46ef98	_copyrightExtension	sce-db	exact	yes	libmpeg
+46f030	_pictureDisplayExtension	sce-db	exact	yes	libmpeg
+46f128	setD3_CHCR	sce-db	exact	yes	libipu
+46f1a0	setD4_CHCR	sce-db	exact	yes	libipu
+46f218	sceIpuStopDMA	sce-db	exact	yes	libipu
+46f218	sceIpuStopDMA	notes	named	no	mksm/notes/ipu-gaps.md:30
+46f300	sceIpuRestartDMA	sce-db	exact	yes	libipu
+46f300	sceIpuRestartDMA	notes	named	no	mksm/notes/ipu-gaps.md:30
+46f450	sceIpuSync	sce-db	exact	yes	libipu
+46f450	sceIpuSync	notes	named	no	mksm/notes/ipu-gaps.md:30
+46f4b8	setD4_CHCR	sce-db	exact	yes	libipu
+46f530	sceIpuInit	sce-db	exact	yes	libipu
+46f530	sceIpuInit	notes	named	no	mksm/notes/ipu-gaps.md:30
+470b38	log	sce-db	exact	yes	libm
+470c80	log10f	sce-db	exact	yes	libm
+470dd0	__ieee754_log	sce-db	exact	yes	libm
+4712c0	__ieee754_log10f	sce-db	exact	yes	libm
+4745d8	memcmp	sce-db	exact	yes	libc
+475918	sprintf	notes	named	yes	analysis/exports/web-cheats-mksm.txt:165
+476900	atoi	sce-db	exact	yes	libc
+4777f0	rand	sce-db	exact	yes	libc
+478a20	strrchr	sce-db	exact	yes	libc
+478bb0	gmtime	sce-db	exact	yes	libc
+47e538	std	sce-db	exact	yes	libc
+47e630	fiprintf	sce-db	exact	yes	libc
+47ecf8	_hi0bits	sce-db	exact	yes	libc
+47ed80	_lo0bits	sce-db	exact	yes	libc
+47f2d8	__mcmp	sce-db	exact	yes	libc
+47fa50	ResetEE	syscall	exact	yes	syscall 1
+47fa60	SetGsCrt	syscall	exact	yes	syscall 2
+47fa80	KExit	syscall	exact	yes	syscall 4
+47fa90	ResumeIntrDispatch	syscall	exact	yes	syscall 5
+47faa0	_LoadExecPS2	syscall	exact	yes	syscall 6
+47fab0	_ExecPS2	syscall	exact	yes	syscall 7
+47fac0	ResumeT3IntrDispatch	syscall	exact	yes	syscall 8
+47fad0	RFU009	syscall	exact	yes	syscall 9
+47fae0	AddSbusIntcHandler	syscall	exact	yes	syscall 10
+47faf0	RemoveSbusIntcHandler	syscall	exact	yes	syscall 11
+47fb00	Interrupt2Iop	syscall	exact	yes	syscall 12
+47fb10	SetVTLBRefillHandler	syscall	exact	yes	syscall 13
+47fb20	SetVCommonHandler	syscall	exact	yes	syscall 14
+47fb30	SetVInterruptHandler	syscall	exact	yes	syscall 15
+47fb40	AddIntcHandler	syscall	exact	yes	syscall 16
+47fb50	AddIntcHandler	syscall	exact	yes	syscall 16
+47fb60	RemoveIntcHandler	syscall	exact	yes	syscall 17
+47fb70	AddDmacHandler	syscall	exact	yes	syscall 18
+47fb80	AddDmacHandler	syscall	exact	yes	syscall 18
+47fb90	RemoveDmacHandler	syscall	exact	yes	syscall 19
+47fba0	_EnableIntc	syscall	exact	yes	syscall 20
+47fbb0	_DisableIntc	syscall	exact	yes	syscall 21
+47fbc0	_EnableDmac	syscall	exact	yes	syscall 22
+47fbd0	_DisableDmac	syscall	exact	yes	syscall 23
+47fc00	_iEnableIntc	syscall	exact	yes	syscall -26
+47fc10	_iDisableIntc	syscall	exact	yes	syscall -27
+47fc20	_iEnableDmac	syscall	exact	yes	syscall -28
+47fc30	_iDisableDmac	syscall	exact	yes	syscall -29
+47fc60	CreateThread	syscall	exact	yes	syscall 32
+47fc70	DeleteThread	syscall	exact	yes	syscall 33
+47fc80	StartThread	syscall	exact	yes	syscall 34
+47fc90	ExitThread	syscall	exact	yes	syscall 35
+47fca0	ExitDeleteThread	syscall	exact	yes	syscall 36
+47fcb0	TerminateThread	syscall	exact	yes	syscall 37
+47fcc0	iTerminateThread	syscall	exact	yes	syscall -38
+47fcd0	DisableDispatchThread	syscall	exact	yes	syscall 39
+47fce0	EnableDispatchThread	syscall	exact	yes	syscall 40
+47fcf0	ChangeThreadPriority	syscall	exact	yes	syscall 41
+47fd00	iChangeThreadPriority	syscall	exact	yes	syscall -42
+47fd10	RotateThreadReadyQueue	syscall	exact	yes	syscall 43
+47fd20	_iRotateThreadReadyQueue	syscall	exact	yes	syscall -44
+47fd30	ReleaseWaitThread	syscall	exact	yes	syscall 45
+47fd40	iReleaseWaitThread	syscall	exact	yes	syscall -46
+47fd50	GetThreadId	syscall	exact	yes	syscall 47
+47fd60	ReferThreadStatus	syscall	exact	yes	syscall 48
+47fd70	iReferThreadStatus	syscall	exact	yes	syscall -49
+47fd80	SleepThread	syscall	exact	yes	syscall 50
+47fd90	WakeupThread	syscall	exact	yes	syscall 51
+47fda0	_iWakeupThread	syscall	exact	yes	syscall -52
+47fdb0	CancelWakeupThread	syscall	exact	yes	syscall 53
+47fdc0	iCancelWakeupThread	syscall	exact	yes	syscall -54
+47fdd0	SuspendThread	syscall	exact	yes	syscall 55
+47fde0	_iSuspendThread	syscall	exact	yes	syscall -56
+47fdf0	ResumeThread	syscall	exact	yes	syscall 57
+47fe00	iResumeThread	syscall	exact	yes	syscall -58
+47fe10	RFU059	syscall	exact	yes	syscall 59
+47fe20	RFU060	syscall	exact	yes	syscall 60
+47fe30	RFU061	syscall	exact	yes	syscall 61
+47fe40	EndOfHeap	syscall	exact	yes	syscall 62
+47fe60	CreateSema	syscall	exact	yes	syscall 64
+47fe70	DeleteSema	syscall	exact	yes	syscall 65
+47fe80	SignalSema	syscall	exact	yes	syscall 66
+47fe90	iSignalSema	syscall	exact	yes	syscall -67
+47fea0	WaitSema	syscall	exact	yes	syscall 68
+47feb0	PollSema	syscall	exact	yes	syscall 69
+47fec0	iPollSema	syscall	exact	yes	syscall -70
+47fed0	ReferSemaStatus	syscall	exact	yes	syscall 71
+47fee0	iReferSemaStatus	syscall	exact	yes	syscall -72
+47fef0	iDeleteSema	syscall	exact	yes	syscall 73
+47ff00	SetOsdConfigParam	syscall	exact	yes	syscall 74
+47ff10	GetOsdConfigParam	syscall	exact	yes	syscall 75
+47ff20	GetGsHParam	syscall	exact	yes	syscall 76
+47ff30	GetGsVParam	syscall	exact	yes	syscall 77
+47ff40	SetGsHParam	syscall	exact	yes	syscall 78
+47ff50	SetGsVParam	syscall	exact	yes	syscall 79
+47ff60	CreateEventFlag	syscall	exact	yes	syscall 80
+47ff70	DeleteEventFlag	syscall	exact	yes	syscall 81
+47ff80	SetEventFlag	syscall	exact	yes	syscall 82
+47ff90	iSetEventFlag	syscall	exact	yes	syscall -83
+47ffa0	xlaunch	syscall	exact	yes	syscall 84
+47ffb0	PutTLBEntry	syscall	exact	yes	syscall -85
+47ffc0	_SetTLBEntry	syscall	exact	yes	syscall 86
+47ffd0	GetTLBEntry	syscall	exact	yes	syscall 87
+47ffe0	ProbeTLBEntry	syscall	exact	yes	syscall -88
+47fff0	ExpandScratchPad	syscall	exact	yes	syscall 89
+480000	Copy	syscall	exact	yes	syscall -90
+480010	GetEntryAddress	syscall	exact	yes	syscall 91
+480020	EnableIntcHandler	syscall	exact	yes	syscall 92
+480030	EnableIntcHandler	syscall	exact	yes	syscall -92
+480040	DisableIntcHandler	syscall	exact	yes	syscall 93
+480050	DisableIntcHandler	syscall	exact	yes	syscall -93
+480060	EnableDmacHandler	syscall	exact	yes	syscall 94
+480070	EnableDmacHandler	syscall	exact	yes	syscall -94
+480080	DisableDmacHandler	syscall	exact	yes	syscall 95
+480090	DisableDmacHandler	syscall	exact	yes	syscall -95
+4800a0	KSeg0	syscall	exact	yes	syscall 96
+4800b0	EnableCache	syscall	exact	yes	syscall 97
+4800c0	DisableCache	syscall	exact	yes	syscall 98
+4800d0	GetCop0	syscall	exact	yes	syscall 99
+4800e0	FlushCache	syscall	exact	yes	syscall 100
+4800f0	CpuConfig	syscall	exact	yes	syscall 102
+480100	iGetCop0	syscall	exact	yes	syscall -103
+480110	iFlushCache	syscall	exact	yes	syscall -104
+480120	iCpuConfig	syscall	exact	yes	syscall -106
+480130	sceSifStopDma	syscall	exact	yes	syscall 107
+480140	SetCPUTimerHandler	syscall	exact	yes	syscall 108
+480150	SetCPUTimer	syscall	exact	yes	syscall 109
+480160	SetOsdConfigParam2	syscall	exact	yes	syscall 110
+480170	GetOsdConfigParam2	syscall	exact	yes	syscall 111
+480180	GsGetIMR	syscall	exact	yes	syscall 112
+480190	GsGetIMR	syscall	exact	yes	syscall -112
+4801a0	GsPutIMR	syscall	exact	yes	syscall 113
+4801b0	GsPutIMR	syscall	exact	yes	syscall -113
+4801c0	SetPgifHandler	syscall	exact	yes	syscall 114
+4801d0	SetVSyncFlag	syscall	exact	yes	syscall 115
+4801e0	SetSyscall	syscall	exact	yes	syscall 116
+4801f0	_print	syscall	exact	yes	syscall 117
+480200	sceSifDmaStat	syscall	exact	yes	syscall 118
+480210	sceSifDmaStat	syscall	exact	yes	syscall -118
+480220	sceSifSetDma	syscall	exact	yes	syscall 119
+480230	sceSifSetDma	syscall	exact	yes	syscall -119
+480240	sceSifSetDChain	syscall	exact	yes	syscall 120
+480250	sceSifSetDChain	syscall	exact	yes	syscall -120
+480260	sceSifSetReg	syscall	exact	yes	syscall 121
+480270	sceSifGetReg	syscall	exact	yes	syscall 122
+480280	_ExecOSD	syscall	exact	yes	syscall 123
+480290	Deci2Call	syscall	exact	yes	syscall 124
+4802a0	PSMode	syscall	exact	yes	syscall 125
+4802b0	MachineType	syscall	exact	yes	syscall 126
+4802c0	GetMemorySize	syscall	exact	yes	syscall 127
+4802d0	_InitTLB	syscall	exact	yes	syscall 130
+4802f0	VSync	sce-db	exact	yes	libkernl
+480380	VSync2	sce-db	exact	yes	libkernl
+480428	write	sce-db	exact	yes	libkernl
+4804a8	read	sce-db	exact	yes	libkernl
+480530	sbrk	sce-db	exact	yes	libkernl
+4805f8	_sceSDC	sce-db	exact	yes	libkernl
+480728	_sceIDC	sce-db	exact	yes	libkernl
+480a18	topThread	sce-db	exact	yes	libkernl
+480af0	InitThread	sce-db	exact	yes	libkernl
+480be0	iWakeupThread	sce-db	exact	yes	libkernl
+480c80	DelayThread	sce-db	exact	yes	libkernl
+480d48	StartThread	sce-db	exact	yes	libkernl
+480ec0	_DelayThreadHandler	sce-db	exact	yes	libkernl
+480f10	QueuePeekWriteDone	sce-db	exact	yes	libkernl
+480f50	QueuePeekReadDone	sce-db	exact	yes	libkernl
+480f90	sceTtyHandler	sce-db	exact	yes	libkernl
+481128	sceTtyWrite	sce-db	exact	yes	libkernl
+4812a0	sceTtyRead	sce-db	exact	yes	libkernl
+481370	sceTtyInit	sce-db	exact	yes	libkernl
+481430	kputchar	sce-db	exact	yes	libkernl
+481468	deci2Putchar	sce-db	exact	yes	libkernl
+481518	serialPutchar	sce-db	exact	yes	libkernl
+481550	ftoi	sce-db	exact	yes	libkernl
+4815e0	printfloat	sce-db	exact	yes	libkernl
+4817b8	_sceSnprintf	sce-db	exact	yes	libkernl
+4824d0	snprintf_char	sce-db	exact	yes	libkernl
+482578	_sceSnprintf_pf	sce-db	exact	yes	libkernl
+4825c8	sceSnprintf	sce-db	exact	yes	libkernl
+482610	printf	notes	named	yes	analysis/exports/web-cheats-mksm.txt:165
+482768	sceSifInitCmd	sce-db	exact	yes	libkernl
+4829e8	sceSifExitCmd	sce-db	exact	yes	libkernl
+482a20	sceSifAddCmdHandler	sce-db	exact	yes	libkernl
+482a98	sceSifRemoveCmdHandler	sce-db	exact	yes	libkernl
+482ae8	_sceSifSendCmd	sce-db	exact	yes	libkernl
+482c20	sceSifSendCmd	sce-db	exact	yes	libkernl
+482c60	isceSifSendCmd	sce-db	exact	yes	libkernl
+482ca0	_sceSifCmdIntrHdlr	sce-db	exact	yes	libkernl
+482de8	sceSifWriteBackDCache	sce-db	exact	yes	libkernl
+482e98	sceSifInitRpc	sce-db	exact	yes	libkernl
+483128	_sceRpcGetFPacket	sce-db	exact	yes	libkernl
+483158	_sceRpcGetFPacket2	sce-db	exact	yes	libkernl
+483198	_request_end	sce-db	exact	yes	libkernl
+483268	_alarm_rdata	sce-db	exact	yes	libkernl
+4832a8	_request_rdata	sce-db	exact	yes	libkernl
+483380	_search_svdata	sce-db	exact	yes	libkernl
+4833d0	_alarm_bind	sce-db	exact	yes	libkernl
+483410	_request_bind	sce-db	exact	yes	libkernl
+4834e0	sceSifBindRpc	sce-db	exact	yes	libkernl
+483630	_request_call	sce-db	exact	yes	libkernl
+4836c0	sceSifCallRpc	sce-db	exact	yes	libkernl
+4838c0	sceSifCheckStatRpc	sce-db	exact	yes	libkernl
+483918	_sceFsIobSemaMK	sce-db	exact	yes	libkernl
+483990	new_iob	sce-db	exact	yes	libkernl
+483a18	sceFsSifCallRpc	sce-db	exact	yes	libkernl
+483b08	get_iob	sce-db	exact	yes	libkernl
+483b78	_sceFs_Rcv_Intr	sce-db	exact	yes	libkernl
+483f30	_sceFsSemInit	sce-db	exact	yes	libkernl
+483f88	_sceFsWaitS	sce-db	exact	yes	libkernl
+483fc8	_sceFs_Poff_Intr	sce-db	exact	yes	libkernl
+484010	sceFsInit	sce-db	exact	yes	libkernl
+4842b0	sceOpen	sce-db	exact	yes	libkernl
+484540	sceClose	sce-db	exact	yes	libkernl
+4846b8	sceLseek	sce-db	exact	yes	libkernl
+4848f8	sceRead	sce-db	exact	yes	libkernl
+484b68	sceWrite	sce-db	exact	yes	libkernl
+484e28	sceIoctl	sce-db	exact	yes	libkernl
+485208	sceLseek64	sce-db	exact	yes	libkernl
+485448	sceSifInitIopHeap	sce-db	exact	yes	libkernl
+4854d0	sceSifAllocIopHeap	sce-db	exact	yes	libkernl
+4855d8	sceSifQueryMaxFreeMemSize	sce-db	exact	yes	libkernl
+485658	_lf_bind	sce-db	exact	yes	libkernl
+4857e8	sceSifStopModule	sce-db	exact	yes	libkernl
+4859f0	sceSifUnloadModule	sce-db	exact	yes	libkernl
+485a90	_sceSifLoadModule	sce-db	exact	yes	libkernl
+485d00	sceSifResetIop	sce-db	exact	yes	libkernl
+485e58	sceSifSyncIop	sce-db	exact	yes	libkernl
+485ea8	sceSifRebootIop	sce-db	exact	yes	libkernl
+485fb8	DIntr	sce-db	exact	yes	libkernl
+486020	supplement_crt0	sce-db	exact	yes	libkernl
+486088	kCopy	sce-db	exact	yes	libkernl
+4860c0	kFindAddress	sce-db	exact	yes	libkernl
+4860c0	FindAddress	notes	named	no	mksm/notes/ee-syscall-gaps.md:31
+486100	FindAddress	syscall	exact	yes	syscall 131
+486118	InitSystemCallTableAddress	sce-db	exact	yes	libkernl
+486118	FindSyscallTableBase	notes	role	no	mksm/notes/ee-syscall-gaps.md:31
+486218	SetSyscall	syscall	exact	yes	syscall 116
+486228	_InitSys	sce-db	exact	yes	libkernl
+486228	_InitSys	notes	named	no	mksm/notes/ee-syscall-gaps.md:28
+486280	SetSyscall	syscall	exact	yes	syscall 116
+486290	Copy	syscall	exact	yes	syscall 90
+4862a0	kCopy	sce-db	exact	yes	libkernl
+4862d8	GetEntryAddress	syscall	exact	yes	syscall 91
+4862e8	PatchIsNeeded	sce-db	exact	yes	libkernl
+486350	InitExecPS2	sce-db	exact	yes	libkernl
+486350	InitSys_CopyKernelPatch	notes	role	no	mksm/notes/ee-syscall-gaps.md:28
+486400	Copy	syscall	exact	yes	syscall 90
+486410	kCopy	sce-db	exact	yes	libkernl
+486440	SetSyscall	syscall	exact	yes	syscall 116
+486450	SetArg	sce-db	exact	yes	libkernl
+486570	LoadExecPS2	sce-db	exact	yes	libkernl
+4865b8	Boot_MemSetup	notes	role	yes	mksm/notes/ee-syscall-gaps.md:16
+4865e8	SetSyscall	syscall	exact	yes	syscall 116
+4865f8	Copy	syscall	exact	yes	syscall 90
+486608	kCopy	sce-db	exact	yes	libkernl
+486640	GetEntryAddress	syscall	exact	yes	syscall 91
+486650	InitAlarm	sce-db	exact	yes	libkernl
+486728	SetT2	sce-db	exact	yes	libkernl
+4867c8	InitTimer	sce-db	exact	yes	libkernl
+486928	StartTimerSystemTime	sce-db	exact	yes	libkernl
+4869c0	SetNextComp	sce-db	exact	yes	libkernl
+486b50	InsertAlarm	sce-db	exact	yes	libkernl
+486bd8	UnlinkAlarm	sce-db	exact	yes	libkernl
+486c10	cbTimerHandler	sce-db	exact	yes	libkernl
+486eb8	iGetTimerSystemTime	sce-db	exact	yes	libkernl
+486f10	iAllocTimerCounter	sce-db	exact	yes	libkernl
+486f80	AllocTimerCounter	sce-db	exact	yes	libkernl
+486fd8	iStartTimerCounter	sce-db	exact	yes	libkernl
+487108	iSetTimerHandler	sce-db	exact	yes	libkernl
+487200	SetTimerHandler	sce-db	exact	yes	libkernl
+4873b0	SetTimerAlarm	sce-db	exact	yes	libkernl
+4874e0	iSetTimerAlarm	sce-db	exact	yes	libkernl
+487608	sceSifExecNotifyHandler	sce-db	exact	yes	libkernl
+4876b0	sceDeci2Open	sce-db	exact	yes	libkernl
+487700	sceDeci2ReqSend	sce-db	exact	yes	libkernl
+487730	sceDeci2Poll	sce-db	exact	yes	libkernl
+487760	sceDeci2ExRecv	sce-db	exact	yes	libkernl
+487798	sceDeci2ExSend	sce-db	exact	yes	libkernl
+4877e0	kputs	sce-db	exact	yes	libkernl
+487810	Copy	syscall	exact	yes	syscall 90
+487820	kCopy	sce-db	exact	yes	libkernl
+487858	GetEntryAddress	syscall	exact	yes	syscall 91
+487868	SetSyscall	syscall	exact	yes	syscall 116
+487878	InitTLBFunctions	sce-db	exact	yes	libkernl
+487940	_SetTLBEntry	syscall	exact	yes	syscall 86
+487950	InitTLB	sce-db	exact	yes	libkernl
+487950	InitTLB_ByMemSize	notes	role	no	mksm/notes/ee-syscall-gaps.md:16
+487990	InitTLB32MB	sce-db	exact	yes	libkernl
+487990	SetTLBEntries32MB	notes	role	no	mksm/notes/ee-syscall-gaps.md:16
+487c00	_kExitTLBHandler	sce-db	exact	yes	libkernl
+487d20	__divdi3	sce-db	exact	yes	libgcc
+488410	__fixdfdi	sce-db	exact	yes	libgcc
+488470	__fixunsdfdi	sce-db	exact	yes	libgcc
+488560	__fixunssfdi	sce-db	exact	yes	libgcc
+488658	__floatdidf	sce-db	exact	yes	libgcc
+4886f0	__moddi3	sce-db	exact	yes	libgcc
+488d58	__udivdi3	sce-db	exact	yes	libgcc
+489328	__umoddi3	sce-db	exact	yes	libgcc
+489868	__builtin_vec_new	sce-db	exact	yes	libgcc
