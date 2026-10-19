@@ -13,6 +13,7 @@
 #include "gpu/gpu.hpp"
 #endif
 
+#include "ps2/memory.hpp"
 #include "ps2/state.hpp"
 #include "ps2/system.hpp"
 
@@ -43,6 +44,40 @@ alignas(64) std::uint8_t g_memory[kMemorySize];
 
 std::uint64_t g_pmode, g_smode1, g_smode2, g_srfsh, g_synch1, g_synch2, g_syncv;
 std::uint64_t g_dispfb[2], g_display[2], g_extbuf, g_extdata, g_extwrite, g_bgcolor;
+bool g_dispfb_half[2], g_dispfb_exact[2];
+
+// PS2_FIELD_FLAG=<hex EE address>: the game's own odd/even flag, latched when it sets the display buffer. MK:SM keeps
+// it at 0x4F4D68 and draws the buffer shown with it set half a line lower (+0.5 in its projection and 2D sprites, not
+// XYOFFSET), so fields shown as they are bounce half a line every frame. display() moves that buffer back up, and the
+// fields line up without blending them. Presentation only.
+// Optional further addresses (",66189C,67B758") must all hold 0 for the game to offset its 3D too; otherwise (MK:SM's
+// cutscenes) only its 2D moves, and the fields are blended instead (g_dispfb_fielded false).
+std::vector<std::uint32_t> field_spec() {
+    std::vector<std::uint32_t> v;
+    const char *e = std::getenv("PS2_FIELD_FLAG");
+    for (const char *p = e; p && *p;) {
+        char *end;
+        v.push_back(static_cast<std::uint32_t>(std::strtoul(p, &end, 16)) & 0x1FFFFFCu);
+        p = *end == ',' ? end + 1 : end + std::strlen(end);
+    }
+    return v;
+}
+std::uint32_t field_flag() {
+    static const std::vector<std::uint32_t> spec = field_spec();
+    return spec.empty() ? 0u : spec[0];
+}
+std::uint32_t ram_word(std::uint32_t at) {
+    std::uint32_t v;
+    std::memcpy(&v, g_ram + at, 4);
+    return v;
+}
+bool field_half() { return field_flag() && ram_word(field_flag()) != 0; }
+bool field_exact() {
+    static const std::vector<std::uint32_t> spec = field_spec();
+    for (std::size_t i = 1; i < spec.size(); ++i)
+        if (ram_word(spec[i])) return false;
+    return !spec.empty();
+}
 std::uint64_t g_csr = 0x551B4000ull, g_imr = 0x7F00ull, g_busdir, g_siglblid;
 std::uint64_t g_primitives = 0;
 
@@ -944,12 +979,20 @@ void write_privileged(std::uint32_t address, std::uint64_t value) {
     case 0x0050: g_synch2 = value; break;
     case 0x0060: g_syncv = value; break;
     case 0x0070:
-        if (trace_display() && value != g_dispfb[0]) std::fprintf(stderr, "[gs] dispfb1 0x%llX\n", static_cast<unsigned long long>(value));
+        g_dispfb_half[0] = field_half();
+        g_dispfb_exact[0] = field_exact();
+        if (trace_display())
+            std::fprintf(stderr, "[gs] dispfb1 0x%llX half %d exact %d frame %llu\n", static_cast<unsigned long long>(value), g_dispfb_half[0],
+                         g_dispfb_exact[0], static_cast<unsigned long long>(frame_count()));
         g_dispfb[0] = value;
         break;
     case 0x0080: g_display[0] = value; break;
     case 0x0090:
-        if (trace_display() && value != g_dispfb[1]) std::fprintf(stderr, "[gs] dispfb2 0x%llX\n", static_cast<unsigned long long>(value));
+        g_dispfb_half[1] = field_half();
+        g_dispfb_exact[1] = field_exact();
+        if (trace_display())
+            std::fprintf(stderr, "[gs] dispfb2 0x%llX half %d exact %d frame %llu\n", static_cast<unsigned long long>(value), g_dispfb_half[1],
+                         g_dispfb_exact[1], static_cast<unsigned long long>(frame_count()));
         g_dispfb[1] = value;
         break;
     case 0x00A0: g_display[1] = value; break;
@@ -1019,7 +1062,10 @@ double gpu_busy_ms() {
 #endif
 }
 
-DisplayRegs display_regs() { return DisplayRegs{g_pmode, g_smode2, {g_dispfb[0], g_dispfb[1]}, {g_display[0], g_display[1]}}; }
+DisplayRegs display_regs() {
+    return DisplayRegs{g_pmode, g_smode2, {g_dispfb[0], g_dispfb[1]}, {g_display[0], g_display[1]}, {g_dispfb_exact[0], g_dispfb_exact[1]},
+                       {g_dispfb_half[0] && g_dispfb_exact[0], g_dispfb_half[1] && g_dispfb_exact[1]}};
+}
 
 bool present() { return present(display_regs()); }
 
@@ -1033,7 +1079,8 @@ bool present(const DisplayRegs &r) {
     const std::uint32_t width = ((static_cast<std::uint32_t>(disp >> 32) & 0xFFFu) + 1) / magh, height = ((static_cast<std::uint32_t>(disp >> 44) & 0x7FFu) + 1) / magv;
     if (!width || !height || width > 2048 || height > 2048) return true;
     const gpu::DisplaySource src{(static_cast<std::uint32_t>(fb) & 0x1FFu) * 32, static_cast<std::uint32_t>(fb >> 9) & 0x3Fu, static_cast<std::uint32_t>(fb >> 15) & 0x1Fu,
-                                 static_cast<std::uint32_t>(fb >> 32) & 0x7FFu, static_cast<std::uint32_t>(fb >> 43) & 0x7FFu, width, height, (r.smode2 & 3u) == 3u};
+                                 static_cast<std::uint32_t>(fb >> 32) & 0x7FFu, static_cast<std::uint32_t>(fb >> 43) & 0x7FFu, width, height, (r.smode2 & 3u) == 3u,
+                                 r.fielded[circuit], r.half[circuit]};
     return gpu::present(src);
 #else
     return false;
@@ -1057,7 +1104,7 @@ bool display(const DisplayRegs &r, std::vector<std::uint32_t> &rgba, std::uint32
     const bool halved = (r.smode2 & 3u) == 3u;
 #ifdef PS2_GPU
     if (gpu_on()) {
-        const gpu::DisplaySource src{fbp * 32, fbw, psm, dbx, dby, width, height, halved};
+        const gpu::DisplaySource src{fbp * 32, fbw, psm, dbx, dby, width, height, halved, r.fielded[circuit], r.half[circuit]};
         if (!cpu_raster()) return gpu::display(src, rgba, width, height);
         static const bool compare = std::getenv("PS2_GS_COMPARE") != nullptr;
         std::uint32_t gw = 0, gh = 0;
@@ -1104,7 +1151,8 @@ bool copy_frame(const DisplayRegs &r, std::vector<std::uint32_t> &rgba, std::uin
         const std::uint32_t w = ((static_cast<std::uint32_t>(disp >> 32) & 0xFFFu) + 1) / magh, h = ((static_cast<std::uint32_t>(disp >> 44) & 0x7FFu) + 1) / magv;
         if (!w || !h || w > 2048 || h > 2048) return false;
         const gpu::DisplaySource src{(static_cast<std::uint32_t>(fb) & 0x1FFu) * 32, static_cast<std::uint32_t>(fb >> 9) & 0x3Fu, static_cast<std::uint32_t>(fb >> 15) & 0x1Fu,
-                                     static_cast<std::uint32_t>(fb >> 32) & 0x7FFu, static_cast<std::uint32_t>(fb >> 43) & 0x7FFu, w, h, (r.smode2 & 3u) == 3u};
+                                     static_cast<std::uint32_t>(fb >> 32) & 0x7FFu, static_cast<std::uint32_t>(fb >> 43) & 0x7FFu, w, h, (r.smode2 & 3u) == 3u,
+                                     r.fielded[circuit], r.half[circuit]};
         got = wait ? gpu::display(src, rgba, width, height) : gpu::display_async(src, rgba, width, height);
     } else
 #endif
@@ -1115,7 +1163,7 @@ bool copy_frame(const DisplayRegs &r, std::vector<std::uint32_t> &rgba, std::uin
         return true;
     }
     static const bool weave_off = std::getenv("PS2_NO_DEINTERLACE") != nullptr;
-    const bool blend = (r.smode2 & 3u) == 3u && !weave_off;
+    const bool blend = (r.smode2 & 3u) == 3u && !weave_off && !r.fielded[(r.pmode & 2u) ? 1 : 0];
     for (std::size_t i = 0; i < rgba.size(); ++i) {
         const std::uint32_t c = rgba[i];
         if (blend) rgba[i] = (c & previous[i]) + (((c ^ previous[i]) & 0xFEFEFEFEu) >> 1);

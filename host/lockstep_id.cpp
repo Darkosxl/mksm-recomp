@@ -42,7 +42,7 @@ std::string basename(const std::string &path) {
 bool local_only(const std::string &name) {
     // PS2_NO_VU_THREAD/PS2_THREADS: threaded and single-threaded peers compute the same state (native-lockstep.md);
     // PS2_VU_JIT: the browser's lockstep mode pins it, the desktop has no VU JIT
-    static const char *kNames[] = {"PS2_ASPECT", "PS2_SCALE", "PS2_TEX_PACK", "PS2_TEX_PACK_MB", "PS2_TEX_DUMP", "PS2_GS", "PS2_NO_DEINTERLACE",
+    static const char *kNames[] = {"PS2_ASPECT", "PS2_FIELD_FLAG", "PS2_SCALE", "PS2_TEX_PACK", "PS2_TEX_PACK_MB", "PS2_TEX_DUMP", "PS2_GS", "PS2_NO_DEINTERLACE",
                                    "PS2_DECODE", "PS2_GPU_FALLBACK", "PS2_GPU_LOW_POWER", "PS2_GPU_PROFILE", "PS2_SDL_RENDERER", "PS2_FPS",
                                    "PS2_HASH_LOG", "PS2_HASH_LOG_EVERY", "PS2_HASH_SPLIT", "PS2_NO_VU_THREAD", "PS2_THREADS", "PS2_ONE_THREAD",
                                    "PS2_VU_JIT", "PS2_PNACH", "PS2_RTC", "PS2_PROFILE", "PS2_PROFILE_FROM", "PS2_CENSUS", "PS2_DRAW_DUMP",

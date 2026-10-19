@@ -13,6 +13,7 @@ enum class Mode { off, mirror, primary };
 struct DisplaySource {
     std::uint32_t fbp, fbw, psm, dbx, dby, width, height;
     bool halved;
+    bool fielded = false, half = false;  // fields line up by the game's flag (no blend); this one moves up half a line
 };
 
 struct SurfaceTarget {

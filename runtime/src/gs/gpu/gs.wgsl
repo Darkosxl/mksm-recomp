@@ -413,7 +413,8 @@ fn display(@builtin(global_invocation_id) gid: vec3<u32>) {
     if (prm(7u) != 0u) {
         rows = SCALE_Y;
     }
-    let sy = gid.y * rows / (2u * out_rows);
+    // prm 9: this field was drawn half a line lower (PS2_FIELD_FLAG): read it half a field line further down
+    let sy = min(gid.y + select(0u, out_rows, prm(9u) != 0u), h - 1u) * rows / (2u * out_rows);
     var c = read_sample(psm, prm(0u), prm(1u), prm(3u) + gid.x / SCALE, prm(4u) + sy / SCALE_Y, (sy % SCALE_Y) * SCALE + gid.x % SCALE);
     if (psm == PSMCT16 || psm == PSMCT16S) {
         c = ((c & 0x1Fu) << 3u) | ((c & 0x3E0u) << 6u) | ((c & 0x7C00u) << 9u);

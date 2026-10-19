@@ -76,6 +76,7 @@ std::uint32_t read_pixel_in(const std::uint8_t *memory, std::uint32_t psm, std::
 
 struct DisplayRegs {
     std::uint64_t pmode, smode2, dispfb[2], display[2];
+    bool fielded[2], half[2];  // fields line up by the game's flag (PS2_FIELD_FLAG); this buffer was drawn half a line lower
 };
 DisplayRegs display_regs();
 
