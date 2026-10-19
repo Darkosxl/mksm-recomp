@@ -28,11 +28,16 @@
 00240438	ScrollSegmentUV	decomp/src/render/uv_scroll.cpp
 00242AD0	CullModelSegments	decomp/src/render/ps2render/cull_model_segments.cpp
 002457D0	UpdateNodeMatrices	decomp/src/render/ps2render/update_node_matrices.cpp
+002478F0	PackCharacterBaseState	decomp/src/render/character_gs_state.cpp
+00247BD8	ChainCharacterBaseState	decomp/src/render/character_gs_state.cpp
+00248058	ChainCharacterHighlightState	decomp/src/render/character_gs_state.cpp
 00248900	PackHighlightPass	decomp/src/render/highlight_pass.cpp
 0024C238	RadiansToAngle	decomp/src/render/ps2render.cpp
 0024CFF8	SortMeshesByLinkedTexture	decomp/src/render/draw_sort.cpp
 00260B40	GetAssetObject	decomp/src/setup/ps2setup.cpp
 002655C0	GuardBandOutcode	decomp/src/render/guard_band.cpp
+00268AE0	TextureManager::UploadClut	decomp/src/texture/texture_upload.cpp
+00268EC0	TextureManager::UploadImage	decomp/src/texture/texture_upload.cpp
 0026BCF8	TextureManager::UploadSlots	decomp/src/texture/upload_slots.cpp
 0026CD50	TextureManager::ComputeBufferWidth	decomp/src/texture/texture_manager.cpp
 0026D2E8	TextureManager::GetTex0	decomp/src/texture/texture_manager.cpp

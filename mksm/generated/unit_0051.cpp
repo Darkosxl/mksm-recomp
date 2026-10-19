@@ -3,6 +3,8 @@
 
 namespace decomp {
 extern ps2::DecompFn hook_002457D0;
+extern ps2::DecompFn hook_002478F0;
+extern ps2::DecompFn hook_00247BD8;
 }
 
 namespace gen {
@@ -4200,6 +4202,7 @@ L_002478B4:
     c.budget -= 14;
     { const std::uint32_t t = c.r[31].w[0];  c.pc = t; return; }
 L_002478F0:
+    if (::decomp::hook_002478F0.on) [[unlikely]] { if (decomp_enter(c, ::decomp::hook_002478F0, depth)) return; }
     c.r[3].sd[0] = static_cast<std::int32_t>(0x004F0000u);
     set32(c.r[29], c.r[29].w[0] - 32u);
     set32(c.r[2], ld32((c.r[3].w[0] + 19244u)));
@@ -4391,6 +4394,7 @@ L_00247BB4:
     c.budget -= 8;
     { const std::uint32_t t = c.r[31].w[0];  c.pc = t; return; }
 L_00247BD8:
+    if (::decomp::hook_00247BD8.on) [[unlikely]] { if (decomp_enter(c, ::decomp::hook_00247BD8, depth)) return; }
     c.r[7].sd[0] = static_cast<std::int32_t>(0x00660000u);
     c.r[14].sd[0] = static_cast<std::int32_t>(0x01000000u);
     set32(c.r[2], ld32((c.r[7].w[0] - 7424u)));
