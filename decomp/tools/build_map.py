@@ -652,8 +652,13 @@ def main():
     recomp |= jal
     eh = {v for _, v in elf.section_words(".gcc_except_table") if elf.in_text(v)}
     dataptrs = set()
+    data_refs = collections.Counter()
     for name in (".data", ".rodata", ".gcc_except_table"):
-        dataptrs |= {v for _, v in elf.section_words(name) if elf.in_text(v)}
+        for _, v in elf.section_words(name):
+            if elf.in_text(v):
+                dataptrs.add(v)
+                if name != ".gcc_except_table":
+                    data_refs[v] += 1
     jt = jump_tables(elf, None)
     caselabels = {t for v in jt.values() for t in v}
     stats["seeds(entries.txt)"] = len(seeds)
@@ -940,16 +945,16 @@ def main():
     os.makedirs(args.out, exist_ok=True)
     with open(os.path.join(args.out, "functions.tsv"), "w") as f:
         f.write("addr\tend\tsize\tname\tname_source\tmodule\tsource_file\tleaf\tn_callees\tn_callers\trecomp_unit"
-                "\tname_confidence\tstart_evidence\tend_source\tobject\tmodule_source\tn_jalr_unresolved\n")
+                "\tname_confidence\tstart_evidence\tend_source\tobject\tmodule_source\tn_jalr_unresolved\tn_data_refs\n")
         for s, e, how in zip(starts, ends, end_how):
             c = chosen.get(s)
             leaf = int(not edges[s] and not nj[s])
             src = source.get(s, "")
             src = re.sub(r"^c:[/\\]Projects[/\\]", "", src, flags=re.I)
-            f.write("%06x\t%06x\t%d\t%s\t%s\t%s\t%s\t%d\t%d\t%d\tunit_%04X\t%s\t%s\t%s\t%s\t%s\t%d\n" % (
+            f.write("%06x\t%06x\t%d\t%s\t%s\t%s\t%s\t%d\t%d\t%d\tunit_%04X\t%s\t%s\t%s\t%s\t%s\t%d\t%d\n" % (
                 s, e, e - s, final_name[s], c[2] if c else "none", module[s], src, leaf, len(callees[s]),
                 len(callers[s]), (s - UNIT_BASE) // UNIT_SIZE, c[3] if c else "", decision[s][1].split(":", 1)[1],
-                how, fobj[s] if fobj[s] is not None else "", module_how[s], nj[s]))
+                how, fobj[s] if fobj[s] is not None else "", module_how[s], nj[s], data_refs[s]))
     with open(os.path.join(args.out, "callgraph.tsv"), "w") as f:
         f.write("caller\tcallee\tkind\tcount\tfirst_site\ttarget_if_not_start\n")
         for (a, b, kind), (n, site, tgt) in sorted(cg.items()):
