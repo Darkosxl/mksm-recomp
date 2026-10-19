@@ -81,7 +81,7 @@ std::function<void()> g_frame_gate;
 std::atomic<double> g_stretch_tempo{0.0};  // sound tempo while time-stretched (title bar), 0 when not
 WindowPadSink g_pad_sink;
 std::uint32_t g_tex_w = 0, g_tex_h = 0;
-std::uint64_t g_last = 0;
+double g_deadline = 0.0;  // pace(): when the next frame goes out (performance counter)
 std::vector<std::uint32_t> g_pixels;
 bool g_gpu_present = false;
 
@@ -268,20 +268,27 @@ void present() {
 
 constexpr Uint32 kAudioBytesPerMs = 48 * 4;
 
+// Frames go out on an even clock at the emulated vblank rate (60 Hz: 800 sound frames each). Waiting for the sound
+// queue to drop instead released them in bursts, as SDL drains it 21 ms at a time. The queue only steers the clock (up
+// to 2% around 60 ms queued); far off (>120 ms, <20 ms) it waits or runs. Behind (below full speed) nothing waits.
 void pace() {
+    const double hz = static_cast<double>(SDL_GetPerformanceFrequency());
+    double period = hz / (ps2::g_options.pal ? 50.0 : 60.0);
+    double now = static_cast<double>(SDL_GetPerformanceCounter());
     if (g_audio) {
-        // The audio device clock paces emulation: wait while more than ~80 ms of sound is queued.
-        while (SDL_GetQueuedAudioSize(g_audio) > 80 * kAudioBytesPerMs) SDL_Delay(1);
-        return;
+        const double queued = SDL_GetQueuedAudioSize(g_audio) / static_cast<double>(kAudioBytesPerMs);
+        if (queued > 120.0 || queued < 20.0) {
+            while (SDL_GetQueuedAudioSize(g_audio) > 120 * kAudioBytesPerMs) SDL_Delay(1);
+            g_deadline = static_cast<double>(SDL_GetPerformanceCounter());
+            return;
+        }
+        period *= 1.0 + 0.02 * (queued - 60.0) / 60.0;
     }
-    const std::uint64_t frequency = SDL_GetPerformanceFrequency();
-    const std::uint64_t period = frequency / (ps2::g_options.pal ? 50 : 60);
-    const std::uint64_t now = SDL_GetPerformanceCounter();
-    if (g_last && now - g_last < period) {
-        SDL_Delay(static_cast<Uint32>((period - (now - g_last)) * 1000 / frequency));
-        g_last += period;
-    } else {
-        g_last = now;
+    g_deadline += period;
+    if (g_deadline < now - period) g_deadline = now;  // behind: no burst to catch up
+    for (double left; (left = (g_deadline - now) * 1000.0 / hz) > 0.0; now = static_cast<double>(SDL_GetPerformanceCounter())) {
+        if (left > 1.5) SDL_Delay(static_cast<Uint32>(left - 1.0));
+        else std::this_thread::yield();
     }
 }
 

@@ -1,6 +1,15 @@
 # EE functions whose entry gets the decomp hook (decomp/README.md): address, then anything (name, notes).
 # Each needs a PS2_DECOMP(<address>, name) in decomp/src; retranslate after editing (mksm/build.sh --retranslate).
-00474EDC	strlen	decomp/src/libc/strlen.cpp
+002124C0	ArchiveGetFile	decomp/src/fileio/fileiodrv.cpp
+00213C78	MatrixSetTranslation	decomp/src/math/vu0math.cpp
+00213C98	MatrixGetTranslation	decomp/src/math/vu0math.cpp
+00213E08	sceVu0InnerProduct	decomp/src/math/vu0math.cpp
+00213E88	sceVu0TransposeMatrix	decomp/src/math/vu0math.cpp
+00214058	MatrixInverseRigid	decomp/src/math/vu0math.cpp
+00214658	MatrixTranslate	decomp/src/math/vu0math.cpp
+00214688	CopyVector	decomp/src/math/vu0math.cpp
+0021F618	MemCardStateSetFlag	decomp/src/memcard/syncmemcard.cpp
+00225FC0	SetCharRenderFlag	decomp/src/render/character.cpp
 00226B70	SetScreenBrightness	decomp/src/render/render_settings.cpp
 00226DF0	SetSkipModelRender	decomp/src/render/render_settings.cpp
 0024C238	RadiansToAngle	decomp/src/render/ps2render.cpp
@@ -11,3 +20,4 @@
 0026D308	TextureManager::GetMipTbp1	decomp/src/texture/texture_manager.cpp
 0026D590	TextureManager::GetSlot	decomp/src/texture/texture_manager.cpp
 0026DD90	TextureManager::SetLinkedTexture	decomp/src/texture/texture_manager.cpp
+00474EDC	strlen	decomp/src/libc/strlen.cpp
