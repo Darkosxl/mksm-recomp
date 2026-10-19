@@ -14,6 +14,9 @@
 #include <mutex>
 #include <string>
 #include <thread>
+#ifdef __linux__
+#include <pthread.h>
+#endif
 #include <unordered_map>
 #include <unordered_set>
 #include <utility>
@@ -134,6 +137,9 @@ struct Loader {
     std::unordered_map<std::uint64_t, Loaded> ready;
     Loader() {
         std::thread([this] {
+#ifdef __linux__
+            pthread_setname_np(pthread_self(), "texload");
+#endif
             for (;;) {
                 std::unique_lock lock(m);
                 cv.wait(lock, [this] { return !wanted.empty(); });

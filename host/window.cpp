@@ -17,6 +17,7 @@
 #include <cstdlib>
 #include <cstring>
 #include <thread>
+#include <pthread.h>
 #include <vector>
 
 namespace {
@@ -476,6 +477,7 @@ int run_window(const std::function<int()> &emulate) {
     std::atomic<bool> done{false};
     int result = 0;
     std::thread emulation([&] {
+        pthread_setname_np(pthread_self(), "ee");  // perf --sort comm
         result = emulate();
         done.store(true);
         ps2::wake_render_thread();

@@ -21,6 +21,7 @@
 #include <functional>
 #include <string>
 #include <thread>
+#include <pthread.h>
 #include <vector>
 
 void register_generated_code();
@@ -47,6 +48,7 @@ int run_threaded_headless(const std::function<int()> &emulate) {
     std::atomic<bool> done{false};
     int result = 0;
     std::thread emulation([&] {
+        pthread_setname_np(pthread_self(), "ee");  // perf --sort comm
         result = emulate();
         done.store(true);
         ps2::wake_render_thread();

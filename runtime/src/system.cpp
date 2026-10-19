@@ -37,6 +37,9 @@
 #include <iterator>
 #include <random>
 #include <thread>
+#ifdef __linux__
+#include <pthread.h>
+#endif
 #include <stdexcept>
 #include <string>
 #include <vector>
@@ -871,6 +874,9 @@ std::uint64_t vu1_interpreted_calls() { return vu::interpreted_calls(); }
 std::uint64_t vu1_jit_programs() { return vu::jit_programs(); }
 
 void run_vu_thread() {
+#ifdef __linux__
+    pthread_setname_np(pthread_self(), "vu1");  // perf --sort comm
+#endif
     gs::queue::role() = gs::queue::Role::Vu;
     gs::queue::Ring &in = gs::queue::vu();
     for (;;) {
