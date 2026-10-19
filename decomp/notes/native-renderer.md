@@ -1,6 +1,7 @@
 # Native renderer for MK:SM: design
 
-Status: complete (2026-10-19). Static analysis only; the runs that would confirm the open points are in §7.
+Status: complete (2026-10-19). Static analysis, then the stage-0 runs R2, R3, R4 and R8 (2026-10-19, results in
+§7.1); each point they settle is marked **Confirmed (§7.1)** or **Corrected (§7.1)** where it is stated.
 
 Scope: replace the VIF1 → VU1 → GIF → GS emulation path for the game's 3D with native WebGPU draw calls, keeping
 the approved look and leaving game state bit-identical. Design only; no code is changed by this document.
@@ -39,6 +40,12 @@ Names like "scene draw" are ours (role names), not symbols.
   keep building and kicking the chain unchanged, because poll iterations feed `c.budget` → T0 → the flip pacing.
 - **First milestone**: world opaque (567ce7d8, 002c80ed) natively, side by side and then replacing, with the
   per-category diff tool and the EE-visible hash gate. Characters (stage 2) are where 1440p/60 is reached.
+- **Runs (§7.1)**: the premise holds. With VU1 and GIF paths 1/2 switched off (`PS2_VU1_NULL=1`) every hash section
+  except VU1 and `vifvu` is equal on every frame of all 12 scenes in both thread layouts and under `PS2_JITTER`; the
+  census finds 0 EE reads of VU1 memory, 0 GS downloads, 0 SIGNAL/FINISH/LABEL, 0 INTC 5, 0 D1 pauses. Every vertex
+  UNPACK reads static mesh data (keyable by source address). One correction that matters: the world programs' vertex
+  colours are UNPACKed **after** the batch's MSCNT, so the two point-lit programs light stale colours and today's
+  emulation drops their point light (§7.1, R2).
 
 ## 1. Frame structure
 
@@ -176,13 +183,17 @@ Read from the packers' code; layouts in VU1 memory are cross-checked against the
   fn_252148, fn_252d40, fn_253108, fn_2535a8, fn_253cd0, fn_258040, fn_2591c0, fn_259768: VIF UNPACK + `MSCNT`,
   closed with `sceVif1PkRet`), i.e. static VIF programs that the frame chain enters by DMA `call`/`ref` (inferred from
   the RET; to confirm with the chain dump in §7). fn_23e830 builds such packets per frame (it calls fn_252d40,
-  fn_253108, fn_253cd0).
+  fn_253108, fn_253cd0). **Confirmed (§7.1, R2):** every vertex UNPACK of every program reads a static source address
+  (world meshes 0x01a5…-0x01d4…, the player's model 0x00fab…-0x01013… in both goro and academy, the 1-pass fighters
+  0x01655…-0x0183…), 97-100 % identical from frame to frame; only the per-draw constants come from the frame chain
+  (0x0079…-0x0089…).
 - **GS state**: per material through DIRECT A+D packets in the chain (TEX0/TEX1/CLAMP/ALPHA/TEST/FRAME/ZBUF, the values
   framedbg records per draw); textures are uploaded through TextureManager.cpp (fn_26bcf8, fn_268ae0, fn_268ec0,
   fn_26bb00, fn_26c888, fn_269170: sceVif1PkOpenDirectCode + IMAGE transfers in the same chain).
 
 Not determined statically (needs the run in §7): the exact vertex formats of each mesh class (the UNPACK formats are
-data-driven), and which EE function wrote which framedbg draw group (the runtime attributes all of them to 0x241c88).
+data-driven; **answered in §7.1, R2**: world V4-16, characters V4-32 float, colours V4-8 masked), and which EE function
+wrote which framedbg draw group (the runtime attributes all of them to 0x241c88; still R1).
 
 ## 2. The interception point
 
@@ -199,7 +210,7 @@ consumes records taken at a seam; nothing upstream changes.
 | Data | the source: model, segment record, bone palette, lights, material, texture id | what VU1 would read: the same data after VIF packing, in VU1 memory layout, split into VU1-sized batches |
 | Decomp needed | yes: §2.2 (the packers and the per-instance callers) | none |
 | Batching | one draw per mesh segment (or per mesh) | one draw per VU1 batch; merge consecutive batches with identical constants and GS state |
-| GPU vertex buffers | static per mesh, keyed by the model pointer | keyed by the UNPACK's DMA source address + length (static mesh packets are DMA'd by reference, §1.6) |
+| GPU vertex buffers | static per mesh, keyed by the model pointer | keyed by the UNPACK's DMA source address + length (static mesh packets are DMA'd by reference, §1.6; **confirmed** for every vertex UNPACK, §7.1) |
 | What the WGSL has to reproduce | the VU1 program's math (§3) on the source data | the same, on the same inputs VU1 gets: the closest possible match |
 | Risk | the decomp must be bit-exact for the chain it still writes (the existing difftest + gate handle that) | none on game state; the VIF unpack shadow must match the real VIF (it already exists) |
 
@@ -209,6 +220,11 @@ same record and compare), and removes all three costs (GIF front end, GS raster,
 Seam V cannot do: whole-mesh static vertex buffers instead of per-batch uploads, per-pixel lighting from the source
 normals and bone palette (the remaster's "modern" plan, `mksm/notes/remaster.md` lines 118-134), and dropping the VIF
 shadow. The decomp below is the path to Seam E, and the per-instance functions are where it pays most.
+
+The Seam V record capture exists (stage 0): `PS2_TRACE_SEAMV=file` (`runtime/src/seamv.cpp`, format and sizes in
+§7.1) writes one record per VU1 program start; `remaster/seamv.py` reads it. Two things the runs added to the record's
+definition: a world batch is not complete at its MSCNT (its vertex colours arrive with the next VIF codes, §7.1 R2),
+and the GS state a batch draws with is the path-2/3 A+D state plus the A+D carried inside the batch itself.
 
 ### 2.2 Functions to decompile for Seam E, leaves first
 
@@ -297,7 +313,9 @@ the translated files).
   (`recomp/vurecomp.cpp:610-620`).
 - **Every MSCAL'd program is a short init** (load constants into VF registers, end); the MSCNT that follows runs the
   per-batch **body** (at the init's E-bit delay slot + 8), which ends in XGKICK + E; the next MSCNT lands on a
-  one-instruction stub `B body`. So one draw = one init + N body runs, one per VIF batch.
+  one-instruction stub `B body`. So one draw = one init + N body runs, one per VIF batch. **Confirmed (§7.1):** every
+  init start carries no batch (0 qwords at TOP), every body start does; the world and sky draws start with MSCAL, the
+  character and post-FX draws with MSCALF. goro runs 836 program starts per frame, academy 1,767.
 
 | Hash | Init bin | Body bin (stub) | Image | Category |
 |---|---|---|---|---|
@@ -323,7 +341,10 @@ subroutine (§3.3).
 
 Constants are EE-uploaded at absolute addresses 0-45 (`UNPACK V4-32` at 0x20-0x2d and 0x4/0x6 in §1.6 are these);
 the batch input is at TOP (`XTOP`, the VIF double buffer from BASE/OFFSET); the output is built in the same half at
-TOP+0x66/0x96/0xC3/0xC4/0xFC/0x12C depending on the program.
+TOP+0x66/0x96/0xC3/0xC4/0xFC/0x12C depending on the program. **Corrected (§7.1, R2):** the world programs use BASE
+0x18 / OFFSET 0x1f4 (buffers at 0x18 and 0x20c, 500 qwords each), so their constants are mem[0..23] only and
+mem[24..45] is the start of buffer 0; the character programs use BASE 0x2e / OFFSET 0x1e9 (buffers 0x2e and 0x217),
+constants mem[0..45]. Values seen are in §7.1 (R3).
 
 | mem | World (image C) | Characters (images A/B) |
 |---|---|---|
@@ -353,9 +374,20 @@ Skeleton (e.g. @0BA8 at `vu1_000.cpp:275`):
 - **Input at TOP**: a GIF tag whose NLOOP N (`ILW.x & 0x7fff`) is copied with its N A+D qwords verbatim to the output
   (@0BB0-0C20): per-batch GS state rides inside the VU1 batch. Then the vertex GIF tag (NLOOP n, copied), then n × 2
   qwords: Q0 = int32 x, y, z (`ITOF0` @0C68), bit 15 of Q0.w = the strip-break (ADC) flag; Q1 = s, t, q in 20.12
-  fixed point (`ITOF12` @0C90).
+  fixed point (`ITOF12` @0C90). **Confirmed (§7.1, R2):** the header (tag, N = 2 A+D: TEX0_1 and MIPTBP1_1, the
+  vertex tag) is one `UNPACK V4-32` of 4 qwords at TOP, the vertices one `UNPACK V4-16` (signed) at TOP+4: positions
+  and s, t, q are int16 on the bus (q = 0x1000 = 1.0), Q0.w = 0x7fff (draw) or 0xffff (ADC). Strips are short:
+  567ce7d8/002c80ed draw 0.58-0.65 triangles per vertex (runs of 1-4 triangles between restarts), the sky,
+  5f818a97 and 50bda0e2 0.8-0.9. In all six world programs the vertex tag is PACKED, NREG 3 [ST RGBAQ XYZF2], PRE 0:
+  **XYZF2** (PRIM comes from a path-2 A+D).
 - **Output at TOP+0xC4**: n × 3 PACKED qwords STQ, RGBA, XYZF. The VU never writes RGBA: the EE streams vertex colours
   into that slot with a masked VIF UNPACK. @3778 and @3288 read it back (`LQ.xyz vf17,1(vi2)`, `vu1_000.cpp:1004`).
+  **Corrected (§7.1, R2):** the colour UNPACK (V4-8, mask 0xffffff00, CL 3/WL 1, absolute address TOP+0xC9 for N = 2)
+  is the VIF code **after** the batch's MSCNT, and @3778/@3288 do write the slot (the lit RGB, `FTOI0` + `SQ.xyz`
+  @3A88-3AA8). In this runtime VU1 runs to completion at the MSCNT, so those two bodies light the stale colours left
+  in the buffer, and the colour UNPACK then overwrites the lit RGB in the held XGKICK packet (`vu::vif_wrote`): the GS
+  gets the raw vertex colours and **the point light is lost**. On hardware the VIF writes the colours while the body
+  runs, ahead of its reads, so the light is applied (inferred from the stream order and the code; not measured).
 - **Transform**: one 4×4 (P·position), `DIV Q = 1/w` (@0C98, `vu1_000.cpp:307`), `MULq`, `FTOI4.xyzw` (@0D40,
   `vu1_000.cpp:328`) → 12.4 X/Y and integer Z. Texturing is perspective-correct: STQ = (s, t, q)·(1/w).
 - **Fog**: F = clamp(m4.w + m5.w·(1/w), m4.x, m4.y) (@0CC8-0D20, `vu1_000.cpp:321-324`); `FTOI4` puts F·16 into
@@ -381,11 +413,17 @@ Skeleton (e.g. @0BA8 at `vu1_000.cpp:275`):
 **Point light** (@3778, @3288): d² = |p − m6.xyz|² (`ESADD`), rgb' = rgb + (m7.xyz − rgb)·m7.w·max(1 + m6.w·d², 0),
 `FTOI0`-truncated into the RGBA slot, alpha untouched (@3880-39C0, @3A88, `vu1_000.cpp:1004-1044,1070`). Per vertex,
 quadratic falloff, model space. There is no directional lighting in the world: its shading is baked into the vertex
-colours.
+colours. In goro it is on (m7 = (220, 175, 0), strength 1.0; k = −4.9e-7, radius ≈ 1,425 units) but invisible today,
+see the correction above: the approved look has no point light. Whether the native path reproduces today's output
+or the hardware's is Cem's call (a look change); either way Seam V must take the colours from the UNPACK that follows
+the batch, which the record carries (§7.1).
 
 ### 3.4 Character family (images A and B)
 
-Input: in[0] unused, in[1] one A+D qword, in[2] the vertex GIF tag (reused by every pass), vertices from in[3]:
+Input: in[0] unused, in[1] one A+D qword, in[2] the vertex GIF tag (reused by every pass), vertices from in[3].
+**Confirmed (§7.1, R2):** in[0] is a GIF tag NLOOP 1 [A+D] that the program does not use (its header is mem[33]),
+in[1] is TEX0_1 (the batch's skin texture), in[2] is PACKED NREG 3 [ST RGBAQ XYZF2] (**XYZF2**, as in the world). The
+whole batch, in[0] to the last vertex, is one `UNPACK V4-32` straight from the model in RAM (floats, static source):
 
 | Variant | Stride | Layout | Strip break (ADC) |
 |---|---|---|---|
@@ -402,26 +440,45 @@ Input: in[0] unused, in[1] one A+D qword, in[2] the vertex GIF tag (reused by ev
   against 0x4B0000FF = 2²³ + 255 (@0320, `vu1_001.cpp:1133`). The colour goes into RGBAQ as raw float bits and the GS
   keeps the low 8 bits (`gs.cpp` `write_packed` case 1): this works only if the ambient carries a 2²³ bias (inference;
   the memory dump in §7 confirms). No specular, no lower clamp. **STQ = (s, t, 1.0)** (`MR32.z vf23,vf0` @0180):
-  **characters are textured affinely** (Q = 1).
+  **characters are textured affinely** (Q = 1). **Confirmed (§7.1, R3):** m11 = 2²³ + (21, 23, 16) in goro, and
+  the pass-2/3 colours mem[32], mem[44] carry the same bias; light colours m8-10 are in 0-255 units, directions unit
+  vectors. m11.w = 0, so the vertex alpha is 0: the base pass takes its alpha from the texture (in[1] TEX0: TFX
+  HIGHLIGHT2, TCC 1; Af = 0 adds nothing to the colour).
 - The world position and normal are written back into the input slots (@0188, @01B8) for the next passes.
 - **Pass 2 (highlight)**: XGKICK @0588 (pass 1 @0448). UV = mem[28..31].xy·(world normal, 1): an environment lookup
-  from the normal (@04E0-0550); RGBA = mem[32]; XYZ is pass 1's, copied (@0278/0280).
+  from the normal (@04E0-0550); RGBA = mem[32]; XYZ is pass 1's, copied (@0278/0280). **Confirmed (§7.1, R3):** u, v =
+  0.5 + 0.5·(n·a) with unit axes a (a sphere map from the normal); its TEX0 (mem[39]) is MODULATE.
 - **Pass 3 (shading)**: XGKICK @06C0, reuses pass 1's buffer and XYZ. UV = mem[24..27].xy·(world position, 1): a planar
-  projected texture (@0660-06B0, `vu1_001.cpp:1239-1252`); RGBA = mem[44].
+  projected texture (@0660-06B0, `vu1_001.cpp:1239-1252`); RGBA = mem[44]. **Confirmed (§7.1, R3):** u = 2.79e-5·x +
+  0.108, v = −1.30e-4·z + 0.610 (world x and z: a projection onto the ground plane); its TEX0 (mem[42]) is HIGHLIGHT,
+  so As = At + 48 in goro (input to R5).
+- **Pass A+D (§7.1, R3)**: mem[33] = GIF tag NLOOP 4 [A+D]; pass 1 = mem[34] ALPHA, mem[35] TEST, in[1] TEX0,
+  mem[45] FBA = 0; pass 2 = mem[37] ALPHA, mem[38] TEST, mem[39] TEX0, mem[45]; pass 3 = mem[40] ALPHA, mem[41] TEST,
+  mem[42] TEX0, mem[43] FBA = 1. mem[36] is not used.
 - framedbg pass blends: 0121 / 0211 / third pass 1202 (multiply) in forest, goro, raiden, or **2221 with TEST 0x50001
   (ATST = NEVER) elsewhere: a pass that writes nothing, 94,026 primitives across the 12 scenes**. A native renderer
-  skips it outright.
+  skips it outright. **Confirmed (§7.1):** goro mem[34]/[37]/[40] = ALPHA 0x64 (0121, FIX 0x80), 0x58 (0211), 0x89
+  (1202), TEST 0x5004b (alpha ≥ 4, Z GEQUAL) for passes 1-2 and 0x50000 for pass 3; academy pass 3 = ALPHA 0x6a (2221)
+  with TEST 0x50001.
 - **Set B** (image B: koop, academy, nether) is pass 1 only, with the same lighting; the lights are pre-rotated into
-  model space and MVP premultiplied in the init (`vu1_001.cpp:349-369`).
+  model space and MVP premultiplied in the init (`vu1_001.cpp:349-369`). **Seen (§7.1):** academy draws its player
+  with set A and the other fighters with set B; set B there has one light (lights 2 and 3 black) and its pass-1 A+D is
+  ALPHA 0x44 (0101) with TEST 0x733cb (alpha ≥ 0x3c, AFAIL RGB_ONLY, Z GREATER): the "0x3C RGB_ONLY pass" of §5.2.
 - Capacity: about 48-49 vertices per batch.
 
 ### 3.5 post_fx (image D, @0000, 50 instructions)
 
-No vertex stream: a grid of sprites over the screen. mem[8].x = rows, .y = columns (`vu1_000.cpp:2177`); mem[0..3]
+No vertex stream: a grid of sprites over the screen. mem[8].x = rows, .y = columns (`vu1_000.cpp:2177`; **corrected
+(§7.1): .x = 20 tiles across, .y = 7 down**); mem[0..3]
 two corner pairs; mem[4..7] row/column steps; the GIF tag at mem[9] is copied to mem[15]. Each sprite is a 5-qword
 packet (tag + 4 × `FTOI4`) ping-ponged between mem[9..13] and mem[15..19], **one XGKICK per sprite** (@00E0, @0130,
 `vu1_000.cpp:2200,2211`). framedbg shows 140 sprites over 640×224: a 20 × 7 grid of 32 × 32 tiles. No colour is set;
 RGBAQ comes from the GS state before it. The register order in the tag is not known statically (§7, run R2).
+**Answered (§7.1, R2):** mem[9] = PACKED, NLOOP 2, NREG 2, EOP, PRE 0, REGS [NOP XYZ2] (the first qword holds a UV
+the GS drops: these sprites are untextured, PRIM 0x246 = sprite, ABE, context 2) or [UV XYZ2] (textured) in other
+grids of the same program: goro runs 32 grids per frame, 1,060 [NOP XYZ2] and 1,120 [UV XYZ2] sprites. mem[0..1]
+hold the UV corners (0,0)-(32,32), mem[2..3] the XY corners (1728,1936)-(1760,1968) at Z = 2³¹, mem[4..7] the steps
+(32, 0) and (0, 32).
 
 ### 3.6 Which can be one shader
 
@@ -683,9 +740,13 @@ emulated path as the reference.
   (0 px, §4.1.3; GS memory is not hashed) behind its own switch.
 - The record capture for Seam V (§2.1): on the VU thread at MSCAL/MSCALF/MSCNT (`vif.cpp:283-287`), write (image key,
   entry, VU1 mem[0..45], the batch at TOP, BASE/OFFSET/TOPS, the A+D state) per batch to a file. Run R2/R3 (§7).
+  **Done** (`PS2_TRACE_SEAMV`, `remaster/seamv.py`; R2, R3, R4 and R8 run: §7.1). The record also carries each
+  UNPACK's DMA source and the packed data of the post-MSCNT colour UNPACKs.
 - An offline harness (`remaster/natrec.py` + a headless wgpu test binary) that replays records through the WGSL
   shaders and through `vu_micro.cpp` and compares per vertex: XYZ (12.4), Z, Q, STQ, RGBA, fog, ADC. This is the
-  oracle for §3's "must be exact" list, before anything is drawn.
+  oracle for §3's "must be exact" list, before anything is drawn. The records feed it directly: `PS2_TRACE_SEAMV_REGS=1`
+  adds the VU1 registers at every program start, so any body can be replayed on its own. A world batch's colours are
+  in the next record (§7.1, R2).
 - **The per-category diff tool**: `remaster/natdiff.sh <scene> <category>` runs the scene twice to the capture frame
   (state from `remaster/scenes.tsv`): (a) emulated, with every other category skipped by group (the framedbg isolation
   mechanism, `PS2_DRAW_SKIP`), and (b) native for that category only on a cleared target; then `natdiff.py` compares
@@ -811,7 +872,9 @@ registers, poll loops, bc0/bc2 waits, cfc2/ctc2 of VPU_STAT/FBRST).
   never 1).
 
 So **skipping VU1 execution and the GS raster is free for EE state**, provided the EE side keeps doing exactly what
-it does now. The answer to "does VU1 time affect EE timing" is no: nothing reads VU1 cycles.
+it does now. The answer to "does VU1 time affect EE timing" is no: nothing reads VU1 cycles. **Confirmed (§7.1, R8 and
+R4):** with VU1 and GIF paths 1/2 never run, every section the EE can see is equal on every frame of every scene, in
+both thread layouts and under `PS2_JITTER`, and the census counts none of the channels above.
 
 ### 6.2 Where the hash does change: render-internal sections
 
@@ -837,7 +900,15 @@ native gate is either a `PS2_HASH_SPLIT=1` comparison of every section except `v
 golden computed from emulated runs with the same exclusion. Lockstep: `hash_part` part 24 keeps VU0 and drops VU1; this
 applies to all peers (a build-id change); `mksm/notes/web-lockstep.md:56` changes with it. The existing proof that
 the VU JIT equals the AOT code (`native-lockstep.md:127`) relies on VU1 being in the lockstep hash: keep it as the
-full-hash debug mode.
+full-hash debug mode. `PS2_HASH_SPLIT=2` already prints the two halves of `vu` (`vu0x`, `vu1x`) next to the split
+sections, outside the frame hash, so the gate can compare `vu0x` today without changing any golden. R8 (§7.1) also
+shows which way `vifvu` goes: equal in the single-threaded layout (it hashes the EE-side VIF1 there), different in the
+threaded one once the game's VIF1 registers move away from the values seeded at load.
+
+A latent race seen on the way: `MSKPATH3` (VIF code 0x06) calls `gif::set_path3_masked` from both the EE-side shadow
+and the VU1 thread, so a lagging VU1 thread could rewrite GIF_STAT.M3P behind the EE. MK:SM issues it once, during
+boot, and never again (VIF1 code counts of every census run, §7.1), so it cannot bite in play; a native consumer should
+still leave GIF_STAT to the shadow alone.
 
 ### 6.3 The channels by which the EE observes the render path
 
@@ -885,7 +956,8 @@ full-hash debug mode.
 **Tripwires in native mode** (log once, mark the run invalid or fall back to emulation): `count_vu` (EE access to VU
 memory), VIF1 FIFO reads (`hw.cpp:273`), D1 from-device (`dmac.cpp:177`), `gs::signal` (`gs.cpp:826`), an INTC 5
 raise, CMSAR1 (`cop.cpp:48`), any D1 that pauses, a GS download, a frame that does not start with the full-screen
-clear.
+clear. All but the last now have a `PS2_CENSUS` counter (`vu1_mem_*`, `gs_download_*`, `gs_signal_path1..3`,
+`gs_finish`, `gs_label`, `intc5_vif1`, `d1_pause`, `cmsar1`); native mode can turn them into tripwires as they are.
 
 ### 6.5 Lockstep, savestates, web
 
@@ -904,8 +976,8 @@ clear.
 
 ## 7. Runs needed on AWS
 
-None of these were run (laptop rules). Each says what it settles. "Light" runs only read a log afterwards; all of them
-need a build on the AWS box (`decomp/README.md`, "Commands for the AWS box").
+Each says what it settles. "Light" runs only read a log afterwards; all of them need a build on the AWS box
+(`decomp/README.md`, "Commands for the AWS box"). **R2, R3, R4 and R8 are done (§7.1)**; the others have not been run.
 
 | Run | What | Why |
 |---|---|---|
@@ -922,6 +994,98 @@ need a build on the AWS box (`decomp/README.md`, "Commands for the AWS box").
 | **R11 mixed lockstep** | native vs emulated peer (desktop, then browser), 600+ frames, new `hash_part`; a drop-in from a native host to an emulated guest | `PS2_NATIVE` as local-only (§6.5) |
 | **R12 perf baseline** | `PS2_SCALE=<1, 2x4, 3x6> remaster/perf.sh` for all 12 scenes in one recorded power profile; per-thread `perf stat` per scene; `perf record -g` of the render thread on a kept binary; three 3x6 captures per scene | the before numbers for every stage (§5.1 mixes profiles and dates) |
 | R13 pacing (optional) | log T0/T1 and the branch taken in fn_274688 over one scene | documents that pacing depends only on EE cycles; sizes the T1 gate gap |
+| R14 colour timing (new, §7.1 R2) | let a body that reads the RGBA slot (@3778, @3288) see the colour UNPACK that follows its MSCNT (run those bodies at the next VIF sync, or apply the UNPACK first), then compare goro's world colours with today's | whether restoring the point light matches hardware; a look change for Cem to approve, not a determinism question (no EE-visible effect, R8) |
 
 Order: R8 and R4 first (they decide whether the plan's premise holds), then R2/R3/R1 (they feed the record format),
 then R12 (baseline), R5-R7 as the categories come up, R9-R11 before stage 6.
+
+### 7.1 Results of the stage-0 runs (2026-10-19)
+
+All on the AWS box w5 (32 vCPU), soft GS, commits `d1ad43e`-`658ba0e`; with every switch off, the final build matches
+`remaster/golden.json` in all 12 scenes (`remaster/statecheck.sh`). Switches and tools (all default off):
+`PS2_VU1_NULL=1` (VIF1 walked as the EE-side shadow only; VU1 and GIF paths 1/2 never run), `PS2_HASH_SPLIT=2` (adds
+`vu0x`/`vu1x`), the new `PS2_CENSUS` counters, `PS2_TRACE_SEAMV` (`runtime/src/seamv.cpp`), and the scripts
+`remaster/nullsink.sh` + `nullsink.py`, `remaster/census.sh`, `remaster/seamv.py`. Outputs (not committed):
+`remaster-data/aws/w5/{nat-r8,nat-r4,nat-rec,nat-rec2}`.
+
+**R8, null-sink equivalence: the premise holds.** Every scene from its state to capture + 600 (goro 1,000, pause 900
+frames), hashed every frame, in four layouts; jitter on goro, foundry and koop:
+
+| Comparison | Scenes | Frames | Sections that differ (of 28) |
+|---|---|---|---|
+| single-threaded, null vs normal (`stn`/`st`) | 12 | 9,900 | `vu`, only its VU1 half (`vu1x`) |
+| `PS2_THREADS=1`, null vs normal (`thn`/`th`) | 12 | 9,900 | `vu` (`vu1x`), `vifvu` |
+| `thn` vs `st` | 12 | 9,900 | `vu` (`vu1x`), `vifvu` |
+| `th` vs `st` (thread layout alone) | 12 | 9,900 | none |
+| `PS2_JITTER=7`: `thj` vs `st`, `thnj` vs `thn` | 3 | 2,600 each | none |
+
+The other 26 sections (eecpu, eeram, spr, sched, eekern, eehw, dmac, vif, ipu, gspriv, gif and the IOP, SPU2, SIF and
+drive sections) and `vu0x` are equal on every frame. Why the two differ: `vu1x` because VU1 never runs and its MPGs are
+skipped, from the first frame that uses VU1 (at once in gameplay, charsel 3168, fmv 4531; the menu run never uses it and
+is equal in all 28); `vifvu`, threaded only, because the VU-side VIF1 never runs and keeps the copy seeded at load,
+from the first frame whose VIF1 registers move away from it (goro 7822, foundry 14028, kahn 10096, koop 6865, raiden
+6030, fmv 4531; never in the other six). The null frame at capture shows only the path-3 HUD; the normal single-threaded
+run matches `golden.json` (goro 8000: db151828af4addc7).
+
+**R4, coverage census: all zero.** `PS2_CENSUS=1 PS2_NO_VU_THREAD=1 PS2_TRACE_MC=1` (`remaster/census.sh`):
+
+| Segment | Frames | VU1 starts (MSCAL / MSCALF / MSCNT) | Memory-card writes |
+|---|---|---|---|
+| boot (no state, story inputs) | 0-2300 | 0 / 6,081 / 0 | 0 |
+| story (no state, story inputs) | 0-14600 | 773,935 / 1,508,742 / 5,574,742 | 0 |
+| co-op from boot (koop inputs) | 0-6900 | 279,398 / 579,964 / 1,961,021 | 0 |
+| menu, charsel | 2200-4000, 2500-4000 | 0 / 3,868 / 0; 0 / 2,668 / 0 | 0 |
+| fmv (the movie and on) | 4000-6100 | 79,986 / 189,557 / 626,329 | 0 |
+| raiden, goro | 6000-7700, 7600-10600 | 184,333 / 281,982 / 1,092,417; 256,403 / 457,082 / 1,815,914 | 0 |
+| pause (start at 7700) | 7600-8600 | 69,229 / 128,549 / 495,909 | 0 |
+| koop | 6800-8800 | 165,189 / 528,234 / 1,568,148 | 0 |
+| academy, forest, nether, kahn, foundry | state + 2200 each | 365,200 / 717,200 / 2,805,000 in academy, similar elsewhere | 0 |
+| save (`menu-f1600.state`, the options save of `mksm/notes/finishers-options.md` §O5) | 1600-4800 | (menus) | 4,130 |
+
+51,100 frames in all. In every segment these are 0: `vu1_mem_read/write`, `vu1_code_read/write`, `vu0_mem_read`,
+every `gs_download_*` (DMA, VIF1 FIFO, qwords, cached, wait), `gs_signal` on paths 1, 2 and 3, `gs_finish`,
+`gs_label`, `intc5_vif1`, `d1_pause`, `cmsar1`. The only counters above 0 are EE-side: `gs_csr_read` (the vsync FIELD
+poll in fn_274688 at 0x27477C/0x274790, billions of reads), one `gs_priv_read` and one `rtc_read` at boot. So nothing
+the EE waits on comes from VU1, path 1 or the GS raster. Not covered: a finisher (no input script reaches one; the
+scripted attempts in `finishers-options.md` fired none) and the ending's save prompt.
+
+**R2 and R3: one-frame traces and Seam V records.** `PS2_TRACE_GSFRAME` at goro 7999 and academy 9999, and records of
+goro 7998-8001 and academy 9998-10001 (`nat-rec`, `nat-rec2`). What they settle:
+
+- **UNPACK formats.** Only four in a whole frame, all STMOD 0, CL/WL 4/4 except the colours, no V2/V3/V4-5, no USN:
+  `V4-32 +TOPS` (world batch headers: tag, 2 A+D, vertex tag; character batches whole), `V4-32` absolute (constants),
+  `V4-16 +TOPS` signed (world vertices: x, y, z, ADC word / s, t, q in 4.12), `V4-8` masked 0xffffff00, CL 3/WL 1,
+  absolute (world vertex colours into the RGBA slots). VIF1 codes in use: NOP, STCYCL, OFFSET, BASE, FLUSHE, FLUSH,
+  FLUSHA, MSCAL, MSCALF, MSCNT, STMASK, STROW, MPG, DIRECT and those UNPACKs; ITOP, STMOD and MSKPATH3 once each at
+  boot and never again; no MARK, STCOL, DIRECTHL, no i-bit (R4).
+- **Sources.** Every vertex and colour UNPACK reads static data (world meshes and the fighters' models), the same
+  addresses frame after frame (97-100 % of them across consecutive frames; the rest is animation/visibility); the
+  constants come from the frame chain. Seam V can key GPU vertex buffers by source address.
+- **XYZF2** in every 3D vertex tag (PACKED, NREG 3, [ST RGBAQ XYZF2], PRE 0); XYZ2 only in the post-FX sprite tags.
+- **BASE/OFFSET**: world 0x18/0x1f4 (buffers 0x18, 0x20c), characters 0x2e/0x1e9 (0x2e, 0x217), post FX whichever was
+  set last. TOP alternates per program start.
+- **The colour UNPACK lands after MSCNT**, in the output area of the batch that has just started (TOP+0xC9, every third
+  qword). For the four bodies that never read the slot this is harmless (the held XGKICK picks the colours up through
+  `vu::vif_wrote`); for @3778 (002c80ed) and @3288 (50bda0e2) it means the point light is computed from stale colours
+  and then overwritten, so **today's output has no point light** where hardware would have one (§3.3; R14 checks it).
+- **mem[34..45] and in[1]** per pass: §3.4 (pass A+D); the blends and tests match framedbg.
+- **post FX tag**: §3.5.
+- **R3 values** (goro unless said): world P = mem[0..3] (P·M per instance; the level geometry shares the characters'
+  rotation rows); fog m4 = (min 171, max 255, -, A −18.7), m5.w = B 1.31e6 (academy 237/255, −61.3, 3.98e6); point
+  light m6 = position, k −4.9e-7, m7 = (220, 175, 0), strength 1.0; hook: m16.w = 0x61c (@30E0, the UV scroll) with
+  m17 = (0.087, 0) on 50bda0e2, 0 elsewhere. **The CLIP volume** (mem[12..15]) is |x − 2048| ≤ 2047.5 and
+  |y − 2048| ≤ 860 GS pixels with the near plane at w = 100 (z' = w − 200): the whole 4096-pixel GS range across,
+  about ±860 down; Z = 2.1475e9/w − 20.5. Characters: 2²³ bias on m11, m32, m44; lights, projectors and pass
+  registers in §3.4. Set B in academy: one light. mem[7] (characters) = (−1, 0, 0, 1) or (0, 0, 2526, 1): role not
+  known.
+
+**The Seam V record** (`PS2_TRACE_SEAMV=file`, `PS2_TRACE_SEAMV_FRAMES=first,count`, `_MB` per-frame cap, default 32;
+`_REGS=1` adds the VU1 registers). Little-endian records `u32 type, u32 length`: `F`/`E` frame start and end (counts,
+dropped batches), `K` each code image once (FNV-1a-64 key + 16 KB), `C` mem[0..45] when it changes, `G` the GS
+registers last set through paths 2/3 (PRIM, TEX0/1/2, CLAMP, XYOFFSET, PRMODE(CONT), TEXCLUT, SCANMSK, MIPTBP1/2, TEXA,
+FOGCOL, SCISSOR, ALPHA, DIMX, DTHE, COLCLAMP, TEST, PABE, FBA, FRAME, ZBUF) when they change, `B` one per program start
+(52-byte header: kind, entry, TOP/ITOP/BASE/OFFSET/TOPS, DBF, image key, the 8-hex hash of the entry and of the draw's
+MSCAL, the C and G records in force; then one 24-byte entry per UNPACK since the previous start with its DMA source and
+TOPS; the packed data of absolute UNPACKs above mem[45], i.e. the previous batch's colours; then the batch qwords at
+TOP), `R` the VU1 registers. Sizes: goro 836 program starts and 1.6 MB per frame (2.1 MB with `_REGS`), academy 1,767
+and 2.4 MB; about 2 KB per program start. A consumer must attach the colours in record k+1 to the batch of record k.
