@@ -1,6 +1,6 @@
 # Native renderer for MK:SM: design
 
-Status: sections 1-3 written; the rest is in progress (sections marked TODO are not filled yet).
+Status: sections 1-4 written; the rest is in progress (sections marked TODO are not filled yet).
 
 Scope: replace the VIF1 → VU1 → GIF → GS emulation path for the game's 3D with native WebGPU draw calls, keeping
 the approved look and leaving game state bit-identical. Design only; no code is changed by this document.
@@ -427,7 +427,196 @@ a pass family so depth ties stay ties.
 
 ## 4. GS features on WebGPU, category by category
 
-TODO
+Census of the classified frame (capture − 1) of the 12 framedbg scenes with the same grouping and first-match rules
+as `remaster/classify.py`; the primitive counts match `mksm/notes/remaster.md:120-134`. Reproduce with
+`python3 -I decomp/notes/tools/gs_features.py <framedbg dir> remaster/categories.json` (`gs_chain.py` lists the
+ordered draws with their targets, `gs_rtt.py` the render-to-texture links, `gs_valpha.py` the vertex-alpha census of an
+`PS2_RTRACE` log). Short names: gs.wgsl = `runtime/src/gs/gpu/gs.wgsl`, gpu.cpp = `runtime/src/gs/gpu/gpu.cpp`,
+D = `remaster-data`.
+
+### 4.1 Facts that shape the design (and corrections to the starting brief)
+
+1. **The state space is small.** 11 blend equations (ABCD); with FIX they make 29 (ABCD, FIX) pairs in the classified
+   frame, 38 over the 3 dumped frames because FIX fades frame to frame ("about 41" overcounted). No REGION_CLAMP or
+   REGION_REPEAT, no lines, no points. CLUT is always CT32, CSM1, CSA 0, CLD 1. COLCLAMP = 1 and PABE = 0 in every
+   traced primitive (academy 36,953, koop 22,129: `D/speckle/*/run.log`). DTHE is stored (`gs.cpp:775`) and never read
+   by either renderer, AA1 is not emulated: the approved look has no dithering.
+2. **Every gameplay frame has the same shape** (all 8 gameplay scenes):
+
+   | Step | Draws | Size |
+   |---|---|---|
+   | 1 | full-screen clear sprite (draw 0), writes Z | 1 |
+   | 2 | one 3D run on FB 0x46 (or 0) + Z 0x8c | 19.6k-60.6k prims, ≥ 96 % of the frame's primitives |
+   | 3 | shadow prep: Z → 0x12c as Z24 (FBW 5) → re-read as CT32 (TBW 10) → 0x14c → Z24 subtract | small |
+   | 4 | blob shadow, effects | 18-207 prims |
+   | 5 | glow on 0x8c (aliases Z) | 1,020 prims |
+   | 6 | upsample onto the frame, HUD | 424-570 prims |
+
+   **No draw of the 3D run samples a render target.** The 3D run is a clean, self-contained block to move natively.
+3. **The shadow-prep chain is dead.** Leaving out its groups (b6e0c33b, 1a642d6a, a8925176) or the alpha-only sprite
+   f07a1f7a changes **0 pixels** in every scene with an isolation image (`D/framedbg/<scene>/iso/<group>.png` vs
+   `frame.png`); nothing reads 0x14c in any frame.
+4. **The FBMSK 0x7f000000 alpha marking is not consumed** (inference from data flow): frame alpha is reset to 0 four
+   times per frame by full-screen `2221` NEVER/FB_ONLY sprites (560 such primitives in the traces, all Av = 0), DATE in
+   the HUD only sees alpha written after the last reset, and the display has no PMODE alpha merge (`gs.cpp:1077-1093`).
+5. **A quarter of Foundry's primitives are GS no-ops**: ATST NEVER + AFAIL KEEP, 15,890 of 62,710 (groups 9eacbd05 on
+   672fef39 and 9a62bf49 on ad5f3626: the dead third character pass of §3.4). This is the "largest group changes no
+   pixel" of `remaster.md:101-102`; academy, kahn and nether have 4.9-5.6k each. Today they are parsed, set up,
+   binned and walked (no early-out in `gpu::draw`; the raster returns at `gs.wgsl:1038-1040`). **Dropping them is
+   exact in any renderer, including today's.**
+6. **GS memory is not in the state hash** (`runtime/src/system.cpp:472-475`). Savestates do read the full scaled VRAM
+   (`gpu.cpp:2004-2032`), so a native path must write back before a save.
+
+### 4.2 Census per category
+
+Constant unless a row says otherwise: FRAME CT32 FBW 10 (640), FBP 0x46/0 (double-buffered); ZBUF Z24 at 0x8c;
+SCISSOR 0-639 × 0-223; TEXA ta0 0x80, aem 0; MTBA 0; per-scene FOGCOL.
+
+| Category (prims, 12 scenes) | PRIM | Blend (ABCD, FIX) | TEST | Z | FBMSK / FBA | Texture | Filter / wrap | Fog |
+|---|---|---|---|---|---|---|---|---|
+| character (92,996) | tristrip IIP | 0121 F128 (= Cs) 52.8k; **2221 + NEVER/KEEP no-op 31.3k**; 0101 5.9k; 0211 3.0k (foundry) | GEQUAL 0x4 KEEP; NEVER KEEP; GEQUAL 0x3C RGB_ONLY (academy, nether) | GEQUAL write (GREATER for the 0x3C pass) | 0 / fba0 (fba1 koop) | T8/T4 + CT32, HIGHLIGHT2 (base), MODULATE; 64²-256² | bilinear, no mip / CLAMP | no |
+| character_highlight (44,496) | tristrip | 0211 (Cs·Ad + Cd) 42.4k; 0121 F128 2.1k | GEQUAL 0x4 KEEP | GEQUAL write | 0 / fba0 | T8 MODULATE 128² | bilinear / CLAMP | no |
+| character_shading (14,022) | tristrip | 1202 (Cd·As) | off | GEQUAL write | 0 / fba1 | T4 512×256 (goro, raiden), T8 256² (forest), **HIGHLIGHT** (As = At + Av) | bilinear / CLAMP | no |
+| world (72,078) | tristrip (3 trifans in koop) | 0101 ~69k; 0201 638; 0121 F114/117 132 (raiden); 2221 + FBMSK 0x7f 6 (koop) | **GEQUAL 0x80 RGB_ONLY**; GEQUAL 0x5 KEEP; NEVER RGB_ONLY (untextured) | **GREATER** write | 0 / **fba1** | T4/T8 MODULATE TCC1; 32²-512² | **trilinear** (L_MIP_L, MXL 2, LCM 0, K −35.94…−10.94) or bilinear; REPEAT/CLAMP | mostly |
+| world_alpha (18,361) | tristrip | 0101; 0201 49 | GEQUAL 0x80 RGB_ONLY | GREATER write | 0 / fba1 | T4/T8 MODULATE ≤ 512² | trilinear | yes |
+| sky (3,127) | tristrip | 0101; 0201 228 | GEQUAL 0x80 RGB_ONLY | GREATER, **ZMSK** on 1,382 prims | 0 / fba1 | T4/T8 ≤ 1024×256 | bilinear or trilinear (K −12.5) | no |
+| post_fx (19,120) | sprite | 0221 F18-23 (18 glow taps); 0222 F128/32/42/45 (downsample, self-multiply); 2021 F0/21/27/**255** (clear by blend, tint subtract); 0221 F0/10/13 (tint add); 2221 (alpha only); 0221 F32 (upsample); 0122 / 0222 Z24 (shadow prep) | off; NEVER FB_ONLY | ALWAYS, ZMSK | 0 / fba0; targets 0x8c (= Z), 0x12c **Z24 FBW 5**, 0x14c CT32 **and** Z24 | CT32 or **Z24** targets read as 1024² DECAL, FST | point (bilinear on the upsample) / CLAMP | no |
+| effects (2,007) | sprite, tristrip, trifan | 0101/0201 sprites; 0201 strips (nether 1,090); 0221 F58-60 (raiden); 2221 FBMSK 0x7f | GREATER 0 KEEP; GEQUAL 0x80 RGB_ONLY; GEQUAL 0x5; **DATE** (raiden, 142 prims) | GREATER (ZMSK on sprites); GEQUAL trifans (ZBP 0x12c for the marking) | **0xff000000** on sprites; 0x7f000000 + fba1 | T4/T8 64² | bilinear / CLAMP | trifans |
+| hud (1,096) | tristrip IIP0 | 0101; **2201 (alpha only)** | GEQUAL 1 KEEP; NEVER RGB_ONLY; **DATE** datm1 / datm0 | ALWAYS, writes Z | 0 / fba0 | T8 128²-512×256, some FST | point or bilinear | no |
+| ui (212) | tri IIP0 | 0101 | GREATER 0 RGB_ONLY | GEQUAL write | 0 | T8 (13 sizes), 4 untextured | bilinear / REPEAT | no |
+| shadow (141) | tristrip, trifan | 0101 untextured; 2221 | NEVER RGB_ONLY | GEQUAL (no Z write); marking trifan on ZBP 0x12c | **0x7f000000 + fba1** on the marking trifan | - | - | yes |
+| clear (11) | sprite | off | off | ALWAYS write | 0 | - | - | no |
+| movie (1) | sprite FST | 0101 | off | ALWAYS ZMSK, Z32 at 0x70 = FBP | FBW 8 (512×448) | CT32 1024² | bilinear | no |
+
+The 11 equations, Cv = ((A − B)·C >> 7) + D:
+
+| ABCD | Equation | Prims | FIX | Categories |
+|---|---|---|---|---|
+| 0101 | (Cs − Cd)·As + Cd | 100,190 | - | most |
+| 0121 | (Cs − Cd)·FIX + Cd | 55,018 | 128 (= Cs), 114, 117; 104-128 over 3 frames | character, highlight, world |
+| 0211 | Cs·Ad + Cd | 45,364 | - | character_highlight |
+| 2221 | Cd (writes alpha only) | 37,133 | 0 | character no-ops, post_fx, shadow, effects |
+| 1202 | Cd·As | 14,022 | - | character_shading |
+| 0221 | Cs·FIX + Cd | 8,833 | 0-60 (0-115 over 3 frames) | post_fx, effects |
+| 0201 | Cs·As + Cd | 2,431 | - | world, sky, effects |
+| 0222 | Cs·FIX | 2,080 | 32, 42, 45, 128 | post_fx |
+| 2021 | Cd − Cs·FIX | 1,440 | 0, 21, 27, 255 | post_fx |
+| 0122 | (Cs − Cd)·FIX | 1,120 | 128 | post_fx (the dead chain) |
+| 2201 | Cd, alpha only | 26 | - | hud (DATE) |
+
+Alpha above 0x80 in the data: 1,229 of 1,232 dumped textures have At ≤ 0x80 (3 T4 textures go higher,
+`D/textures/dump`). Vertex alpha: world ≤ 0x80 except 92 of 28,638 koop vertices (≤ 0x88); highlight passes exactly
+0x80; character base passes 0; **effects sprites reach Av 0xF5**, i.e. an As ≈ 1.9 factor in a lerp. Ad seen by the
+highlight pass is ≤ 0x80 (inference: the alpha reset writes 0 after the world, then the base pass writes At ≤ 0x80).
+character_shading's As (HIGHLIGHT, At + Av) is not in the traced scenes: run R5 (§7).
+
+### 4.3 The common native design
+
+- **Vertices** (Seam V): upload the batch's vertex data as it would leave VU1 into a storage buffer and expand strips
+  and fans in the vertex shader by `vertex_index` (vertex pulling): kill triangles whose kick vertex has ADC = 1,
+  take the flat colour (IIP0) from the GS provoking vertex (the last), turn a sprite into 6 vertices. The CPU then
+  works per GIF tag, not per vertex; today `gpu::draw` builds a 28-word record with edge setup and a bbox per
+  primitive (`gpu.cpp:1676-1764`) and the queue carries 6.4-10 MB per frame. The guard-band cull of §3.3 is applied
+  where the strip is expanded.
+- **Position**: target xy = GS xy × SCALE (+0.5 so sample k lands where `gs.wgsl:1347-1353` puts it today), clip w = 1;
+  colour, fog and STQ with `@interpolate(linear)` (screen-linear like the GS), divide by q per pixel as
+  `gs.wgsl:937-947` does. Same semantics; different rounding.
+- **Colour target**: `rgba8unorm` holding integer/255, with the integer TFX and fog arithmetic of `gs.wgsl:960-1003`
+  in the fragment shader, so the value written is exact. **Store alpha as min(A, 128)/128**: then the fixed-function
+  SrcAlpha/DstAlpha factors are As/128 and Ad/128 directly, and bit 7 stays testable (stored 1.0 ⇔ A ≥ 0x80). Losing
+  A > 0x80 in the target is invisible by §4.1.4 (inference; the per-category gate checks it).
+- **Depth**: `depth32float` = Z/2²⁴ (represents Z24 exactly); compare greater / greater-equal / always; ZMSK →
+  depthWriteEnabled false; ZTE = 0 → no Z write (`gs.wgsl:1117`). Interpolation rounding differs from today's
+  float base + deltas, so depth ties can differ (perceptual); the three character passes stay consistent through the
+  shared transformed vertices of §3.6.
+
+### 4.4 Feature by feature
+
+| GS feature | Where | WebGPU technique | Exact vs today |
+|---|---|---|---|
+| ATST NEVER + KEEP | character 31.3k | drop at the GIF tag on the CPU | **exact** |
+| ATST + KEEP | character, hud, effects, world 0x5 | `discard` | **exact** |
+| ATST NEVER + RGB_ONLY / FB_ONLY | shadow, hud, effects, post_fx | static writeMask (RGB / RGBA), depthWrite off | **exact** |
+| ATST GEQUAL + **AFAIL RGB_ONLY** | world, world_alpha, sky (0x80), character 0x3C, ui | two pipelines per draw: pass = full write; fail = inverted test + `discard`, writeMask RGB, depthWrite off (PCSX2's split) | **perceptual**: within one draw, pass and fail pixels are written in a different order (foliage edges) |
+| lerp 0101, 0121 (FIX ≠ 128) | most 3D | SrcAlpha/OneMinusSrcAlpha or Constant | **perceptual**: ±1 LSB (hardware rounds, the GS floors); **As > 0x80 clamps** (effects sprites up to 1.9×, koop world ≤ 1.06×) |
+| 0121 FIX 128 | character base | blend off | **exact** |
+| additive with a source factor (0201, 0221, 0222) | effects, post_fx, sky | shader outputs ⌊Cs·C/128⌋/255, blend One/One; unorm saturation = COLCLAMP, so factors > 1 stay exact | **exact** |
+| 2021 (Cd − Cs·FIX, FIX up to 255) | post_fx | shader outputs ⌈Cs·C/128⌉, ReverseSubtract One/One | **exact** |
+| 0211 Cs·Ad + Cd | character_highlight 45k | Src factor DstAlpha (Ad/128 under the A/128 storage), Dst One | **perceptual** ±1 LSB; exact only with a per-draw Ad snapshot (~100 bbox copies per frame) |
+| 1202 Cd·As | character_shading 14k | Src 0, Dst SrcAlpha; if As > 0x80 the factor clamps: multiply by As/256 then a doubling pass (Src DstColor, Dst One) | **perceptual**; As range pending (R5) |
+| 2221 / 2201 alpha only | post_fx, hud, shadow | writeMask ALPHA | **exact** |
+| FBA | world, sky, character (koop) | output alpha 1.0 when FBA. World: pass pixels have As ≥ 0x80 → factor 1.0 anyway; fail pixels write no alpha. Elsewhere dual-source blending (`dual-source-blending` feature, WGSL `@blend_src`) or a split alpha pass | exact for the stored alpha |
+| **DATE / DATM** | hud (6 pairs per frame), raiden effects (142 prims) | keep on compute (hybrid). Native: end the pass, stencil pre-pass from colour bit 7 (`depth32float-stencil8`), stencil EQUAL | exact on compute; native ignores alpha written inside the same draw → perceptual |
+| FBMSK 0xff000000 | effects, hud | writeMask RGB | **exact** |
+| **FBMSK 0x7f000000** + FBA | shadow, effects, world (≤ 12 prims per frame) | under the A/128 storage: alpha-only write of 1.0 (= set bit 7); or skip it (unconsumed, §4.1.4) | exact under the representation; its ZBP is the dead 0x12c buffer |
+| **Z as texture**, Z24 ↔ CT32 reinterpretation, FBW 5 → TBW 10 page remap | post_fx shadow prep | not expressible with WebGPU textures. Skip it natively, or run it on compute after a Z write-back | skipping = **0 pixels** (measured, §4.1.3) |
+| **Glow self-feedback** (19 self-reads per frame, 2:1 down, 1:2 up) | post_fx | ping-pong `rgba8` targets at scaled 320×112. Today each tap reads the state at its texcache run start (new-draw / reload / same inside a tap: `texcache.cpp`, `gpu.cpp:1780-1786`); to match, split the ping-pong at the same reload points (1-10 runs per tap). Down/upsample must copy the F_RT_HIRES sampling (`gs.wgsl:676-724`) | exact if the runs are mirrored, else perceptual |
+| glow buffer aliases Z (FBP 0x8c = ZBP) | post_fx | separate textures; safe because draw 0 of every frame is a full-screen clear that writes Z (all 11 non-FMV scenes) | **exact** |
+| T8/T4 + CT32 CLUT | all textured | GPU decode kernel (`gs.wgsl:1294-1316`) into an `rgba8` texture cache keyed by TEX0 + CLUT slot (`gpu.cpp:1313`) + page write generations | **exact** texels |
+| bilinear / trilinear | all | hardware sampler + `textureSampleLevel` with the LOD of `gs.wgsl:726-735` (−log2\|q\|·2^L + K) and the MMIN rules of `gs.wgsl:737-785`; today uses float fractions with +0.5 rounding (`blend4`, `gs.wgsl:787-797`), not GS 4-bit fractions | perceptual (8-bit hardware weights); exact alternative: 4 × `textureLoad` per level, today's cost |
+| mips (MTBA 0) | world, sky | decode the MIPTBP1 levels into a mip chain (MIPTBP1 is not in draws.ndjson: `drawdbg.cpp:92-102`; R6) | exact |
+| REPEAT / CLAMP | all | sampler repeat / clamp-to-edge (power-of-two sizes, no REGION_*) | **exact** |
+| COLCLAMP | - | only 1 is seen = unorm saturation; a 0 (wrap) would go to compute | exact |
+| PABE, DTHE, AA1 | - | PABE always 0; DTHE and AA1 not emulated today | nothing to do |
+| SCISSOR | all | `setScissorRect` × scale | **exact** |
+
+### 4.5 Per category: pipeline and gate
+
+| Category | Native pipelines | Gate |
+|---|---|---|
+| character | 0121 F128 blend off + discard; 0101 and the 0x3C pass as an AFAIL split; 0211 DstAlpha; drop NEVER/KEEP | exact except the 0x3C split and 0211 → perceptual |
+| character_highlight | DstAlpha additive | perceptual (±1 LSB) |
+| character_shading | Cd·As multiply (+ doubling if As > 0x80) | perceptual, pending R5 |
+| world, world_alpha, sky | trilinear + fog + lerp, AFAIL split | perceptual (split order, lerp rounding, filtering, depth ties) |
+| effects | additive exact; lerp sprites with As up to 1.9 clamp; DATE strip on compute | perceptual |
+| shadow | static RGB-only mask; skip the marking | exact / 0 px |
+| post_fx | native ping-pong, or keep on compute | exact on compute; native exact only if the texcache runs are mirrored |
+| hud, ui, clear, movie | keep on compute (small, DATE) | exact |
+
+### 4.6 What stays on the compute GS, and the hybrid
+
+Today's renderer (read from the code):
+
+- **VRAM** is one storage buffer, `array<atomic<u32>>`, 4 MiB × samples (`gpu.cpp:1500`, `gs.wgsl:5`), PS2-swizzled
+  word address with the samples interleaved per word: index = gsword·S + k, k = sub_y·SCALE + sub_x
+  (`gs.wgsl:221-242`); sub-word writes by atomicAnd/Or. 36 MiB at 3×, 72 MiB at 3x6, 96 MiB at 4x6. There is no 1×
+  copy on the GPU; the CPU copy (`gs.cpp:43`) is current only for the soft GS or the texture pack.
+- **Textures** are sampled live from scaled VRAM (fetch → address → convert, CLUT and TEXA inside:
+  `gs.wgsl:585-673`), with an optional per-submit decode for batches over 64 primitives (`gpu.cpp:512-544`); render
+  targets are read from the same VRAM at sample k (F_RT_HIRES for non-1:1 sprites, `gpu.cpp:1645-1669`).
+- **Per primitive on the CPU** (`gpu::draw`, `gpu.cpp:1622-1842`): setup cache, the 28-word record (1676-1764),
+  hazard checks (1771-1792), append to the batch (1793-1841, up to 64k prims); flush per FRAME/ZBUF change; CPU
+  binning into 16×16-sample tiles (`gpu.cpp:399-450, 647-742`); one raster dispatch per batch, one workgroup per tile,
+  one thread per sample walking the tile list in order (`gs.wgsl:1339-1380`). All dispatches of a submit are in one
+  compute pass (`gpu.cpp:1043-1092`).
+- **Present**: `display` compute (VRAM → linear scratch, `gs.wgsl:391-413`), then `blit.wgsl` into the swapchain.
+
+**A render pass cannot attach VRAM** (a swizzled buffer with interleaved samples), so native targets are textures,
+and the hand-off is a conversion. The frame shape (§4.1.2) makes it a single hand-off per frame:
+
+1. Native: clear → the whole 3D run → blob shadow → effects, into an `rgba8unorm` colour + `depth32float` target at
+   the output resolution, `loadOp: clear` from the draw-0 clear sprite (no import needed). Skip the dead shadow prep
+   and the FBMSK marking.
+2. **Write back colour only** into the current FBP of the compute VRAM (Z is dead after the effects: the glow
+   overwrites its pages and the next frame clears it). A kernel with one thread per sample: `textureLoad` at
+   (x·SCALE + k % SCALE, y·SCALE_Y + k / SCALE) (the mapping of `gs.wgsl:408, 1347-1351`), then a CT32 `atomicStore`
+   through the swizzle table (as `copy_write`/`upload`, `gs.wgsl:278-347`); A = round(stored·128). 640·224·S·4 bytes:
+   5.2 MB at 3×, 10.3 MB at 3x6, 13.8 MB at 4x6, plus as much read: about 0.05-0.15 ms on the RTX 4050 (estimate).
+3. Glow, HUD and present stay on compute, unchanged: 1,020 + ~500 sprites, about 0.35 ms of render-thread time
+   (drawdbg, inflated).
+
+What the hybrid needs in `gpu.cpp`: a command kind that ends the compute pass, records the render pass and reopens
+the compute pass (the submit worker's job carries it too); page ownership (native-owned FB/Z pages marked in
+`g_rendered`/`g_rt_pages`), so that any compute draw, texture read, local copy, download or savestate that touches
+them triggers the write-back first, and uploads to them invalidate. Import (VRAM → texture) is needed only after a
+savestate load or when a frame does not start with the full clear (menus and the FMV stay on compute); a depth import
+needs a full-screen pass writing `frag_depth` (WebGPU has no buffer → depth copy). One queue keeps the order.
+
+**What stays on compute as a fallback, permanently or per frame**: path 2/3 (HUD, UI, clear, movie, the DATE pairs),
+the glow chain until stage 5, any draw with a feature outside the native set (COLCLAMP 0, a new blend, a render-target
+read inside the 3D run), and whole frames that do not start with the clear (menus, FMV, load screens). Because the
+compute GS keeps per-sample VRAM, falling back is per draw within the 3D run too, at the price of a write-back +
+import pair around it; the frame shape makes that rare.
 
 ## 5. Staged plan
 
