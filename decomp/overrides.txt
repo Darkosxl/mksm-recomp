@@ -9,3 +9,5 @@
 00214058	MatrixInverseRigid	decomp/src/math/vu0math.cpp
 00214658	MatrixTranslate	decomp/src/math/vu0math.cpp
 00214688	CopyVector	decomp/src/math/vu0math.cpp
+0021F618	MemCardStateSetFlag	decomp/src/memcard/syncmemcard.cpp
+00225FC0	SetCharRenderFlag	decomp/src/render/character.cpp
