@@ -581,8 +581,14 @@ fn texel_y(s: Setup, l: Level, yi: i32) -> u32 {
 var<private> snapshot_lo: u32 = 0u;
 var<private> snapshot_hi: u32 = 0u;
 
+// Raster: pages snapshotted for this batch (gpu.cpp snapshot_batch), 512 bits from prm(16).
+fn snapshot_page(word: u32) -> bool {
+    let page = word >> 11u;
+    return ((prm(16u + (page >> 5u)) >> (page & 31u)) & 1u) != 0u;
+}
+
 fn load_texel(l: Loc, k: u32) -> u32 {
-    if (l.word >= snapshot_lo && l.word < snapshot_hi) {
+    if (l.word >= snapshot_lo && l.word < snapshot_hi && snapshot_page(l.word)) {
         return (scratch[(l.word - snapshot_lo) * SCALE * SCALE_Y + k] >> l.shift) & l.mask;
     }
     return load_at(l, k);
@@ -1315,12 +1321,15 @@ fn decode(@builtin(global_invocation_id) gid: vec3<u32>) {
 }
 
 @compute @workgroup_size(64)
+// prm(1) pages listed at data[prm(2)], all samples, into scratch at their offset from word prm(0).
 fn snapshot(@builtin(global_invocation_id) gid: vec3<u32>) {
     let i = gid.x + gid.y * 64u * 1024u;
-    if (i >= prm(1u)) {
+    let per = 2048u * SCALE * SCALE_Y;
+    if (i >= prm(1u) * per) {
         return;
     }
-    scratch[i] = atomicLoad(&vram[prm(0u) * SCALE * SCALE_Y + i]);
+    let w = data[prm(2u) + i / per] * per + i % per;
+    scratch[w - prm(0u) * SCALE * SCALE_Y] = atomicLoad(&vram[w]);
 }
 
 @compute @workgroup_size(64)

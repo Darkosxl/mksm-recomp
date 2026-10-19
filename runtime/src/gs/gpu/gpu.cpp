@@ -517,9 +517,23 @@ void plan_decodes(std::uint32_t prims) {
     }
 }
 
-std::uint32_t snapshot_batch(std::uint32_t prims, std::uint32_t &lo, std::uint32_t &hi) {
+// GS memory pages a rectangle of a buffer touches, as the shader addresses them (gs.wgsl addr: wraps at 4 MB).
+void mark_pages(bool *page, std::uint32_t bp, std::uint32_t bw, std::uint32_t psm, int x0, int y0, int x1, int y1) {
+    std::uint32_t pw, ph;
+    page_size(psm, pw, ph);
+    const std::uint32_t per_row = std::max<std::uint32_t>(1, bw * 64 / pw);
+    for (std::uint32_t py = static_cast<std::uint32_t>(y0) / ph; py <= static_cast<std::uint32_t>(y1) / ph; ++py)
+        for (std::uint32_t px = static_cast<std::uint32_t>(x0) / pw; px <= static_cast<std::uint32_t>(x1) / pw; ++px)
+            page[((bp * 256 + (px + py * per_row) * 8192) & (kMemorySize - 1)) >> 13] = true;
+}
+
+// Snapshot of the GS memory a batch both reads as texture and writes, so its texture reads see the memory as it was
+// before the batch (gs.wgsl load_texel). Only pages the batch's frame or Z rectangle touches are copied: words
+// lo..hi, pages flagged in mask (512 bits).
+std::uint32_t snapshot_batch(std::uint32_t prims, std::uint32_t &lo, std::uint32_t &hi, std::uint32_t mask[16]) {
     Batch &b = g_batch;
     lo = hi = 0;
+    std::fill(mask, mask + 16, 0u);
     if (g_batch_reads.empty()) return 0;
     const Range fb = pages(b.fbp, b.fbw, b.fpsm, b.minx, b.miny, b.maxx, b.maxy);
     const Range z = pages(b.zbp, b.fbw, b.zpsm, b.minx, b.miny, b.maxx, b.maxy);
@@ -528,6 +542,13 @@ std::uint32_t snapshot_batch(std::uint32_t prims, std::uint32_t &lo, std::uint32
     for (const Range &t : g_batch_reads) any = any || written(t);
     if (!any) return 0;
     Range shared;
+    static bool read[512];
+    std::fill(std::begin(read), std::end(read), false);
+    const auto add = [&](const Range &t, const Range &w) {
+        const std::uint64_t from = std::max(t.lo, w.lo), to = std::min({t.hi, w.hi, static_cast<std::uint64_t>(kMemorySize)});
+        shared.add(std::max(t.lo, w.lo), std::min(t.hi, w.hi));
+        for (std::uint64_t at = from & ~8191ull; at < to; at += 8192) read[at >> 13] = true;
+    };
     for (std::uint32_t i = 0; i < prims; ++i) {
         const std::uint32_t *rec = b.prims.data() + i * kPrimWords;
         const std::uint32_t *setup = b.setups.data() + rec[0] * kSetupWords;
@@ -535,19 +556,35 @@ std::uint32_t snapshot_batch(std::uint32_t prims, std::uint32_t &lo, std::uint32
         const int tw = std::max(1 << (setup[15] & 0xFFu), static_cast<int>(setup[18] >> 16) + 1), th = std::max(1 << (setup[15] >> 8), static_cast<int>(setup[19] >> 16) + 1);
         const Range t = read_range(rec, setup, region(setup[12], setup[13], setup[14], 0, 0, tw - 1, th - 1));
         for (const Range *w : {&fb, b.zwrite ? &z : nullptr})
-            if (w && t.overlaps(w->lo, w->hi)) shared.add(std::max(t.lo, w->lo), std::min(t.hi, w->hi));
+            if (w && t.overlaps(w->lo, w->hi)) add(t, *w);
         for (std::uint32_t n = 1; n <= mip_levels(setup); ++n) {
             const Range m = level_range(setup, n);
             for (const Range *w : {&fb, b.zwrite ? &z : nullptr})
-                if (w && m.overlaps(w->lo, w->hi)) shared.add(std::max(m.lo, w->lo), std::min(m.hi, w->hi));
+                if (w && m.overlaps(w->lo, w->hi)) add(m, *w);
         }
     }
     if (shared.lo >= shared.hi) return 0;
-    lo = static_cast<std::uint32_t>(std::min<std::uint64_t>(shared.lo, kMemorySize) / 4);
-    hi = static_cast<std::uint32_t>(std::min<std::uint64_t>(shared.hi, kMemorySize) / 4);
-    if (hi <= lo) return 0;
-    const std::uint32_t words = (hi - lo) * g_samples;
-    dispatch_linear(kSnapshot, words, push_params({lo, words}));
+    static bool drawn[512];
+    std::fill(std::begin(drawn), std::end(drawn), false);
+    mark_pages(drawn, b.fbp, b.fbw, b.fpsm, b.minx, b.miny, b.maxx, b.maxy);
+    if (b.zwrite) mark_pages(drawn, b.zbp, b.fbw, b.zpsm, b.minx, b.miny, b.maxx, b.maxy);
+    std::uint32_t first = 512, last = 0, count = 0;
+    for (std::uint32_t page = 0; page < 512; ++page)
+        if (read[page] && drawn[page]) {
+            mask[page >> 5] |= 1u << (page & 31u);
+            first = std::min(first, page);
+            last = page;
+            ++count;
+        }
+    if (!count) return 0;
+    lo = first * 2048;
+    hi = (last + 1) * 2048;
+    std::uint32_t *list = g_arena.grow(count);
+    const std::uint32_t at = static_cast<std::uint32_t>(list - g_arena.data());
+    for (std::uint32_t page = first, j = 0; page <= last; ++page)
+        if (mask[page >> 5] >> (page & 31u) & 1u) list[j++] = page;
+    const std::uint32_t words = count * 2048 * g_samples;
+    dispatch_linear(kSnapshot, words, push_params({lo, count, at}));
     return words;
 }
 
@@ -630,15 +667,16 @@ void flush_batch() {
         }
     }
     for (std::uint32_t t : g_touched) g_tile_count[t] = 0;
-    std::uint32_t snapshot_lo, snapshot_hi;
-    const std::uint32_t snapshot = snapshot_batch(prims, snapshot_lo, snapshot_hi);
+    std::uint32_t snapshot_lo, snapshot_hi, snapshot_mask[16];
+    const std::uint32_t snapshot = snapshot_batch(prims, snapshot_lo, snapshot_hi, snapshot_mask);
     // Z24 words only this batch's Z writes touch (gs.wgsl z_owned): Z pages apart from the frame's, inside GS memory,
     // and no column past the buffer width (it would alias the next row of pages).
     const Range fb_pages = pages(b.fbp, b.fbw, b.fpsm, b.minx, b.miny, b.maxx, b.maxy), z_pages = pages(b.zbp, b.fbw, b.zpsm, b.minx, b.miny, b.maxx, b.maxy);
     const bool z_owned = b.zpsm == PSMZ24 && b.maxx < static_cast<int>(b.fbw) * 64 && z_pages.hi <= kMemorySize && fb_pages.hi <= kMemorySize &&
                          !z_pages.overlaps(fb_pages.lo, fb_pages.hi);
     const std::uint32_t param = push_params({tile_offset, prim_offset, setup_offset, tiles, list_offset, snapshot_lo, snapshot_hi, b.fbp, b.fbw, b.fpsm, b.zbp, b.zpsm,
-                                             z_max(b.zpsm), z_owned ? 1u : 0u});
+                                             z_max(b.zpsm), z_owned ? 1u : 0u, 0u, 0u});
+    std::copy(snapshot_mask, snapshot_mask + 16, g_param_records[param].begin() + 16);
     note_raster(prims, tiles, total, snapshot);
     bool hires = false;
     for (std::size_t i = 0; i < b.setups.size(); i += kSetupWords) hires = hires || (b.setups[i] & kRtHires);
