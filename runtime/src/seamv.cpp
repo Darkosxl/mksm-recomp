@@ -46,11 +46,12 @@ struct Unpack {
     std::uint16_t address;  // first VU1 qword written (TOPS added when FLG is set)
     std::uint16_t cycle;    // CYCLE: CL low byte, WL high byte
     std::uint32_t mask;
-    std::uint8_t mode, spare;
-    std::uint16_t num;  // 1-256
+    std::uint16_t num;   // 1-256
+    std::uint16_t tops;  // TOPS when it ran
+    std::uint8_t mode, spare[3];
 };
 #pragma pack(pop)
-static_assert(sizeof(Batch) == 52 && sizeof(Unpack) == 20);
+static_assert(sizeof(Batch) == 52 && sizeof(Unpack) == 24);
 
 constexpr std::uint32_t kConstQwords = 46;
 // GS registers worth carrying per batch: everything that is state, not vertex data, transfers or signals
@@ -193,7 +194,7 @@ void unpack(std::uint32_t cmd, std::uint32_t source, std::uint32_t address, std:
     if ((cmd >> 15) & 1u) g_batch_hi = std::max(g_batch_hi, address - tops + span);
     if (!g_in_range) return;
     g_unpacks.push_back(Unpack{cmd, source, static_cast<std::uint16_t>(address & 0x3FFu), static_cast<std::uint16_t>(cycle), mask,
-                               static_cast<std::uint8_t>(mode), 0, static_cast<std::uint16_t>(num)});
+                               static_cast<std::uint16_t>(num), static_cast<std::uint16_t>(tops), static_cast<std::uint8_t>(mode), {}});
 }
 
 void program(int kind, std::uint32_t pc, std::uint32_t base, std::uint32_t ofst, std::uint32_t tops, std::uint32_t top, std::uint32_t itop, bool dbf) {
