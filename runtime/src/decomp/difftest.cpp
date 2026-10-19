@@ -35,8 +35,11 @@ struct Closer {
 
 }
 
+// Written as <path>.part and renamed when complete: a run that exits while a context is being written (the frame
+// limit ends the process from another thread) leaves a .part file, which difftest ignores, not a truncated .ctx.
 bool difftest_save(const std::string &path, const DecompFn &f, std::uint32_t index, const Cpu &c) {
-    std::unique_ptr<std::FILE, Closer> out(std::fopen(path.c_str(), "wb"));
+    const std::string part = path + ".part";
+    std::unique_ptr<std::FILE, Closer> out(std::fopen(part.c_str(), "wb"));
     if (!out) return false;
     Header h{};
     std::memcpy(h.magic, kMagic, sizeof kMagic);
@@ -51,7 +54,8 @@ bool difftest_save(const std::string &path, const DecompFn &f, std::uint32_t ind
               std::fwrite(g_ram, 1, kRamSize, out.get()) == kRamSize && std::fwrite(g_spr, 1, kScratchpadSize, out.get()) == kScratchpadSize &&
               std::fwrite(g_vu0_code, 1, kVu0Size, out.get()) == kVu0Size && std::fwrite(g_vu0_mem, 1, kVu0Size, out.get()) == kVu0Size;
     ok = std::fflush(out.get()) == 0 && ok;
-    return ok;
+    out.reset();
+    return ok && std::rename(part.c_str(), path.c_str()) == 0;
 }
 
 bool difftest_load(const std::string &path, DiffContext &ctx, std::string &error) {
