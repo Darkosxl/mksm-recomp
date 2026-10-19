@@ -2,13 +2,18 @@
 # the runtime and the game's generated C++, so the desktop build and the browser (wasm) build of the same sources
 # announce the same id and can play together. The GPU renderer (runtime/src/gs/gpu) and the texture pack only change
 # how frames look, like PS2_GS, and are left out. Paths are hashed relative to their folder: another checkout of the
-# same sources gets the same id.
-#   cmake -DROOT=<repo> -DGENERATED=<generated C++ folder> -DOUT=<file.cpp> -P build_id.cmake
+# same sources gets the same id. The decompiled functions (decomp/src) replace recompiled code, so they count too.
+#   cmake -DROOT=<repo> -DGENERATED=<generated C++ folder> [-DDECOMP=<decompiled functions folder>] -DOUT=<file.cpp> -P build_id.cmake
 file(GLOB_RECURSE runtime RELATIVE "${ROOT}" "${ROOT}/runtime/src/*" "${ROOT}/runtime/include/*")
 list(FILTER runtime EXCLUDE REGEX "^runtime/src/gs/gpu/|^runtime/src/gs/texpack\\.")
 file(GLOB generated RELATIVE "${GENERATED}" "${GENERATED}/*")
+set(decomp "")
+if(DECOMP)
+    file(GLOB_RECURSE decomp RELATIVE "${DECOMP}" "${DECOMP}/*")
+endif()
 list(SORT runtime)
 list(SORT generated)
+list(SORT decomp)
 set(all "")
 foreach(f IN LISTS runtime)
     file(SHA256 "${ROOT}/${f}" h)
@@ -17,6 +22,10 @@ endforeach()
 foreach(f IN LISTS generated)
     file(SHA256 "${GENERATED}/${f}" h)
     string(APPEND all "generated/${f} ${h}\n")
+endforeach()
+foreach(f IN LISTS decomp)
+    file(SHA256 "${DECOMP}/${f}" h)
+    string(APPEND all "decomp/${f} ${h}\n")
 endforeach()
 string(SHA256 id "${all}")
 string(SUBSTRING "${id}" 0 16 id)

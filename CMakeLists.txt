@@ -62,7 +62,9 @@ add_library(ps2runtime STATIC
     runtime/src/iop/io.cpp
     runtime/src/iop/cdvd.cpp
     runtime/src/iop/sif.cpp
-    runtime/src/iop/cdvdfsv.cpp)
+    runtime/src/iop/cdvdfsv.cpp
+    runtime/src/decomp/decomp.cpp
+    runtime/src/decomp/difftest.cpp)
 target_include_directories(ps2runtime PUBLIC runtime/include)
 target_compile_options(ps2runtime PRIVATE -Wall -Wextra)
 
@@ -97,13 +99,22 @@ if(PS2_GENERATED)
     target_link_libraries(ps2game PUBLIC ps2runtime)
     target_compile_options(ps2game PRIVATE -Wno-unused-label -Wno-unused-variable)
 
+    # decompiled functions (decomp/README.md): the units listed in decomp/overrides.txt call into them. An object
+    # library linked straight into each program, so every one is registered (PS2_DECOMP, difftest) whether or not a
+    # unit refers to it.
+    set(PS2_DECOMP_DIR "${CMAKE_SOURCE_DIR}/decomp/src" CACHE PATH "Folder with the decompiled functions")
+    file(GLOB_RECURSE PS2_DECOMP_SOURCES CONFIGURE_DEPENDS "${PS2_DECOMP_DIR}/*.cpp")
+    add_library(ps2decomp OBJECT ${PS2_DECOMP_SOURCES} runtime/src/decomp/none.cpp)
+    target_link_libraries(ps2decomp PUBLIC ps2runtime)
+    target_compile_options(ps2decomp PRIVATE -Wall -Wextra)
+
     # lockstep build id: a hash of the emulation sources (cmake/build_id.cmake), the same for ps2run and ps2web
     file(GLOB_RECURSE PS2_ID_SOURCES CONFIGURE_DEPENDS runtime/src/* runtime/include/*)
     file(GLOB PS2_ID_GENERATED CONFIGURE_DEPENDS "${PS2_GENERATED}/*")
     set(PS2_BUILD_ID "${CMAKE_BINARY_DIR}/lockstep_build_id.cpp")
     add_custom_command(OUTPUT "${PS2_BUILD_ID}"
-        COMMAND ${CMAKE_COMMAND} -DROOT=${CMAKE_SOURCE_DIR} -DGENERATED=${PS2_GENERATED} -DOUT=${PS2_BUILD_ID} -P ${CMAKE_SOURCE_DIR}/cmake/build_id.cmake
-        DEPENDS ${PS2_ID_SOURCES} ${PS2_ID_GENERATED} cmake/build_id.cmake)
+        COMMAND ${CMAKE_COMMAND} -DROOT=${CMAKE_SOURCE_DIR} -DGENERATED=${PS2_GENERATED} -DDECOMP=${PS2_DECOMP_DIR} -DOUT=${PS2_BUILD_ID} -P ${CMAKE_SOURCE_DIR}/cmake/build_id.cmake
+        DEPENDS ${PS2_ID_SOURCES} ${PS2_ID_GENERATED} ${PS2_DECOMP_SOURCES} cmake/build_id.cmake)
 
     if(EMSCRIPTEN)
         set(PS2_WEB_ELF "" CACHE FILEPATH "Game executable preloaded as /game/core.elf")
@@ -112,7 +123,7 @@ if(PS2_GENERATED)
         if(PS2_WEB_BOOT_FILE)
             target_link_options(ps2web PRIVATE "SHELL:--preload-file \"${PS2_WEB_BOOT_FILE}@/game/boot.txt\"")
         endif()
-        target_link_libraries(ps2web PRIVATE ps2game ps2runtime)
+        target_link_libraries(ps2web PRIVATE ps2decomp ps2game ps2runtime)
         target_link_options(ps2web PRIVATE --profiling-funcs -sJSPI -sALLOW_MEMORY_GROWTH=1 -sINITIAL_MEMORY=268435456 -sPTHREAD_POOL_SIZE=2 -sALLOW_TABLE_GROWTH=1 -lidbfs.js -sSTACK_SIZE=16777216 -sENVIRONMENT=web
             -sEXPORTED_FUNCTIONS=_main,_ps2web_pad,_ps2web_pad_connected,_ps2web_resize,_ps2web_gpu_ms,_ps2web_frames,_ps2web_primitives,_ps2web_audio_ring,_ps2web_audio_queued_ms,_ps2web_idle_ms,_ps2web_vu_interpreted
             -sEXPORTED_RUNTIME_METHODS=callMain,addRunDependency,removeRunDependency,HEAPU8,ENV
@@ -122,7 +133,12 @@ if(PS2_GENERATED)
     endif()
 
     add_executable(ps2run host/main.cpp)
-    target_link_libraries(ps2run PRIVATE ps2game ps2runtime)
+    target_link_libraries(ps2run PRIVATE ps2decomp ps2game ps2runtime)
+
+    # replays recorded calls of decompiled functions against the recompiled code (decomp/README.md)
+    add_executable(difftest decomp/difftest/main.cpp)
+    target_link_libraries(difftest PRIVATE ps2decomp ps2game ps2runtime)
+    target_compile_options(difftest PRIVATE -Wall -Wextra)
     # lockstep co-op (host/lockstep.hpp, web/lockstep.md): zlib for the state transfer; WebRTC through libdatachannel
     # and wss:// through OpenSSL when they are installed, else the signalling relay over ws:// only
     find_package(Threads REQUIRED)

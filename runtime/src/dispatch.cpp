@@ -1,3 +1,4 @@
+#include "ps2/decomp.hpp"
 #include "ps2/generated.hpp"
 #include "ps2/system.hpp"
 
@@ -144,6 +145,14 @@ void dispatch(Cpu &c, std::uint32_t, std::uint32_t depth) {
         return;
     }
     u->function(c, id, depth);
+}
+
+bool run_at(Cpu &c, std::uint32_t target, std::uint32_t depth) {
+    const UnitInfo *u = unit_for(target);
+    const std::uint16_t id = u ? u->entries[(target - u->base) >> 2] : 0;
+    if (!id) return false;
+    u->function(c, id, depth);
+    return true;
 }
 
 void call(Cpu &c, std::uint32_t target, std::uint32_t depth) {
