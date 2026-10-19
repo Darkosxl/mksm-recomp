@@ -1,5 +1,6 @@
 #include "gpu.hpp"
 #include "../drawdbg.hpp"
+#include "../../native.hpp"
 #include "../texpack.hpp"
 #include "ps2/system.hpp"
 #include "../queue.hpp"
@@ -18,6 +19,7 @@
 #include <cstdlib>
 #include <cstring>
 #include <deque>
+#include <map>
 #include <memory>
 #include <mutex>
 #ifdef __linux__
@@ -29,6 +31,7 @@
 
 extern const char kGsShader[];
 extern const char kBlitShader[];
+extern const char kNativeShader[];
 
 namespace ps2::gs {
 void swizzle_tables(std::vector<std::uint32_t> &out);
@@ -117,6 +120,24 @@ WGPUQuerySet g_profile_queries = nullptr;
 WGPUBuffer g_profile_resolve = nullptr, g_profile_read = nullptr;
 
 std::vector<Command> g_commands;
+
+// Native renderer, stage 1 (runtime/src/native.hpp, native.wgsl): render passes in the command stream between compute
+// dispatches. A kNativeDraws command holds draws [x, x + y) of the job's list; encode_native() records them.
+constexpr Pipeline kNativeDraws = static_cast<Pipeline>(kPipelines + 1);
+struct NativeDraw {
+    WGPURenderPipeline pipeline = nullptr;
+    WGPUTextureView color = nullptr, depth = nullptr;
+    std::uint32_t param = 0, vertices = 0, check = 0;  // check: workgroups of the per-vertex oracle (native_check)
+    std::uint32_t scissor[4] = {};
+    double constant = 0.0;  // blend constant (FIX / 128)
+};
+std::vector<NativeDraw> g_native_draws;
+std::size_t g_native_emitted = 0;
+WGPUBindGroupLayout g_native_layout = nullptr;
+WGPUBindGroup g_native_group = nullptr;
+WGPUComputePipeline g_native_check = nullptr;
+WGPUBuffer g_native_checks = nullptr;
+void encode_native(WGPUCommandEncoder enc, const Command &c, const std::vector<NativeDraw> &draws);
 std::vector<std::array<std::uint32_t, kParamStride / 4>> g_param_records;
 struct Arena {
     std::unique_ptr<std::uint32_t[]> words;
@@ -811,9 +832,18 @@ void emit_pre() {
     g_pre.clear();
 }
 
+// Native draws recorded since the last command go into the stream here, after the raster dispatch of the batch that
+// holds their emulated twins: both see the same uploads and CLUT loads.
+void emit_native() {
+    if (g_native_draws.size() == g_native_emitted) return;
+    g_commands.push_back({kNativeDraws, static_cast<std::uint32_t>(g_native_emitted), static_cast<std::uint32_t>(g_native_draws.size() - g_native_emitted), 0});
+    g_native_emitted = g_native_draws.size();
+}
+
 void emit_all() {
     emit_pre();
     flush_batch();
+    emit_native();
 }
 
 void queue_pre(const PreOp &op) {
@@ -929,6 +959,19 @@ void rebuild_group() {
     d.entryCount = 8;
     d.entries = e;
     g_group = wgpuDeviceCreateBindGroup(g_device, &d);
+    if (g_native_layout) {
+        if (g_native_group) wgpuBindGroupRelease(g_native_group);
+        WGPUBindGroupEntry n[9];
+        for (int i = 0; i < 8; ++i) n[i] = e[i];
+        n[8] = WGPU_BIND_GROUP_ENTRY_INIT;
+        n[8].binding = 8;
+        n[8].buffer = g_native_checks;
+        n[8].size = WGPU_WHOLE_SIZE;
+        d.layout = g_native_layout;
+        d.entryCount = 9;
+        d.entries = n;
+        g_native_group = wgpuDeviceCreateBindGroup(g_device, &d);
+    }
 }
 
 void ensure_capacity(std::size_t arena_words = g_arena.size(), std::size_t param_records = g_param_records.size()) {
@@ -967,6 +1010,10 @@ void profile_submit() {
     const std::uint32_t n = static_cast<std::uint32_t>(std::min<std::size_t>(g_commands.size(), kMax));
     for (std::uint32_t i = 0; i < g_commands.size(); ++i) {
         const Command &c = g_commands[i];
+        if (c.pipeline == kNativeDraws) {
+            encode_native(enc, c, g_native_draws);
+            continue;
+        }
         WGPUPassTimestampWrites writes = WGPU_PASS_TIMESTAMP_WRITES_INIT;
         writes.querySet = g_profile_queries;
         writes.beginningOfPassWriteIndex = i * 2;
@@ -1000,6 +1047,7 @@ void profile_submit() {
         const auto *t = static_cast<const std::uint64_t *>(wgpuBufferGetConstMappedRange(g_profile_read, 0, n * 16));
         std::size_t info = 0;
         for (std::uint32_t i = 0; t && i < n; ++i) {
+            if (g_commands[i].pipeline == kNativeDraws) continue;
             while (info < g_command_info.size() && g_command_info[info].index < i) ++info;
             std::fprintf(g_profile_out, "%llu %u %s %llu %u %u", static_cast<unsigned long long>(frame_count()), i, kEntryPoints[g_commands[i].pipeline],
                          static_cast<unsigned long long>(t[i * 2 + 1] > t[i * 2] ? t[i * 2 + 1] - t[i * 2] : 0), g_commands[i].x, g_commands[i].y);
@@ -1011,6 +1059,8 @@ void profile_submit() {
     }
     g_commands.clear();
     g_command_info.clear();
+    g_native_draws.clear();
+    g_native_emitted = 0;
     ++g_serial;
     g_param_records.clear();
     g_arena.clear();
@@ -1022,7 +1072,7 @@ void profile_submit() {
 using ParamRecords = std::vector<std::array<std::uint32_t, kParamStride / 4>>;
 
 // Copies the commands' data into the GPU buffers, encodes them and submits (render thread, or the submit worker).
-void run_commands(Arena &arena, ParamRecords &params, std::vector<Command> &commands, WGPUTextureView present_view) {
+void run_commands(Arena &arena, ParamRecords &params, std::vector<Command> &commands, const std::vector<NativeDraw> &natives, WGPUTextureView present_view) {
     ensure_capacity(arena.size(), params.size());
     wgpuQueueWriteBuffer(g_queue, g_data, 0, arena.data(), arena.size() * 4);
     wgpuQueueWriteBuffer(g_queue, g_params, 0, params.data(), params.size() * kParamStride);
@@ -1039,7 +1089,8 @@ void run_commands(Arena &arena, ParamRecords &params, std::vector<Command> &comm
         wgpuBufferUnmap(g_query_read);
         g_query_ready = g_query_pending = false;
     }
-    const bool measure = g_timestamps && !g_query_pending;
+    // one compute pass holds every dispatch, unless native render passes split it (then no timestamps)
+    const bool measure = g_timestamps && !g_query_pending && natives.empty();
     WGPUCommandEncoder enc = wgpuDeviceCreateCommandEncoder(g_device, nullptr);
     WGPUPassTimestampWrites writes = WGPU_PASS_TIMESTAMP_WRITES_INIT;
     writes.querySet = g_queries;
@@ -1052,6 +1103,20 @@ void run_commands(Arena &arena, ParamRecords &params, std::vector<Command> &comm
     ++g_submits;
     ++g_total_passes;
     for (const Command &c : commands) {
+        if (c.pipeline == kNativeDraws) {
+            if (pass) {
+                wgpuComputePassEncoderEnd(pass);
+                wgpuComputePassEncoderRelease(pass);
+                pass = nullptr;
+            }
+            encode_native(enc, c, natives);
+            continue;
+        }
+        if (!pass) {
+            WGPUComputePassDescriptor again = WGPU_COMPUTE_PASS_DESCRIPTOR_INIT;
+            pass = wgpuCommandEncoderBeginComputePass(enc, &again);
+            current = kPipelines;
+        }
         ++g_dispatches[c.pipeline];
         if (c.pipeline != current) {
             wgpuComputePassEncoderSetPipeline(pass, g_pipelines[c.pipeline]);
@@ -1061,8 +1126,10 @@ void run_commands(Arena &arena, ParamRecords &params, std::vector<Command> &comm
         wgpuComputePassEncoderSetBindGroup(pass, 0, g_group, 1, &offset);
         wgpuComputePassEncoderDispatchWorkgroups(pass, c.x, c.y, 1);
     }
-    wgpuComputePassEncoderEnd(pass);
-    wgpuComputePassEncoderRelease(pass);
+    if (pass) {
+        wgpuComputePassEncoderEnd(pass);
+        wgpuComputePassEncoderRelease(pass);
+    }
     if (measure) {
         wgpuCommandEncoderResolveQuerySet(enc, g_queries, 0, 2, g_query_resolve, 0);
         wgpuCommandEncoderCopyBufferToBuffer(enc, g_query_resolve, 0, g_query_read, 0, 16);
@@ -1115,6 +1182,7 @@ struct Job {
     Arena arena;
     ParamRecords params;
     std::vector<Command> commands;
+    std::vector<NativeDraw> natives;
     std::vector<Write> writes;
     bool present = false;
 };
@@ -1127,19 +1195,19 @@ bool g_job_running = false, g_worker_started = false;
 void run_job(Job &j) {
     for (const Write &w : j.writes) wgpuQueueWriteBuffer(g_queue, w.buffer, w.offset, w.bytes.data(), w.bytes.size());
     if (!j.present) {
-        if (!j.commands.empty()) run_commands(j.arena, j.params, j.commands, nullptr);
+        if (!j.commands.empty()) run_commands(j.arena, j.params, j.commands, j.natives, nullptr);
         return;
     }
     WGPUSurfaceTexture st = WGPU_SURFACE_TEXTURE_INIT;
     wgpuSurfaceGetCurrentTexture(g_surface, &st);
     if (st.status != WGPUSurfaceGetCurrentTextureStatus_SuccessOptimal && st.status != WGPUSurfaceGetCurrentTextureStatus_SuccessSuboptimal) {
         if (st.texture) wgpuTextureRelease(st.texture);
-        run_commands(j.arena, j.params, j.commands, nullptr);
+        run_commands(j.arena, j.params, j.commands, j.natives, nullptr);
         configure_surface();
         return;
     }
     WGPUTextureView target = wgpuTextureCreateView(st.texture, nullptr);
-    run_commands(j.arena, j.params, j.commands, target);
+    run_commands(j.arena, j.params, j.commands, j.natives, target);
 #ifndef __EMSCRIPTEN__
     wgpuSurfacePresent(g_surface);
 #endif
@@ -1162,6 +1230,7 @@ void submit_worker() {
         j.arena.clear();
         j.params.clear();
         j.commands.clear();
+        j.natives.clear();
         j.writes.clear();
         lock.lock();
         g_spare_jobs.push_back(std::move(j));
@@ -1203,6 +1272,9 @@ void enqueue(bool present) {
     std::swap(j.arena, g_arena);
     std::swap(j.params, g_param_records);
     std::swap(j.commands, g_commands);
+    std::swap(j.natives, g_native_draws);
+    g_native_draws.clear();
+    g_native_emitted = 0;
     std::swap(j.writes, g_writes);
     j.present = present;
     g_jobs.push_back(std::move(j));
@@ -1219,6 +1291,7 @@ void drain() {
 
 void submit(WGPUTextureView present_view = nullptr) {
     if (!present_view) g_worker_on = worker_wanted();
+    emit_native();
     if (g_commands.empty() && g_writes.empty() && !present_view) return;
     if (g_profile_out && !present_view && g_timestamps && frame_count() >= g_profile_from && frame_count() < g_profile_to) {
         drain();
@@ -1233,8 +1306,10 @@ void submit(WGPUTextureView present_view = nullptr) {
     drain();
     for (const Write &w : g_writes) wgpuQueueWriteBuffer(g_queue, w.buffer, w.offset, w.bytes.data(), w.bytes.size());
     g_writes.clear();
-    if (!g_commands.empty() || present_view) run_commands(g_arena, g_param_records, g_commands, present_view);
+    if (!g_commands.empty() || present_view) run_commands(g_arena, g_param_records, g_commands, g_native_draws, present_view);
     g_commands.clear();
+    g_native_draws.clear();
+    g_native_emitted = 0;
     g_param_records.clear();
     g_arena.clear();
     after_submit();
@@ -1402,6 +1477,546 @@ void attrs(std::uint32_t *rec, int n, const Vertex &v, bool fst, const Vertex *c
     rec[16 + n * 3] = f2u(fst ? static_cast<float>(v.v) : v.t);
     rec[17 + n * 3] = f2u(fst ? 1.0f : v.q);
     rec[11] |= static_cast<std::uint32_t>(v.f) << (8 * n);
+}
+
+// ---- Native renderer, stage 1 (decomp/notes/native-renderer.md §5.2, runtime/src/native.hpp) ----
+// Side by side: the world batches VU1 runs are also drawn by a render pipeline (native.wgsl) into a colour + depth
+// target of their own; the emulated path draws exactly as before. A run of native batches starts by importing the
+// emulated frame and Z buffer (what the GS holds before the run) and ends at the next emulated draw. PS2_NATIVE_DUMP=
+// frame,dir writes the first run that starts at or after that frame, before and after, from both paths (raw files for
+// remaster/natdiff.py).
+
+struct NativeTarget {
+    WGPUTexture color = nullptr, depth = nullptr;
+    WGPUTextureView color_view = nullptr, depth_view = nullptr;
+    std::uint32_t width = 0, height = 0;
+};
+
+struct Native {
+    bool on = false, check = false, plight = false;
+    std::uint32_t adc_back = 0;
+    WGPUShaderModule module = nullptr;
+    WGPUPipelineLayout pipeline_layout = nullptr;
+    std::unordered_map<std::uint32_t, WGPURenderPipeline> pipelines;
+    NativeTarget target;
+    bool open = false, in_kick = false;
+    std::uint32_t kick_prims = 0;
+    std::uint64_t frame = 0;
+    long long dump_frame = -1;
+    std::string dump_dir;
+    int dump_state = 0;  // 0 waiting, 1 this run is dumped, 2 written
+    std::uint32_t fbp = 0, fbw = 0, fpsm = 0, zbp = 0, zpsm = 0, dump_from = 0;
+    std::vector<std::uint8_t> pre_rgba;
+    std::vector<std::uint32_t> pre_z;
+    std::uint64_t runs = 0, batches = 0, drawn = 0, draws = 0, triangles = 0, isolated = 0, oracle_batches = 0, prim_mismatch = 0, cross_batch = 0;
+    std::map<std::string, std::uint64_t> unsupported;
+} g_nat;
+
+constexpr std::uint32_t kNativeImport = 512u, kNativeColor = 256u, kNativeZWrite = 128u, kNativeConstant = 16u;
+
+// GS ALPHA (Cv = ((A - B) * C >> 7) + D; A, B, D: 0 Cs, 1 Cd, 2 zero; C: 0 As, 1 Ad, 2 FIX) as fixed-function blending,
+// with the shader's alpha output As / 128 (§4.3). 0: not expressible without the destination alpha (C = Ad) or not seen.
+enum NativeBlend : std::uint32_t { kBlendNone = 1, kBlendKeep, kBlendZero, kBlendLerp, kBlendAdd, kBlendSrc, kBlendDst, kBlendRevSub };
+
+std::uint32_t native_blend(std::uint32_t alpha, bool abe) {
+    if (!abe) return kBlendNone;
+    const std::uint32_t a = alpha & 3u, b = (alpha >> 2) & 3u, c = (alpha >> 4) & 3u, d = (alpha >> 6) & 3u;
+    if (a == b) return d == 0 ? kBlendNone : d == 1 ? kBlendKeep : kBlendZero;
+    if (c == 1) return 0;
+    if (a == 0 && b == 1 && d == 1) return kBlendLerp;
+    if (a == 0 && b == 2 && d == 1) return kBlendAdd;
+    if (a == 0 && b == 2 && d == 2) return kBlendSrc;
+    if (a == 1 && b == 2 && d == 2) return kBlendDst;
+    if (a == 2 && b == 0 && d == 1) return kBlendRevSub;
+    return 0;
+}
+
+// key: blend (bits 0-3), FIX factor (16), depth compare (bits 5-6: always, gequal, greater), Z write (128), colour (256),
+// the import (512)
+WGPURenderPipeline native_pipeline(std::uint32_t key) {
+    if (const auto it = g_nat.pipelines.find(key); it != g_nat.pipelines.end()) return it->second;
+    const bool import = key & kNativeImport;
+    const std::uint32_t blend = key & 15u;
+    const WGPUBlendFactor f = (key & kNativeConstant) ? WGPUBlendFactor_Constant : WGPUBlendFactor_SrcAlpha;
+    const WGPUBlendFactor nf = (key & kNativeConstant) ? WGPUBlendFactor_OneMinusConstant : WGPUBlendFactor_OneMinusSrcAlpha;
+    WGPUBlendState bs = WGPU_BLEND_STATE_INIT;
+    bs.alpha.operation = WGPUBlendOperation_Add;
+    bs.alpha.srcFactor = WGPUBlendFactor_One;
+    bs.alpha.dstFactor = WGPUBlendFactor_Zero;
+    bs.color.operation = WGPUBlendOperation_Add;
+    bs.color.srcFactor = WGPUBlendFactor_One;
+    bs.color.dstFactor = WGPUBlendFactor_Zero;
+    switch (blend) {
+    case kBlendLerp: bs.color.srcFactor = f, bs.color.dstFactor = nf; break;
+    case kBlendAdd: bs.color.srcFactor = f, bs.color.dstFactor = WGPUBlendFactor_One; break;
+    case kBlendSrc: bs.color.srcFactor = f; break;
+    case kBlendDst: bs.color.srcFactor = WGPUBlendFactor_Zero, bs.color.dstFactor = f; break;
+    case kBlendRevSub: bs.color.operation = WGPUBlendOperation_ReverseSubtract, bs.color.srcFactor = f, bs.color.dstFactor = WGPUBlendFactor_One; break;
+    case kBlendZero: bs.color.srcFactor = WGPUBlendFactor_Zero; break;
+    default: break;
+    }
+    WGPUColorTargetState color = WGPU_COLOR_TARGET_STATE_INIT;
+    color.format = WGPUTextureFormat_RGBA8Unorm;
+    color.writeMask = import ? WGPUColorWriteMask_All
+                      : (key & kNativeColor) && blend != kBlendKeep ? WGPUColorWriteMask_Red | WGPUColorWriteMask_Green | WGPUColorWriteMask_Blue
+                                                                    : WGPUColorWriteMask_None;
+    if (!import && blend != kBlendNone && blend != kBlendKeep) color.blend = &bs;
+    WGPUConstantEntry constants[2] = {WGPU_CONSTANT_ENTRY_INIT, WGPU_CONSTANT_ENTRY_INIT};
+    constants[0].key = view("SCALE");
+    constants[0].value = static_cast<double>(g_sx);
+    constants[1].key = view("SCALE_Y");
+    constants[1].value = static_cast<double>(g_sy);
+    WGPUFragmentState fs = WGPU_FRAGMENT_STATE_INIT;
+    fs.module = g_nat.module;
+    fs.entryPoint = view(import ? "native_import_fs" : "native_fs");
+    fs.constantCount = 2;
+    fs.constants = constants;
+    fs.targetCount = 1;
+    fs.targets = &color;
+    WGPUDepthStencilState ds = WGPU_DEPTH_STENCIL_STATE_INIT;
+    ds.format = WGPUTextureFormat_Depth32Float;
+    ds.depthWriteEnabled = import || (key & kNativeZWrite) ? WGPUOptionalBool_True : WGPUOptionalBool_False;
+    const std::uint32_t cmp = (key >> 5) & 3u;
+    ds.depthCompare = import || cmp == 0 ? WGPUCompareFunction_Always : cmp == 1 ? WGPUCompareFunction_GreaterEqual : WGPUCompareFunction_Greater;
+    WGPURenderPipelineDescriptor rd = WGPU_RENDER_PIPELINE_DESCRIPTOR_INIT;
+    rd.layout = g_nat.pipeline_layout;
+    rd.vertex.module = g_nat.module;
+    rd.vertex.entryPoint = view(import ? "native_full_vs" : "native_vs");
+    rd.vertex.constantCount = import ? 0 : 2;
+    rd.vertex.constants = import ? nullptr : constants;
+    rd.primitive.topology = WGPUPrimitiveTopology_TriangleList;
+    rd.depthStencil = &ds;
+    rd.fragment = &fs;
+    WGPURenderPipeline p = wgpuDeviceCreateRenderPipeline(g_device, &rd);
+    if (!p) std::fprintf(stderr, "[native] pipeline %x not created\n", key);
+    g_nat.pipelines[key] = p;
+    return p;
+}
+
+void native_target(std::uint32_t width, std::uint32_t height) {
+    NativeTarget &t = g_nat.target;
+    if (t.color && t.width == width && t.height == height) return;
+    // a replaced target stays alive: commands already queued draw into it
+    WGPUTextureDescriptor td = WGPU_TEXTURE_DESCRIPTOR_INIT;
+    td.usage = WGPUTextureUsage_RenderAttachment | WGPUTextureUsage_CopySrc;
+    td.dimension = WGPUTextureDimension_2D;
+    td.size = WGPUExtent3D{width, height, 1};
+    td.format = WGPUTextureFormat_RGBA8Unorm;
+    t.color = wgpuDeviceCreateTexture(g_device, &td);
+    td.format = WGPUTextureFormat_Depth32Float;
+    t.depth = wgpuDeviceCreateTexture(g_device, &td);
+    t.color_view = wgpuTextureCreateView(t.color, nullptr);
+    t.depth_view = wgpuTextureCreateView(t.depth, nullptr);
+    t.width = width;
+    t.height = height;
+}
+
+// Z max and the depth of one Z unit for a Z buffer format: depth32float holds Z / 2^bits exactly (§4.3).
+void native_depth(std::uint32_t zpsm, std::uint32_t &zmax, float &scale) {
+    zmax = z_max(zpsm);
+    scale = zpsm == PSMZ24 ? 1.0f / 16777216.0f : zmax == 0xFFFFu ? 1.0f / 65536.0f : 1.0f / 4294967296.0f;
+}
+
+void encode_native(WGPUCommandEncoder enc, const Command &c, const std::vector<NativeDraw> &draws) {
+    const NativeDraw *d = draws.data() + c.x;
+    const std::uint32_t count = c.y;
+    if (!count) return;
+    bool checks = false;
+    for (std::uint32_t i = 0; i < count; ++i) checks = checks || d[i].check;
+    if (checks) {
+        WGPUComputePassDescriptor cd = WGPU_COMPUTE_PASS_DESCRIPTOR_INIT;
+        WGPUComputePassEncoder pass = wgpuCommandEncoderBeginComputePass(enc, &cd);
+        wgpuComputePassEncoderSetPipeline(pass, g_native_check);
+        for (std::uint32_t i = 0; i < count; ++i) {
+            if (!d[i].check) continue;
+            const std::uint32_t offset = d[i].param * kParamStride;
+            wgpuComputePassEncoderSetBindGroup(pass, 0, g_native_group, 1, &offset);
+            wgpuComputePassEncoderDispatchWorkgroups(pass, d[i].check, 1, 1);
+        }
+        wgpuComputePassEncoderEnd(pass);
+        wgpuComputePassEncoderRelease(pass);
+    }
+    WGPURenderPassColorAttachment color = WGPU_RENDER_PASS_COLOR_ATTACHMENT_INIT;
+    color.view = d[0].color;
+    color.loadOp = WGPULoadOp_Load;
+    color.storeOp = WGPUStoreOp_Store;
+    WGPURenderPassDepthStencilAttachment depth = WGPU_RENDER_PASS_DEPTH_STENCIL_ATTACHMENT_INIT;
+    depth.view = d[0].depth;
+    depth.depthLoadOp = WGPULoadOp_Load;
+    depth.depthStoreOp = WGPUStoreOp_Store;
+    WGPURenderPassDescriptor rd = WGPU_RENDER_PASS_DESCRIPTOR_INIT;
+    rd.colorAttachmentCount = 1;
+    rd.colorAttachments = &color;
+    rd.depthStencilAttachment = &depth;
+    WGPURenderPassEncoder rp = wgpuCommandEncoderBeginRenderPass(enc, &rd);
+    WGPURenderPipeline current = nullptr;
+    for (std::uint32_t i = 0; i < count; ++i) {
+        if (d[i].color != color.view || !d[i].pipeline) continue;  // the target was replaced in between (or no pipeline)
+        if (d[i].pipeline != current) {
+            wgpuRenderPassEncoderSetPipeline(rp, d[i].pipeline);
+            current = d[i].pipeline;
+        }
+        const std::uint32_t offset = d[i].param * kParamStride;
+        wgpuRenderPassEncoderSetBindGroup(rp, 0, g_native_group, 1, &offset);
+        wgpuRenderPassEncoderSetScissorRect(rp, d[i].scissor[0], d[i].scissor[1], d[i].scissor[2], d[i].scissor[3]);
+        const WGPUColor constant{d[i].constant, d[i].constant, d[i].constant, d[i].constant};
+        wgpuRenderPassEncoderSetBlendConstant(rp, &constant);
+        wgpuRenderPassEncoderDraw(rp, d[i].vertices, 1, 0, 0);
+    }
+    wgpuRenderPassEncoderEnd(rp);
+    wgpuRenderPassEncoderRelease(rp);
+}
+
+void read_texture(WGPUTexture texture, WGPUTextureAspect aspect, std::vector<std::uint8_t> &out) {
+    const NativeTarget &t = g_nat.target;
+    const std::uint32_t row = (t.width * 4 + 255) & ~255u;
+    WGPUBuffer buffer = make_buffer(static_cast<std::uint64_t>(row) * t.height, WGPUBufferUsage_MapRead | WGPUBufferUsage_CopyDst);
+    WGPUCommandEncoder enc = wgpuDeviceCreateCommandEncoder(g_device, nullptr);
+    WGPUTexelCopyTextureInfo src = WGPU_TEXEL_COPY_TEXTURE_INFO_INIT;
+    src.texture = texture;
+    src.aspect = aspect;
+    WGPUTexelCopyBufferInfo dst = WGPU_TEXEL_COPY_BUFFER_INFO_INIT;
+    dst.buffer = buffer;
+    dst.layout.bytesPerRow = row;
+    dst.layout.rowsPerImage = t.height;
+    const WGPUExtent3D size{t.width, t.height, 1};
+    wgpuCommandEncoderCopyTextureToBuffer(enc, &src, &dst, &size);
+    WGPUCommandBuffer cmd = wgpuCommandEncoderFinish(enc, nullptr);
+    wgpuQueueSubmit(g_queue, 1, &cmd);
+    wgpuCommandBufferRelease(cmd);
+    wgpuCommandEncoderRelease(enc);
+    bool done = false;
+    WGPUBufferMapCallbackInfo cb = WGPU_BUFFER_MAP_CALLBACK_INFO_INIT;
+    cb.mode = WGPUCallbackMode_AllowProcessEvents;
+    cb.callback = [](WGPUMapAsyncStatus, WGPUStringView, void *flag, void *) { *static_cast<bool *>(flag) = true; };
+    cb.userdata1 = &done;
+    wgpuBufferMapAsync(buffer, WGPUMapMode_Read, 0, static_cast<std::uint64_t>(row) * t.height, cb);
+    wait_until(done);
+    out.assign(static_cast<std::size_t>(t.width) * t.height * 4, 0);
+    if (const auto *p = static_cast<const std::uint8_t *>(wgpuBufferGetConstMappedRange(buffer, 0, static_cast<std::uint64_t>(row) * t.height)))
+        for (std::uint32_t y = 0; y < t.height; ++y) std::memcpy(out.data() + static_cast<std::size_t>(y) * t.width * 4, p + static_cast<std::size_t>(y) * row, t.width * 4);
+    wgpuBufferUnmap(buffer);
+    wgpuBufferRelease(buffer);
+}
+
+// The emulated frame and Z buffer of the run, at the native target's resolution (sample k of GS pixel (x, y) at
+// (x * SCALE + k % SCALE, y * SCALE_Y + k / SCALE), gs.wgsl raster()).
+void frame_images(std::vector<std::uint8_t> &rgba, std::vector<std::uint32_t> &z) {
+    wait_idle();
+    std::vector<std::uint32_t> vram(static_cast<std::size_t>(kMemorySize / 4) * g_samples);
+    read_back(g_vram, vram.size() * 4, vram.data());
+    const NativeTarget &t = g_nat.target;
+    rgba.assign(static_cast<std::size_t>(t.width) * t.height * 4, 0);
+    z.assign(static_cast<std::size_t>(t.width) * t.height, 0);
+    std::uint32_t zmax;
+    float scale;
+    native_depth(g_nat.zpsm, zmax, scale);
+    for (std::uint32_t py = 0; py < t.height; ++py)
+        for (std::uint32_t px = 0; px < t.width; ++px) {
+            const std::uint32_t x = px / g_sx, y = py / g_sy, k = (py % g_sy) * g_sx + px % g_sx;
+            const std::uint32_t c = vram[(pixel_address(g_nat.fpsm, g_nat.fbp, g_nat.fbw, x, y) >> 2) * g_samples + k];
+            const std::uint32_t za = pixel_address(g_nat.zpsm, g_nat.zbp, g_nat.fbw, x, y);
+            const std::uint32_t zw = vram[(za >> 2) * g_samples + k] >> (zmax == 0xFFFFu ? (za & 2u) * 8u : 0u);
+            const std::size_t i = static_cast<std::size_t>(py) * t.width + px;
+            std::memcpy(rgba.data() + i * 4, &c, 4);
+            z[i] = zw & zmax;
+        }
+}
+
+void write_raw(const std::string &path, const void *data, std::size_t bytes) {
+    if (std::FILE *f = std::fopen(path.c_str(), "wb")) {
+        std::fwrite(data, 1, bytes, f);
+        std::fclose(f);
+    }
+}
+
+std::vector<std::uint32_t> native_check_counts() {
+    std::vector<std::uint32_t> c(16 + 16 * 16, 0);
+    if (g_native_checks) {
+        drain();
+        read_back(g_native_checks, c.size() * 4, c.data());
+    }
+    return c;
+}
+
+void native_dump() {
+    std::vector<std::uint8_t> emu_rgba, nat_rgba, nat_depth;
+    std::vector<std::uint32_t> emu_z;
+    frame_images(emu_rgba, emu_z);
+    read_texture(g_nat.target.color, WGPUTextureAspect_All, nat_rgba);
+    read_texture(g_nat.target.depth, WGPUTextureAspect_DepthOnly, nat_depth);
+    std::uint32_t zmax;
+    float scale;
+    native_depth(g_nat.zpsm, zmax, scale);
+    std::vector<std::uint32_t> nat_z(nat_depth.size() / 4);
+    for (std::size_t i = 0; i < nat_z.size(); ++i) {
+        float d;
+        std::memcpy(&d, nat_depth.data() + i * 4, 4);
+        nat_z[i] = static_cast<std::uint32_t>(std::min(std::llround(static_cast<double>(d) / scale), static_cast<long long>(zmax)));
+    }
+    const std::string &dir = g_nat.dump_dir;
+    write_raw(dir + "/pre.rgba", g_nat.pre_rgba.data(), g_nat.pre_rgba.size());
+    write_raw(dir + "/pre.z", g_nat.pre_z.data(), g_nat.pre_z.size() * 4);
+    write_raw(dir + "/emu.rgba", emu_rgba.data(), emu_rgba.size());
+    write_raw(dir + "/emu.z", emu_z.data(), emu_z.size() * 4);
+    write_raw(dir + "/nat.rgba", nat_rgba.data(), nat_rgba.size());
+    write_raw(dir + "/nat.z", nat_z.data(), nat_z.size() * 4);
+    const std::vector<std::uint32_t> checks = native_check_counts();
+    if (std::FILE *f = std::fopen((dir + "/meta.json").c_str(), "w")) {
+        std::fprintf(f, "{\"width\":%u,\"height\":%u,\"sx\":%u,\"sy\":%u,\"frame\":%u,\"fbp\":%u,\"fbw\":%u,\"fpsm\":%u,\"zbp\":%u,\"zpsm\":%u,\"zmax\":%u,",
+                     g_nat.target.width, g_nat.target.height, g_sx, g_sy, g_nat.dump_from, g_nat.fbp, g_nat.fbw, g_nat.fpsm, g_nat.zbp, g_nat.zpsm, zmax);
+        std::fprintf(f, "\"runs\":%llu,\"batches\":%llu,\"drawn\":%llu,\"draws\":%llu,\"triangles\":%llu,\"isolated\":%llu,\"oracle_batches\":%llu,"
+                        "\"prim_mismatch\":%llu,\"cross_batch\":%llu,\"unsupported\":{",
+                     static_cast<unsigned long long>(g_nat.runs), static_cast<unsigned long long>(g_nat.batches), static_cast<unsigned long long>(g_nat.drawn),
+                     static_cast<unsigned long long>(g_nat.draws), static_cast<unsigned long long>(g_nat.triangles), static_cast<unsigned long long>(g_nat.isolated),
+                     static_cast<unsigned long long>(g_nat.oracle_batches), static_cast<unsigned long long>(g_nat.prim_mismatch),
+                     static_cast<unsigned long long>(g_nat.cross_batch));
+        bool first = true;
+        for (const auto &[reason, n] : g_nat.unsupported) {
+            std::fprintf(f, "%s\"%s\":%llu", first ? "" : ",", reason.c_str(), static_cast<unsigned long long>(n));
+            first = false;
+        }
+        std::fprintf(f, "},\"checks\":[");
+        for (std::size_t i = 0; i < checks.size(); ++i) std::fprintf(f, "%s%u", i ? "," : "", checks[i]);
+        std::fprintf(f, "]}\n");
+        std::fclose(f);
+    }
+    std::fprintf(stderr, "[native] frame %u: dump written to %s\n", g_nat.dump_from, dir.c_str());
+}
+
+void native_close() {
+    g_nat.open = false;
+    if (g_nat.dump_state != 1) return;
+    native_dump();
+    g_nat.dump_state = 2;
+}
+
+void native_open(const State &st) {
+    std::uint64_t attr = st.prim;
+    if (!(st.prmodecont & 1u)) attr = (st.prim & 7u) | (st.prmode & ~7ull);
+    const Context &c = st.ctx[(attr >> 9) & 1u];
+    g_nat.fbp = (static_cast<std::uint32_t>(c.frame) & 0x1FFu) * 32u;
+    g_nat.fbw = static_cast<std::uint32_t>(c.frame >> 16) & 0x3Fu;
+    g_nat.fpsm = static_cast<std::uint32_t>(c.frame >> 24) & 0x3Fu;
+    g_nat.zbp = (static_cast<std::uint32_t>(c.zbuf) & 0x1FFu) * 32u;
+    g_nat.zpsm = 0x30u | (static_cast<std::uint32_t>(c.zbuf >> 24) & 0xFu);
+    const std::uint32_t width = std::clamp<std::uint32_t>(g_nat.fbw * 64u, 64u, 2048u) * g_sx;
+    const std::uint32_t height = std::clamp<std::uint32_t>((static_cast<std::uint32_t>(c.scissor >> 48) & 0x7FFu) + 1u, 1u, 2048u) * g_sy;
+    native_target(width, height);
+    emit_all();
+    if (g_nat.dump_state == 0 && g_nat.dump_frame >= 0 && g_nat.frame >= static_cast<std::uint64_t>(g_nat.dump_frame)) {
+        frame_images(g_nat.pre_rgba, g_nat.pre_z);
+        g_nat.dump_state = 1;
+        g_nat.dump_from = static_cast<std::uint32_t>(g_nat.frame);
+    }
+    std::uint32_t zmax;
+    float scale;
+    native_depth(g_nat.zpsm, zmax, scale);
+    const std::uint32_t param = push_params({g_nat.fbp, g_nat.fbw, g_nat.fpsm, g_nat.zbp, g_nat.zpsm, 0u, 0u, width, height, 0u, 0u, 0u, 0u, zmax, f2u(scale), 0u});
+    NativeDraw d;
+    d.pipeline = native_pipeline(kNativeImport);
+    d.color = g_nat.target.color_view;
+    d.depth = g_nat.target.depth_view;
+    d.param = param;
+    d.vertices = 3;
+    d.scissor[2] = width;
+    d.scissor[3] = height;
+    g_native_draws.push_back(d);
+    emit_native();
+    g_nat.open = true;
+    ++g_nat.runs;
+}
+
+void native_record(const State &st, const std::uint8_t *payload, std::uint32_t bytes) {
+    native::Batch b;
+    std::memcpy(&b, payload, sizeof b);
+    g_nat.in_kick = false;
+    const std::uint32_t kick_prims = g_nat.kick_prims;
+    g_nat.kick_prims = 0;
+    ++g_nat.batches;
+    const bool oracle = b.flags & native::kOracle;
+    const std::size_t body = sizeof b + static_cast<std::size_t>(b.nad) * 16;
+    const std::size_t record = (native::kRegQwords * 4 + static_cast<std::size_t>(b.n) * native::kVertexWords * (oracle ? 2 : 1)) * 4;
+    const auto unsupported = [](const char *why) { ++g_nat.unsupported[why]; };
+    if (bytes < body + record) return unsupported("short record");
+    if (drawdbg::enabled() && drawdbg::skipped(st)) {  // framedbg isolation skipped the batch's emulated draw
+        ++g_nat.isolated;
+        return;
+    }
+    if (!g_nat.open) native_open(st);
+    std::uint64_t attr = st.prim;
+    if (!(st.prmodecont & 1u)) attr = (st.prim & 7u) | (st.prmode & ~7ull);
+    const std::uint32_t prim = static_cast<std::uint32_t>(st.prim) & 7u;
+    const Context &c = st.ctx[(attr >> 9) & 1u];
+    std::uint32_t w[kSetupWords];
+    const std::uint32_t flags = make_setup(st, attr, w);
+    if (prim < 3 || prim > 5) return unsupported("primitive");
+    if (flags & 128u) return unsupported("DATE");
+    const std::uint32_t fbmsk = w[4] & 0xFFFFFFu;
+    if (fbmsk && fbmsk != 0xFFFFFFu) return unsupported("FBMSK");
+    if (w[3] != PSMCT32 && w[3] != PSMCT24) return unsupported("frame format");
+    std::uint32_t blend = native_blend(static_cast<std::uint32_t>(c.alpha) & 0xFFu, flags & 8u);
+    if (!blend) return unsupported("blend");
+    if (fbmsk == 0xFFFFFFu) blend = kBlendKeep;
+    const bool zte = flags & 512u;
+    const std::uint32_t ztst = (w[7] >> 8) & 3u;
+    if (zte && ztst == 0) return unsupported("ZTST never");
+    const std::uint32_t cmp = !zte || ztst == 1 ? 0u : ztst == 2 ? 1u : 2u;
+    const bool zwrite = zte && !(flags & 32u);
+    // the alpha test: pass pixels, then (AFAIL not KEEP) fail pixels in a second draw (PCSX2's split, §4.4)
+    struct Split {
+        std::uint32_t split;
+        bool color, zwrite;
+    } splits[2];
+    int count = 0;
+    const std::uint32_t atst = w[7] & 7u, afail = (w[7] >> 4) & 3u;
+    if (!(flags & 64u) || atst == 1) {
+        splits[count++] = {0, true, zwrite};
+    } else {
+        if (atst != 0) splits[count++] = {1, true, zwrite};
+        if (afail == 1 || afail == 3) splits[count++] = {2, true, false};
+        else if (afail == 2) splits[count++] = {2, false, zwrite};
+    }
+    if (!count) return unsupported("alpha test never");
+    const NativeTarget &t = g_nat.target;
+    const std::uint32_t sx0 = std::min((w[10] & 0xFFFFu) * g_sx, t.width), sx1 = std::min(((w[10] >> 16) + 1) * g_sx, t.width);
+    const std::uint32_t sy0 = std::min((w[11] & 0xFFFFu) * g_sy, t.height), sy1 = std::min(((w[11] >> 16) + 1) * g_sy, t.height);
+    if (sx0 >= sx1 || sy0 >= sy1) return unsupported("scissor");
+    const std::uint32_t setup_at = arena_append(w, sizeof w);
+    const std::uint32_t regs_at = arena_append(payload + body, record);
+    if (flags & 2u) {  // later uploads over these textures must wait for the native draws (as for the emulated ones)
+        for (std::uint32_t n = 0; n <= mip_levels(w); ++n) {
+            const Range r = level_range(w, n);
+            bool known = false;
+            for (const Range &k : g_batch_reads) known = known || (k.lo <= r.lo && r.hi <= k.hi);
+            if (!known) g_batch_reads.push_back(r);
+        }
+    }
+    const std::uint32_t tris = prim == 3 ? b.n / 3 : b.n >= 2 ? b.n - 2 : 0;
+    std::uint32_t zmax;
+    float scale;
+    native_depth(w[6], zmax, scale);
+    const std::uint32_t pflags = (g_nat.plight ? 1u : 0u) | ((flags & 1u) ? 2u : 0u) | (oracle ? 4u : 0u);
+    const std::uint32_t ofx = static_cast<std::uint32_t>(c.xyoffset) & 0xFFFFu, ofy = static_cast<std::uint32_t>(c.xyoffset >> 32) & 0xFFFFu;
+    for (int i = 0; i < count; ++i) {
+        NativeDraw d;
+        d.param = push_params({regs_at, b.program, b.n, b.nad, setup_at, ofx, ofy, t.width, t.height, splits[i].split, prim, pflags, 0u, zmax, f2u(scale), g_nat.adc_back});
+        std::uint32_t key = blend | (cmp << 5) | (splits[i].zwrite ? kNativeZWrite : 0u) | (splits[i].color ? kNativeColor : 0u);
+        if (((c.alpha >> 4) & 3u) == 2u) key |= kNativeConstant;
+        d.pipeline = native_pipeline(key);
+        d.color = t.color_view;
+        d.depth = t.depth_view;
+        d.vertices = tris * 3;
+        d.check = i == 0 && oracle && g_nat.check ? (b.n + 63) / 64 : 0;
+        d.scissor[0] = sx0;
+        d.scissor[1] = sy0;
+        d.scissor[2] = sx1 - sx0;
+        d.scissor[3] = sy1 - sy0;
+        d.constant = static_cast<double>((c.alpha >> 32) & 0xFFu) / 128.0;
+        if (d.vertices || d.check) g_native_draws.push_back(d);
+        ++g_nat.draws;
+    }
+    ++g_nat.drawn;
+    g_nat.triangles += tris;
+    if (oracle && prim != 3) {
+        // the GS's triangles for this kick against the strip breaks of the VU1 output (XYZF2 bit 15)
+        const std::uint8_t *out = payload + body + (native::kRegQwords * 4 + static_cast<std::size_t>(b.n) * native::kVertexWords) * 4;
+        std::uint32_t expected = 0, cross = 0;
+        for (std::uint32_t k = 0; k < b.n; ++k) {
+            std::uint32_t xyzw;
+            std::memcpy(&xyzw, out + k * 48 + 32 + 12, 4);
+            if ((xyzw >> 15) & 1u) continue;
+            if (k >= 2) ++expected;
+            else ++cross;
+        }
+        ++g_nat.oracle_batches;
+        if (expected + cross != kick_prims) ++g_nat.prim_mismatch;
+        g_nat.cross_batch += cross;
+    }
+}
+
+bool native_init() {
+    g_nat.on = native::world();
+    if (!g_nat.on) return true;
+    const auto on = [](const char *name) {
+        const char *e = std::getenv(name);
+        return e && *e && *e != '0';
+    };
+    g_nat.check = on("PS2_NATIVE_CHECK") && !native::skip_vu1();
+    g_nat.plight = on("PS2_NATIVE_PLIGHT");
+    if (const char *e = std::getenv("PS2_NATIVE_ADC_BACK")) g_nat.adc_back = static_cast<std::uint32_t>(std::atoi(e));
+    if (const char *e = std::getenv("PS2_NATIVE_DUMP")) {
+        char dir[512] = {};
+        long long frame = -1;
+        if (std::sscanf(e, "%lld,%511s", &frame, dir) == 2) {
+            g_nat.dump_frame = frame;
+            g_nat.dump_dir = dir;
+        }
+    }
+    g_native_checks = make_buffer(4096, WGPUBufferUsage_Storage | WGPUBufferUsage_CopySrc | WGPUBufferUsage_CopyDst);
+    const std::vector<std::uint8_t> zero(4096, 0);
+    wgpuQueueWriteBuffer(g_queue, g_native_checks, 0, zero.data(), zero.size());
+    // as the compute layout, with the stages each binding is used in (the vertex shader reads only params and data)
+    WGPUBindGroupLayoutEntry le[9] = {};
+    const WGPUBufferBindingType types[9] = {WGPUBufferBindingType_Storage, WGPUBufferBindingType_ReadOnlyStorage, WGPUBufferBindingType_Uniform,
+                                            WGPUBufferBindingType_ReadOnlyStorage, WGPUBufferBindingType_Storage, WGPUBufferBindingType_Storage,
+                                            WGPUBufferBindingType_ReadOnlyStorage, WGPUBufferBindingType_Storage, WGPUBufferBindingType_Storage};
+    const WGPUShaderStage fc = WGPUShaderStage_Fragment | WGPUShaderStage_Compute, all = fc | WGPUShaderStage_Vertex;
+    const WGPUShaderStage stages[9] = {fc, fc, all, all, fc, fc, WGPUShaderStage_Compute, fc, WGPUShaderStage_Compute};
+    for (int i = 0; i < 9; ++i) {
+        le[i] = WGPU_BIND_GROUP_LAYOUT_ENTRY_INIT;
+        le[i].binding = static_cast<std::uint32_t>(i);
+        le[i].visibility = stages[i];
+        le[i].buffer.type = types[i];
+        le[i].buffer.hasDynamicOffset = i == 2;
+        le[i].buffer.minBindingSize = i == 2 ? kParamStride : 0;
+    }
+    WGPUBindGroupLayoutDescriptor ld = WGPU_BIND_GROUP_LAYOUT_DESCRIPTOR_INIT;
+    ld.entryCount = 9;
+    ld.entries = le;
+    g_native_layout = wgpuDeviceCreateBindGroupLayout(g_device, &ld);
+    WGPUPipelineLayoutDescriptor pld = WGPU_PIPELINE_LAYOUT_DESCRIPTOR_INIT;
+    pld.bindGroupLayoutCount = 1;
+    pld.bindGroupLayouts = &g_native_layout;
+    g_nat.pipeline_layout = wgpuDeviceCreatePipelineLayout(g_device, &pld);
+    const std::string code = std::string(kGsShader) + "\n" + kNativeShader;
+    WGPUShaderSourceWGSL source = WGPU_SHADER_SOURCE_WGSL_INIT;
+    source.code = view(code.c_str());
+    WGPUShaderModuleDescriptor md = WGPU_SHADER_MODULE_DESCRIPTOR_INIT;
+    md.nextInChain = &source.chain;
+    g_nat.module = wgpuDeviceCreateShaderModule(g_device, &md);
+    WGPUComputePipelineDescriptor cd = WGPU_COMPUTE_PIPELINE_DESCRIPTOR_INIT;
+    cd.layout = g_nat.pipeline_layout;
+    cd.compute.module = g_nat.module;
+    cd.compute.entryPoint = view("native_check");
+    g_native_check = wgpuDeviceCreateComputePipeline(g_device, &cd);
+    if (!g_nat.module || !g_native_check || !native_pipeline(kNativeImport)) {
+        std::fprintf(stderr, "[native] shader or pipelines not created; native drawing off\n");
+        g_nat.on = false;
+        return false;
+    }
+    return true;
+}
+
+void native_stats() {
+    if (!g_nat.on) return;
+    std::fprintf(stderr, "[native] %llu runs, %llu batches: %llu drawn (%llu draws, %llu triangles), %llu skipped by isolation",
+                 static_cast<unsigned long long>(g_nat.runs), static_cast<unsigned long long>(g_nat.batches), static_cast<unsigned long long>(g_nat.drawn),
+                 static_cast<unsigned long long>(g_nat.draws), static_cast<unsigned long long>(g_nat.triangles), static_cast<unsigned long long>(g_nat.isolated));
+    for (const auto &[reason, n] : g_nat.unsupported) std::fprintf(stderr, ", %llu %s", static_cast<unsigned long long>(n), reason.c_str());
+    std::fprintf(stderr, "\n");
+    if (g_nat.check) {
+        const std::vector<std::uint32_t> c = native_check_counts();
+        std::fprintf(stderr, "[native] check: %u batches, %u vertices; mismatches X %u Y %u Z %u F %u ADC(window 0/1/2) %u/%u/%u S %u T %u Q %u RGBA %u, "
+                             "vertices with any %u; GS triangle count differs in %llu of %llu batches, %llu kicks continue the previous batch's strip\n",
+                     c[13], c[0], c[1], c[2], c[3], c[4], c[5], c[6], c[7], c[8], c[9], c[10], c[11], c[12], static_cast<unsigned long long>(g_nat.prim_mismatch),
+                     static_cast<unsigned long long>(g_nat.oracle_batches), static_cast<unsigned long long>(g_nat.cross_batch));
+        for (std::uint32_t i = 0; i < std::min<std::uint32_t>(c[12], 16u); ++i) {
+            const std::uint32_t *m = c.data() + 16 + i * 16;
+            std::fprintf(stderr, "[native]   bits %03x prog %u k %u: xy %08x/%08x z %06x/%08x f %02x/%08x s %08x/%08x t %08x/%08x q %08x/%08x rgba %08x/%08x\n", m[0],
+                         m[1] & 0xFFu, m[1] >> 8, m[2], m[3], m[4], m[5], m[6], m[7], m[8], m[9], m[10], m[11], m[12], m[13], m[14], m[15]);
+        }
+    }
 }
 
 }
@@ -1573,6 +2188,7 @@ bool init(Mode m) {
         if (!g_pipelines[i]) return false;
     }
     wgpuShaderModuleRelease(module);
+    native_init();
     ensure_capacity();
     g_mode = m;
     return true;
@@ -1620,6 +2236,10 @@ void replace_texture(const State &st, SetupCache &cache) {
 }
 
 void draw(const State &st, const Vertex *v, int count, texcache::Run run) {
+    if (g_nat.on) {  // an emulated primitive: inside a native batch's XGKICK, or the end of a run of native batches
+        if (g_nat.in_kick) ++g_nat.kick_prims;
+        else if (g_nat.open) native_close();
+    }
     if (g_image.active && !g_image.pending.empty()) flush_image();
     std::uint64_t attr = st.prim;
     if (!(st.prmodecont & 1u)) attr = (st.prim & 7u) | (st.prmode & ~7ull);
@@ -1873,6 +2493,7 @@ void image_data(const std::uint8_t *data, std::size_t bytes) {
 }
 
 void local_copy(const State &s) {
+    if (g_nat.on && g_nat.open && !g_nat.in_kick) native_close();
     flush_all();
     const std::uint64_t buf = s.bitbltbuf, pos = s.trxpos, reg = s.trxreg;
     const std::uint32_t w = static_cast<std::uint32_t>(reg) & 0xFFFu, h = static_cast<std::uint32_t>(reg >> 32) & 0xFFFu;
@@ -2037,7 +2658,21 @@ void stats() {
     std::fprintf(stderr, "[gpu] %llu submits, dispatches:", static_cast<unsigned long long>(g_submits));
     for (int i = 0; i < kPipelines; ++i) std::fprintf(stderr, " %s %llu", kEntryPoints[i], static_cast<unsigned long long>(g_dispatches[i]));
     std::fprintf(stderr, "\n");
+    native_stats();
 }
+
+void native_begin(const State &st) {
+    if (!g_nat.on) return;
+    g_nat.in_kick = true;
+    g_nat.kick_prims = 0;
+    if (!g_nat.open) native_open(st);
+}
+
+void native_batch(const State &st, const std::uint8_t *payload, std::uint32_t bytes) {
+    if (g_nat.on) native_record(st, payload, bytes);
+}
+
+void native_vblank(std::uint64_t frame) { g_nat.frame = frame; }
 
 void configure_surface() {
     WGPUSurfaceConfiguration config = WGPU_SURFACE_CONFIGURATION_INIT;

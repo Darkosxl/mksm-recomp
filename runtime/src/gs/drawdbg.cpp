@@ -159,6 +159,17 @@ void vblank(std::uint64_t frame) {
             if (*f) std::fclose(*f), *f = nullptr;
 }
 
+bool skipped(const State &s) {
+    if (config().skip.empty() || g_frame < config().skip_from) return false;
+    const std::uint64_t eff = (s.prmodecont & 1u) ? s.prim : s.prmode;
+    const Context &c = s.ctx[(eff >> 9) & 1u];
+    const std::uint64_t flags = (s.prim & 7u) | (eff & 0x7F8u);
+    std::uint32_t group = fnv(fnv(fnv(fnv(2166136261u, g_path), g_src.ra), (static_cast<std::uint64_t>(g_src.vu1_entry) << 32) | g_src.vu1_hash),
+                              (c.tex0 & 0x3FFFFFFFFull) ^ (static_cast<std::uint64_t>(c.frame & 0x3F3F0000u) << 34));
+    group = fnv(group, flags & 0x17u);
+    return config().skip.count(group) != 0;
+}
+
 bool begin_prim(const State &s, int vertices) {
     const std::uint64_t eff = (s.prmodecont & 1u) ? s.prim : s.prmode;
     const Context &c = s.ctx[(eff >> 9) & 1u];

@@ -47,5 +47,9 @@ bool has_surface();
 bool present(const DisplaySource &src);
 double busy_ms();
 void stats();
+// Native renderer, stage 1 (runtime/src/native.hpp): render thread, in GS order around each native batch's XGKICK.
+void native_begin(const State &s);
+void native_batch(const State &s, const std::uint8_t *payload, std::uint32_t bytes);
+void native_vblank(std::uint64_t frame);
 
 }

@@ -8,6 +8,7 @@
 #include "texpack.hpp"
 #include "../debug.hpp"
 #include "../hw.hpp"
+#include "../native.hpp"
 #include "../seamv.hpp"
 #include "../vu_micro.hpp"
 #ifdef PS2_GPU
@@ -1029,16 +1030,45 @@ void write_privileged(std::uint32_t address, std::uint64_t value) {
     }
 }
 
+// Native renderer (native.hpp), render side: the marker ahead of a native batch's XGKICK, then the batch. A batch whose
+// VU1 run was skipped (PS2_NATIVE_SKIP_VU1) applies the GS state its XGKICK would have carried (A+D: TEX0_1, MIPTBP1_1).
+void render_native(std::uint32_t type, const std::uint8_t *data, std::uint32_t bytes) {
+    if (type == queue::kNativeBegin) {
+#ifdef PS2_GPU
+        if (gpu_on()) gpu::native_begin(g_state);
+#endif
+        return;
+    }
+    native::Batch b;
+    if (bytes < sizeof b) return;
+    std::memcpy(&b, data, sizeof b);
+    if (b.flags & native::kSkipped)
+        for (std::uint32_t i = 0; i < b.nad && sizeof b + (i + 1) * 16 <= bytes; ++i) {
+            Reg128 q;
+            std::memcpy(&q, data + sizeof b + i * 16, 16);
+            write_packed(0xE, q);
+        }
+#ifdef PS2_GPU
+    if (gpu_on()) gpu::native_batch(g_state, data, bytes);
+#endif
+}
+
+void native_message(std::uint32_t type, const std::uint8_t *data, std::uint32_t bytes) {
+    if (queue::active()) queue::post(static_cast<queue::Type>(type), 0, 0, data, bytes);
+    else render_native(type, data, bytes);
+}
+
 void vblank(bool start) {
     if (start) {
         vu::flush_kicks();
         if (seamv::on() && !queue::vu_active()) seamv::vblank(static_cast<std::uint32_t>(frame_count()));
+        if (native::world() && !queue::vu_active()) native::vblank(static_cast<std::uint32_t>(frame_count()));
         g_odd_field = !g_odd_field;
         raise(8);
         if (queue::active()) queue::post(queue::kVblank, static_cast<std::uint32_t>(frame_count()), 0, nullptr, 0);
         else {
 #ifdef PS2_GPU
-            if (gpu_on()) gpu::flush();
+            if (gpu_on()) gpu::flush(), gpu::native_vblank(frame_count());
 #endif
             if (drawdbg::enabled()) drawdbg::vblank(frame_count());
         }
@@ -1218,7 +1248,7 @@ Rendered render_pending(const std::function<void(const DisplayRegs &)> &on_prese
         case queue::kVertexReset: g_state.count = 0; break;
         case queue::kVblank:
 #ifdef PS2_GPU
-            if (gpu_on()) gpu::flush();
+            if (gpu_on()) gpu::flush(), gpu::native_vblank(h.arg0);
 #endif
             if (drawdbg::enabled()) drawdbg::vblank(h.arg0);
             break;
@@ -1236,6 +1266,7 @@ Rendered render_pending(const std::function<void(const DisplayRegs &)> &on_prese
             break;
         }
         case queue::kState: serve_state(payload); break;
+        case queue::kNativeBegin: case queue::kNative: render_native(h.type, payload, h.bytes); break;
         case queue::kDownload: {
             std::uintptr_t target;
             std::memcpy(&target, payload, sizeof target);

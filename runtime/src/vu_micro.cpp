@@ -7,6 +7,7 @@
 #include "gs/queue.hpp"
 #include "vu_jit_web.hpp"
 #include "hw.hpp"
+#include "native.hpp"
 #include "seamv.hpp"
 #include "ps2/fpu.hpp"
 #include "ps2/system.hpp"
@@ -686,13 +687,22 @@ void lower(Unit &u, std::uint32_t w, std::uint32_t pc, std::uint32_t &npc, bool 
 }
 
 void flush_kicks() {
-    if (g_pending_kicks.empty() || !vu1_on_this_thread()) return;
+    if (!vu1_on_this_thread()) return;
+    if (native::g_r14_deferred) native::r14_run();
+    if (g_pending_kicks.empty() && !native::g_pending) return;
     std::vector<PendingKick> kicks;
     kicks.swap(g_pending_kicks);
+    // native.hpp: a world batch read at its program start goes to the renderer around its XGKICK
+    const bool native_batch = native::g_pending;
+    if (native_batch) {
+        for (const PendingKick &k : kicks) native::kick(k.start, k.data.data(), k.count);
+        native::kicks_begin();
+    }
     for (const PendingKick &k : kicks) {
         if (gs::drawdbg::enabled()) gs::drawdbg::set_kick_source(k.source);
         gif::transfer(1, k.data.data(), k.count);
     }
+    if (native_batch) native::kicks_end();
 }
 
 bool kicks_pending() { return !g_pending_kicks.empty(); }

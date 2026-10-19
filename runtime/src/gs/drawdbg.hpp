@@ -38,6 +38,7 @@ Source packet_source(int path);
 void set_tag(int path, const Source &s);
 void vblank(std::uint64_t frame);
 bool begin_prim(const State &s, int vertices);  // false: skip drawing this primitive
+bool skipped(const State &s);  // whether a primitive drawn now, from the last tagged source, would be skipped
 void end_prim(std::uint64_t ns);
 void gif_time(std::uint64_t ns);
 std::uint32_t current_draw();  // id of the draw being recorded, ~0u when not dumping
