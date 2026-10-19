@@ -58,11 +58,20 @@ struct TextureSlot {
     static constexpr std::uint32_t kSize = 0x430;
 
     std::uint32_t addr;
+    Field<std::uint32_t> pixels{addr + 0x00};    // EE address of the texels
     Field<std::uint16_t> width{addr + 0x08};
     Field<std::uint16_t> height{addr + 0x0a};
     Field<std::uint16_t> psm{addr + 0x0c};       // Psm
+    Field<std::uint16_t> cpsm{addr + 0x0e};      // pixel format of the palette (CLUT)
     Field<std::uint16_t> tbw{addr + 0x10};       // GS buffer width, in units of 64 texels
+    Field<std::uint16_t> cbp{addr + 0x12};       // GS address of the palette, in 64-word blocks
     Field<std::uint16_t> flags{addr + 0x16};     // SlotFlags
+    // nonzero: the 4/8-bit texels are stored pre-swizzled and go to GS memory as a PSMCT32 image (half the width,
+    // half the height, a quarter at 4 bits)
+    Field<std::uint32_t> swizzled{addr + 0x1c};
+    Field<std::uint32_t> tbp{addr + 0x20};       // GS address of the texels, in 64-word blocks
+    Field<std::uint32_t> clut{addr + 0x38};      // EE address of the palette
+    Field<std::uint32_t> bpp{addr + 0x160};      // bits per texel; below 16 the texture has a palette
     Field<std::uint64_t> tex0{addr + 0x230};     // GS TEX0 register: base, width, format, size, CLUT
     Field<std::uint64_t> miptbp1{addr + 0x238};  // GS MIPTBP1 register: base and width of mip levels 1-3
     Field<std::uint16_t> linked{addr + 0x246};   // slot number, valid when flags & kHasLinked
