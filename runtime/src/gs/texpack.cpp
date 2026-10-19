@@ -166,13 +166,21 @@ Loader &loader() {
 bool active() { return dump_dir() || pack_dir(); }
 bool packing() { return pack_dir() != nullptr; }
 
+// Bumped by everything a key depends on besides TEX0 and TEXA (page writes and draws, CLUT loads): key() reuses a
+// key while it stands still, since most setup changes are ALPHA, TEST and the like, not the texture.
+std::uint64_t g_epoch = 1;
+
+void clut_loaded() { ++g_epoch; }
+
 void touched(std::uint32_t bp, std::uint32_t bw, std::uint32_t psm, std::uint32_t x, std::uint32_t y, std::uint32_t w, std::uint32_t h) {
+    ++g_epoch;
     std::uint32_t first, last;
     page_span(bp, bw, psm, x, y, w, h, first, last);
     for (std::uint32_t p = first; p <= last && p < first + kPages; ++p) ++g_generation[p % kPages], g_drawn[p % kPages] = false;
 }
 
 void drawn(std::uint32_t bp, std::uint32_t bw, std::uint32_t psm, std::uint32_t x0, std::uint32_t y0, std::uint32_t x1, std::uint32_t y1) {
+    ++g_epoch;
     std::uint32_t first, last;
     page_span(bp, bw, psm, x0, y0, x1 - x0 + 1, y1 - y0 + 1, first, last);
     for (std::uint32_t p = first; p <= last && p < first + kPages; ++p) g_drawn[p % kPages] = true;
@@ -181,9 +189,15 @@ void drawn(std::uint32_t bp, std::uint32_t bw, std::uint32_t psm, std::uint32_t 
 std::uint64_t key_uncounted(const State &st);
 std::uint64_t key(const State &st) {
     const auto t0 = std::chrono::steady_clock::now();
-    const std::uint64_t k = key_uncounted(st);
+    const std::uint64_t eff = (st.prmodecont & 1u) ? st.prim : st.prmode, tex0 = st.ctx[(eff >> 9) & 1u].tex0;
+    struct Memo {
+        std::uint64_t tex0, texa, epoch, key;
+    };
+    static Memo memo[64];
+    Memo &m = memo[(tex0 * 0x9E3779B97F4A7C15ull) >> 58];
+    if (m.epoch != g_epoch || m.tex0 != tex0 || m.texa != st.texa) m = {tex0, st.texa, g_epoch, key_uncounted(st)};
     g_stats.key_ms += ms_since(t0);
-    return k;
+    return m.key;
 }
 
 std::uint64_t key_uncounted(const State &st) {

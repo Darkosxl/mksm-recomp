@@ -455,6 +455,7 @@ void load_clut(std::uint64_t tex0) {
             const std::uint32_t c = read_pixel(cpsm == 0 ? PSMCT32 : cpsm, cbp, cbw, x, y);
             const std::uint32_t slot = (csa * 16 + i) & 511u;
             g_state.clut[slot] = c;
+            if (i + 1 == entries && texpack::active()) texpack::clut_loaded();
             continue;
         }
         if (eight) {
@@ -465,10 +466,14 @@ void load_clut(std::uint64_t tex0) {
             x = i & 7u;
             y = i >> 3;
         }
-        const std::uint32_t c = read_pixel(cpsm == 0 ? PSMCT32 : cpsm, cbp, 1, x, y);
+        // CSM1: the CLUT is one 16x16 (8x2) block of page cbp, so read_pixel() reduces to the swizzle table
+        const std::uint32_t c = cpsm == PSMCT32 ? get<std::uint32_t>(cbp * 256 + g_off32[y][x])
+                                : cpsm == PSMCT16 ? get<std::uint16_t>(cbp * 256 + g_off16[y][x])
+                                                  : read_pixel(cpsm, cbp, 1, x, y);
         const std::uint32_t slot = eight ? i : ((csa & 15u) * 16u + i) & 255u;
         g_state.clut[slot] = c;
     }
+    if (texpack::active()) texpack::clut_loaded();
 }
 
 }
