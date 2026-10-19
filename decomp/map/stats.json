@@ -7,12 +7,12 @@
  "sce_matches_dropped_isolated": 15,
  "eh_frame_objects": 453,
  "eh_frame_fdes": 9573,
- "functions": 15353,
+ "functions": 15012,
  "functions_with_fde": 9573,
  "ends_from_fde": 9571,
  "call_edges(distinct caller,callee,kind)": 30421,
  "call_targets_not_at_a_start": 0,
- "jalr_unresolved_sites": 3589,
+ "jalr_unresolved_sites": 3587,
  "functions_named": 822,
  "named_by_source": {
   "notes": 116,
@@ -23,10 +23,10 @@
   "string-xref": 69
  },
  "module_counts": {
-  "cri": 2668,
+  "cri": 2485,
   "gamecode": 3623,
-  "havok": 2172,
-  "libc": 278,
+  "havok": 2092,
+  "libc": 269,
   "paradox:ai": 602,
   "paradox:anim": 189,
   "paradox:control": 115,
@@ -44,8 +44,8 @@
   "paradox:utility": 26,
   "platform": 108,
   "ps2render": 1095,
-  "sony": 619,
-  "unknown": 208,
+  "sony": 565,
+  "unknown": 193,
   "utility": 145
  },
  "module_source_counts": {
@@ -54,10 +54,10 @@
   "object-callgraph": 1502,
   "object-neighbours": 3241,
   "object-between-paradox": 1283,
-  "range": 5132,
+  "range": 4836,
   "callgraph": 74,
-  "neighbours": 220,
-  "none": 208
+  "neighbours": 190,
+  "none": 193
  },
  "functions_with_source_file": 3244,
  "assert_anchored_functions": 216,
@@ -66,12 +66,14 @@
  "start_decisions": {
   "accepted:strong": 14381,
   "rejected:inside-fde": 2038,
-  "accepted:unreached-by-ghidra": 972,
-  "rejected:internal": 248,
+  "accepted:unreached-by-ghidra": 631,
+  "rejected:inside-lib": 80,
+  "rejected:fragment": 340,
+  "rejected:internal": 176,
   "rejected:case-label": 39,
-  "rejected:eh-landing-pad": 118
+  "rejected:eh-landing-pad": 111
  },
- "leaf_functions": 5358,
+ "leaf_functions": 5019,
  "sce_dropped": {
   "41cbf0": "libcdvd:_sceCd_Poff_Intr",
   "4279b0": "libgcc:eh_context_free",

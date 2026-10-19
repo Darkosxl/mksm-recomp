@@ -184,12 +184,15 @@ class Walker:
             if k:
                 self.dec[elf.T0 + 4 * i] = k
 
-    def body(self, start, limit):
-        """Instructions reachable from start without leaving [start, limit) and without following calls."""
+    def body(self, start, limit, fell=None):
+        """Instructions reachable from start without leaving [start, limit) and without following calls.
+        If `fell` is a list, True is appended when straight-line flow runs into `limit` (the next start)."""
         seen, stack = set(), [start]
         dec = self.dec
         while stack:
             pc = stack.pop()
+            if pc == limit and fell is not None:
+                fell.append(True)
             while start <= pc < limit and pc not in seen:
                 seen.add(pc)
                 k = dec.get(pc)
@@ -211,6 +214,8 @@ class Walker:
                     if rs != 31 and pc in self.jt:
                         stack.extend(self.jt[pc])
                     break
+            if pc == limit and fell is not None:
+                fell.append(True)
         return seen
 
 
@@ -332,7 +337,8 @@ def sce_scan(elf, db_path):
 
 # ------------------------------------------------------------------------------------ boundaries
 
-def resolve_starts(elf, walker, ghidra, recomp, jal, linear, eh, dataptrs, caselabels, lib, fde):
+def resolve_starts(elf, walker, ghidra, recomp, jal, linear, eh, dataptrs, caselabels, lib, fde, fdeset):
+    # `fde` maps start -> exact size (eh_frame FDEs and SCE library symbol sizes); `fdeset` = the eh_frame ones
     """Decide the function starts.
 
     Strong starts: eh_frame FDE starts, Ghidra's starts, direct jal targets, `j` targets outside the jumping
@@ -343,6 +349,7 @@ def resolve_starts(elf, walker, ghidra, recomp, jal, linear, eh, dataptrs, casel
     function's body, and no earlier function's body continues past it. Returns (starts, decision{addr: (accepted, reason)}, owner{pc: start})."""
     strong = {a for a in set(ghidra) | set(jal) | set(lib) | set(fde) | {elf.entry} if elf.in_text(a)}
     fstarts = sorted(fde)
+    fde_only = set(fdeset)
     order = sorted(strong)
     tailj = set()
     for pc, (kind, tgt, rs) in walker.dec.items():
@@ -369,7 +376,7 @@ def resolve_starts(elf, walker, ghidra, recomp, jal, linear, eh, dataptrs, casel
 
     decision = {}
     for a in strong:
-        src = [n for n, st in (("fde", fde), ("ghidra", ghidra), ("jal", jal), ("tail-j", tailj), ("lib", lib))
+        src = [n for n, st in (("fde", fde_only), ("ghidra", ghidra), ("jal", jal), ("tail-j", tailj), ("lib", lib))
                if a in st]
         if a == elf.entry:
             src.append("entry")
@@ -382,7 +389,7 @@ def resolve_starts(elf, walker, ghidra, recomp, jal, linear, eh, dataptrs, casel
         limit = order[k] if k < len(order) else elf.T1
         f = bisect.bisect_right(fstarts, c) - 1
         if f >= 0 and c < fstarts[f] + fde[fstarts[f]]:
-            decision[c] = (False, "inside-fde(%x):" % fstarts[f] + tags)
+            decision[c] = (False, ("inside-fde(%x):" if fstarts[f] in fde_only else "inside-lib(%x):") % fstarts[f] + tags)
         elif c in eh:
             decision[c] = (False, "eh-landing-pad:" + tags)
         elif c in caselabels:
@@ -393,8 +400,12 @@ def resolve_starts(elf, walker, ghidra, recomp, jal, linear, eh, dataptrs, casel
             decision[c] = (False, "padding:" + tags)
         else:
             later = [owner[pc] for pc in range(c + 4, limit, 4) if pc in owner and owner[pc] < c]
+            fell = []
+            walker.body(c, limit, fell)
             if later:
                 decision[c] = (False, "inside(body-of-%x-continues-past-it):" % later[0] + tags)
+            elif fell and c not in dataptrs:
+                decision[c] = (False, "fragment(falls-into-next-start):" + tags)
             else:
                 claim(c, limit)
                 starts.add(c)
@@ -689,9 +700,13 @@ def main():
 
     # ---- boundaries
     walker = Walker(elf, jt)
+    exact = dict(fde)
+    for a, (lib, name, size) in sce.items():
+        exact.setdefault(a, size)
     starts, decision, owner, tailj = resolve_starts(elf, walker, ghidra, recomp, jal, linear, eh, dataptrs,
-                                                    caselabels, set(sce), fde)
-    ends, end_how = function_ends(elf, starts, owner, fde)
+                                                    caselabels, set(sce), exact, set(fde))
+    ends, end_how = function_ends(elf, starts, owner, exact)
+    end_how = [("lib-size" if h == "fde" and s not in fde else h) for s, h in zip(starts, end_how)]
     idx = {s: k for k, s in enumerate(starts)}
     stats["functions"] = len(starts)
     stats["functions_with_fde"] = sum(1 for s in starts if s in fde)
@@ -882,7 +897,7 @@ def main():
                 claims.append((cands[0], e["name"].split("(")[0], "proto-candidate", "candidate", fname))
     sysnames = json.load(open(os.path.join(ROOT, "mksm/tools/scripts/ee_syscall_names.json")))
     for s, e in zip(starts, ends):
-        if e - s <= 16:
+        if e - s <= 24:  # stub (li v1, N; syscall; jr ra; nop), sometimes followed by a stray fragment
             ws = [elf.w(a) for a in range(s, e, 4)]
             if len(ws) >= 3 and ws[0] >> 16 == 0x2403 and ws[1] == 0x0000000C and ws[2] == 0x03E00008:
                 num = ((ws[0] & 0xFFFF) ^ 0x8000) - 0x8000

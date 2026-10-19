@@ -51,14 +51,16 @@ def features(elf, s, e):
         if op != 0x0F:
             continue
         hi8 = imm >> 8
-        if 0x60 <= hi8 <= 0x7F:
+        if imm in (0x6000, 0x7000):
+            pass  # num=0 UNPACK is 256 qwords; read these as DMA ret/end tags below
+        elif 0x60 <= hi8 <= 0x7F:
             tags["UNPACK"] += 1
         elif hi8 in VIF:
             tags[VIF[hi8]] += 1
         elif hi8 in VIF_SMALL and imm & 0xFF == 0 and hi8 != 0:
             tags["vif:" + VIF_SMALL[hi8]] += 1
-        if imm in (0x3000, 0x2000, 0x7000, 0x4000):
-            tags["dmatag:" + {0x2000: "next", 0x3000: "ref", 0x4000: "refs", 0x7000: "end"}[imm]] += 1
+        if imm in (0x3000, 0x2000, 0x7000, 0x4000, 0x6000):
+            tags["dmatag:" + {0x2000: "next", 0x3000: "ref", 0x4000: "refs", 0x6000: "ret", 0x7000: "end"}[imm]] += 1
         if imm == 0x1000 or imm == 0x1200:
             for k in range(1, 8):
                 if pc + 4 * k >= e:
@@ -278,17 +280,17 @@ def main():
         cands.append((score, s, a, ret, stores_out, fc))
     cands.sort(key=lambda x: (-x[0], x[1]))
     batch = sorted(cands[:30], key=lambda x: x[1])
-    w("| # | addr | name | size | callers | inputs | output | VU0 ops | source |")
-    w("|---|---|---|---|---|---|---|---|---|")
+    w("| # | addr | name | size | callers | inputs | output | VU0 ops | source | first look |")
+    w("|---|---|---|---|---|---|---|---|---|---|")
     for k, (score, s, a, ret, so, fc) in enumerate(batch, 1):
         out = []
         if ret:
             out.append("return value")
         if so:
             out.append("%d store(s) through args" % so)
-        w("| %d | %06x | %s | %s | %s | %s | %s | %d | %s |" % (
+        w("| %d | %06x | %s | %s | %s | %s | %s | %d | %s | %s |" % (
             k, s, F[s]["name"], F[s]["size"], F[s]["n_callers"], " ".join(a), ", ".join(out), fc["vu0"],
-            os.path.basename(F[s]["source_file"]) if F[s]["source_file"] else ""))
+            os.path.basename(F[s]["source_file"]) if F[s]["source_file"] else "", BATCH_DESC.get(s, "")))
     w("")
     w(TEXT_BATCH_NOTES)
     # full order
@@ -307,6 +309,40 @@ def main():
     print("layer functions %d, levels %d, dma builders %d, batch %d" % (len(layer), max(level.values()) + 1,
                                                                           len(scored), len(batch)))
 
+
+# one-line readings of the disassembly, written by hand for the current batch (unverified: confirm when decompiling)
+BATCH_DESC = {
+    0x2124C0: "FileIODrv: entry a1 of file table a0 (packed 64-bit or plain form) -> start in *a2, size in *a3",
+    0x213C78: "matrix a0 translation row (+0x30) = vec3 a1",
+    0x213C98: "vec3 a0 = matrix a1 translation row (+0x30)",
+    0x213E08: "sceVu0InnerProduct: xyz dot product of two vec4, returns float",
+    0x213E88: "sceVu0TransposeMatrix: 4x4 transpose with MMI",
+    0x214058: "inverse of a rigid 4x4: transposed 3x3, translation -R^T t (as sceVu0InversMatrix)",
+    0x214658: "a0 = matrix a1 with translation + vec a2 (as sceVu0TransMatrix)",
+    0x214688: "128-bit copy *a0 = *a1 (as sceVu0CopyVector)",
+    0x21F618: "SyncMemCard: a0->+8 = 1, returns 1",
+    0x225FC0: "setter: global 0x4f4c58 = a0",
+    0x226B70: "global 0x4f4c54 = (int)(f12 * 32)",
+    0x226DF0: "setter: global 0x4f4d60 = a0",
+    0x24C238: "radians f12 -> 12-bit angle (4096 per turn) wrapped to [-2048, 2048)",
+    0x260B40: "field +4 of 12-byte record (a0 & 0xffff) in the table at 0x66b8d0",
+    0x2655C0: "4-bit outcode of a point against a rectangle (clip test)",
+    0x26CD50: "TextureManager: size/format class of texture record a1, kept in +0x10 and returned",
+    0x26D2E8: "texture slot a1 (0x430-byte records at a0->+0x20): returns field +0x230",
+    0x26D308: "texture slot a1: returns field +0x238",
+    0x26D590: "texture slot a1 of a0, NULL when a1 >= 321",
+    0x26DD90: "texture slot a1: flag bits in +0x16, a2 into +0x246",
+    0x26DDD0: "texture slot a1: flag bits in +0x16, a2 into +0x246 (variant)",
+    0x26DE10: "texture slot a1: flag bits in +0x16, a2 into +0x246 (variant)",
+    0x26DE50: "texture slot a1: +0x246 if flag 0x8 of +0x16 is set, else -1",
+    0x26DE88: "texture slot a1: field read guarded by a +0x16 flag, else -1",
+    0x26DEC0: "texture slot a1: field read guarded by a +0x16 flag, else -1",
+    0x26DF80: "texture slot a1: float4 f12-f15 into +0x180",
+    0x26F068: "File.cpp: global 0x4fadf0 = a1",
+    0x273C38: "clears the state block at 0x678920 when a0 != 0 and a1 != 0xffff",
+    0x275260: "a0->+0x2a or +0x2c, chosen by a0->+0, a0->+4 and global 0x4f4d68",
+    0x2752B0: "a0->+0x2a or +0x2c, the opposite choice of 0x275260",
+}
 
 OTHER_SITES = [(0x37E578, "HUD, GIF path 3"), (0x275194, "clear"), (0x272CCC, "movie sprite"),
                (0x236AE0, "frustum test"), (0x249E38, "projection")]
@@ -327,12 +363,13 @@ instruction right after `jal FlushCache(0)` at `0x241c80`, i.e. the return addre
 "EE call site" for the VIF1 kick. The kick itself is inline, a few instructions later:
 
 ```
-241c80  jal   FlushCache            ; a0 = 0, write back the D-cache before DMA
-241c88  lui   v0, 0x66              ; <- recorded site; 0x65e300 is the frame's DMA chain descriptor
+241c80  jal   FlushCache            ; a0 = 0: write the D-cache back before DMA
+241c88  lui   v0, 0x66              ; <- recorded site; 0x65e300 describes the frame's chain (a1 = its start)
 ...
-241cd8  sw    a0, 0x10009030        ; D1_TADR = chain address & 0x0fffffff
-241ce4  sw    s0, 0x1000e010        ; D_STAT
-241cf0  sw    0x145, 0x10009000     ; D1_CHCR: STR | chain mode | TTE | from memory -> VIF1
+241cc4  sw    s0, 0x1000e020        ; D_PCR  = 2 (s0 = 2 was checked at 0x241c50)
+241cd8  sw    a0, 0x10009030        ; D1_TADR = chain start & 0x0fffffff
+241ce4  sw    s0, 0x1000e010        ; D_STAT = 2 (clears channel 1's interrupt status)
+241cf0  sw    0x145, 0x10009000     ; D1_CHCR = 0x145: from memory, chain mode, TTE, STR -> VIF1
 ```
 
 So this function is the per-frame "submit the VIF1 chain" step, not a per-object draw; every VU1 primitive of the
