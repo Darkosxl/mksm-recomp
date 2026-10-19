@@ -6,6 +6,7 @@
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
+#include <filesystem>
 #include <string>
 #include <vector>
 
@@ -132,6 +133,10 @@ void decomp_configure(const char *spec) {
 
 void decomp_record(const char *dir, const char *funcs, std::uint32_t count, std::uint32_t every, std::uint32_t skip) {
     g_recording = {dir ? dir : "", std::max(1u, count), std::max(1u, every), skip};
+    if (!g_recording.dir.empty()) {
+        std::error_code error;
+        std::filesystem::create_directories(g_recording.dir, error);
+    }
     bool all = false;
     std::vector<std::uint32_t> list;
     parse(funcs ? funcs : "all", all, list);
