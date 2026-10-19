@@ -3,6 +3,7 @@
 # ~/w/remaster-data/states, ~/w/games, ~/w/logs. Code is only ever written here on the laptop and pushed; every job's
 # output lives in ~/w/out/<job> on the box and is pulled back to $P/remaster-data/aws/<box>/<job> after the job.
 # usage:
+#   remaster/w.sh setup <box>                    disc, ELF, states, venv, wgpu on a fresh box
 #   remaster/w.sh push <box> <tree>              rsync $P/wt/<tree> (no build/.git) to the box
 #   remaster/w.sh run  <box> <job> <tree> <cmd>  run <cmd> detached in ~/w/wt/<tree>, log + rc in ~/w/out/<job>
 #   remaster/w.sh wait <box> <job>               wait for a job's rc, print it, then pull
@@ -20,6 +21,19 @@ pull() {
   echo "pulled $box:w/out -> $out ($(find "$out" -type f | wc -l) files)"
 }
 case $cmd in
+setup)
+  # disc (encrypted in the bucket, decrypted on the box), extracted + patched ELF, reference states, python venv
+  B=$(cat ~/.ssh/w-aws.bucket) url=$(aws s3 presign "s3://$(cat ~/.ssh/w-aws.bucket)/b/1.bin" --region eu-west-1 --expires-in 3600)
+  until ssh -o BatchMode=yes -o ConnectTimeout=5 "$box" true 2>/dev/null; do sleep 5; done
+  ssh "$box" 'umask 077; cat > ~/.k' < ~/.ssh/w-aws.key
+  ssh "$box" "set -e; cloud-init status --wait > /dev/null; sudo loginctl enable-linger ubuntu
+    mkdir -p ~/w/wt ~/w/logs ~/w/out ~/w/remaster-data ~/w/tp ~/w/games/mksm/disc
+    curl -sf '$url' | openssl enc -d -aes-256-ctr -pbkdf2 -iter 200000 -pass file:\$HOME/.k -out ~/w/games/mksm/disc.iso
+    python3 -m venv ~/w/.venv-remaster && ~/w/.venv-remaster/bin/pip -q install pillow numpy"
+  rsync -a "$P/remaster-data/states" "$box:w/remaster-data/"
+  rsync -aL "$P/ps2-web-recomp/third_party/wgpu-native/" "$box:w/tp/wgpu-native/"
+  rsync -a "$P/ps2-web-recomp/games/mksm/disc/" "$box:w/games/mksm/disc/"
+  echo "set up $box" ;;
 push)
   tree=${1:?tree}
   rsync -a --delete --exclude=/build/ --exclude=.git --exclude=/games --exclude=/third_party/wgpu-native \
