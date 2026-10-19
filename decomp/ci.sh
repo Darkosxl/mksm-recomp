@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
 # Full check of the decompiled functions on an AWS box (never on the laptop), in order, stopping at the first failure:
+#   0. the decomp headers compile together (decomp/headers.sh: no two helpers of one name, i.e. no ODR violation)
 #   1. build ps2run, difftest and eerecomp
 #   2. regenerate the units from decomp/overrides.txt: must equal the committed mksm/generated
 #   3. record real call contexts (boot, charsel, koop in parallel), replay them recompiled vs decompiled
@@ -16,6 +17,8 @@ cd "$here"
 step() { echo "== $(date +%T) $*"; }
 export PS2_GS=${PS2_GS:-soft}
 
+step headers
+decomp/headers.sh > "$out/headers.log" 2>&1 || { cat "$out/headers.log"; exit 1; }
 step build
 cmake -S . -B build/native-mksm -G Ninja -DCMAKE_BUILD_TYPE=Release -DCMAKE_CXX_COMPILER=clang++ \
   -DPS2_GENERATED="$PWD/mksm/generated" > "$out/cmake.log"
