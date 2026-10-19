@@ -753,18 +753,33 @@ fn native_fs(in: NativeOut) -> NativeFrag {
         }
         at = Attr(c.x, c.y, c.z, c.w, t.x, t.y, t.z, t.w, z);
     }
-    let z = min(at.z, prm(13u));
+    var out = shade_frag(s, at, k, false);
+    out.depth = f32(min(at.z, prm(13u))) * bitcast<f32>(prm(14u));
+    return out;
+}
+
+// gs.wgsl plot() for one sample, the colour part: texture (TFX, TCC), fog, the alpha test (the split into pass and fail
+// pixels), then the colour as integer / 255 and the blend factor As / 128. fst: the coordinates are U, V (x 16).
+fn shade_frag(s: Setup, at: Attr, k: u32, fst: bool) -> NativeFrag {
     var r = i32(at.r);
     var g = i32(at.g);
     var b = i32(at.b);
     var a = i32(at.a);
     if (has(s, F_TME)) {
-        var q = at.q;
-        if (q == 0.0) {
-            q = 1.0;
+        var u: f32;
+        var v: f32;
+        var q = 1.0;
+        if (fst) {
+            u = at.s / 16.0;
+            v = at.t / 16.0;
+        } else {
+            q = at.q;
+            if (q == 0.0) {
+                q = 1.0;
+            }
+            u = at.s / q * f32(1u << s.tw);
+            v = at.t / q * f32(1u << s.th);
         }
-        let u = at.s / q * f32(1u << s.tw);
-        let v = at.t / q * f32(1u << s.th);
         let t = texture(s, u, v, q, k);
         let tr = i32(t & 0xFFu);
         let tg = i32((t >> 8u) & 0xFFu);
@@ -854,9 +869,149 @@ fn native_fs(in: NativeOut) -> NativeFrag {
     }
     // the alpha output: As / 128 when the blend takes it as a factor, else the stored alpha (§4.3: min(A, 128) / 128)
     let fa = select(f32(min(a & 0xFF, 128)), f32(min(out.alpha, 128u)), (prm(11u) & 16u) != 0u) / 128.0;
+    // prm(11) 128 / 256 (hardware GS renderer): the GS blend floors ((A - B) * C >> 7), the hardware's rounds; the source
+    // moves by just under half a step of the result, down (lerp, add, Cs·C) or up (Cd - Cs·C: the floor of a negative
+    // product is the ceiling of its size). Every factor is a multiple of 1/128, so 0.496 keeps each product's floor.
+    // 1024: Cs·C premultiplied here, the blend's source factor One (gpu.cpp kNativePremul), so C keeps its range up to 255/128
+    // that a blend factor would clamp to 1
+    let bias = prm(11u) & 384u;
+    let constant = (prm(11u) & 512u) != 0u;
+    if ((prm(11u) & 1024u) != 0u) {
+        rgb = rgb * select(f32(a & 0xFF), f32(s.fix & 0xFFu), constant) / 128.0;
+        if (bias != 0u) {
+            rgb = rgb + select(-0.496, 0.496, bias == 256u) / 255.0;
+        }
+    } else {
+        let factor = select(fa, f32(s.fix) / 128.0, constant);
+        if (bias != 0u && factor > 0.0) {
+            rgb = rgb + select(-0.496, 0.496, bias == 256u) / 255.0 / factor;
+        }
+    }
     out.color = vec4<f32>(rgb, fa);
-    out.depth = f32(z) * bitcast<f32>(prm(14u));
     return out;
+}
+
+
+// ---- Hardware GS renderer, step 1 (PS2_GS_HW, gpu.cpp hw_flush): an emulated batch's triangles and sprites (gpu.cpp
+// draw() records, PRIM_WORDS each) drawn by the render pipeline into the native target. Coverage, the Z test and write
+// and the blend are the hardware's (no discard, no frag_depth); colour, texture and fog interpolate linearly in screen
+// space as the GS does. Sprites take their attributes per sample as gs.wgsl shade_at() case 1.
+// Draw parameters: 0 first record (word offset in data), 3 kind (0 triangles, 1 sprites), 4 setup, 7, 8 target size,
+// 9 split (as native_fs), 11 flags (16, 32, 64 as native_fs), 13 Z max, 14 depth per Z unit.
+
+struct HwOut {
+    @builtin(position) pos: vec4<f32>,
+    @location(0) @interpolate(linear) color: vec4<f32>,
+    @location(1) @interpolate(linear) stqf: vec4<f32>,
+    @location(2) @interpolate(flat) rect: vec4<f32>,     // sprites: x0, y0, dx, dy
+    @location(3) @interpolate(flat) ta: vec4<f32>,       // sprites: S T Q F of vertex 0
+    @location(4) @interpolate(flat) tb: vec4<f32>,       // sprites: S T Q F of vertex 1
+    @location(5) @interpolate(flat) zc: vec2<u32>,       // sprites: colour (RGBA), Z
+}
+
+struct HwFrag {
+    @location(0) color: vec4<f32>,
+    @location(1) alpha: u32,
+}
+
+@vertex
+fn hw_vs(@builtin(vertex_index) index: u32) -> HwOut {
+    let sprite = prm(3u) == 1u;
+    let per = select(3u, 6u, sprite);
+    let p = prm(0u) + (index / per) * PRIM_WORDS;
+    let corner = index % per;
+    var out: HwOut;
+    var x: f32;
+    var y: f32;
+    var z: f32;
+    if (sprite) {
+        // (0, 1, 2), (2, 1, 3) of the corners (x0, y0), (x1, y0), (x0, y1), (x1, y1)
+        let c = select(select(corner, 2u, corner == 3u), select(1u, 3u, corner == 5u), corner >= 4u);
+        let x0 = fat(p + 4u);
+        let y0 = fat(p + 5u);
+        x = x0 + select(0.0, fat(p + 6u), (c & 1u) != 0u);
+        y = y0 + select(0.0, fat(p + 7u), (c & 2u) != 0u);
+        z = f32(min(data[p + 24u], prm(13u)));
+        out.rect = vec4<f32>(x0, y0, fat(p + 6u), fat(p + 7u));
+        out.ta = vertex_tex(p, 0u);
+        out.tb = vertex_tex(p, 1u);
+        out.zc = vec2<u32>(data[p + 13u], data[p + 24u]);
+    } else {
+        x = fat(p + 4u + corner * 2u);
+        y = fat(p + 5u + corner * 2u);
+        let dz = select(select(0.0, fat(p + 26u), corner == 2u), fat(p + 25u), corner == 1u);
+        z = min(f32(data[p + 24u]) + dz, f32(prm(13u)));
+        out.color = vertex_attr(p, corner);
+        out.stqf = vertex_tex(p, corner);
+    }
+    // a sample sits at the top left of its fine cell (gs.wgsl raster px, py), the hardware's at its centre
+    let fx = x * f32(SCALE) + 0.5;
+    let fy = y * f32(SCALE_Y) + 0.5;
+    out.pos = vec4<f32>(fx / f32(prm(7u)) * 2.0 - 1.0, 1.0 - fy / f32(prm(8u)) * 2.0, max(z, 0.0) * bitcast<f32>(prm(14u)), 1.0);
+    return out;
+}
+
+@fragment
+fn hw_fs(in: HwOut) -> HwFrag {
+    let s = load_setup(prm(4u));
+    let sx = u32(in.pos.x);
+    let sy = u32(in.pos.y);
+    let x = i32(sx / SCALE);
+    let y = i32(sy / SCALE_Y);
+    let k = (sy % SCALE_Y) * SCALE + sx % SCALE;
+    let scanmsk = mode(s, 28u, 2u);
+    if ((scanmsk == 2u && (y & 1) == 0) || (scanmsk == 3u && (y & 1) != 0)) {
+        discard;
+    }
+    var at: Attr;
+    if (prm(3u) == 1u) {
+        // shade_at() case 1 without the fine grid (gpu.cpp keeps F_RT_HIRES sprites emulated)
+        let px = f32(x) + f32(sx % SCALE) / f32(SCALE);
+        let py = f32(y) + f32(sy % SCALE_Y) / f32(SCALE_Y);
+        let x0 = in.rect.x;
+        let y0 = in.rect.y;
+        let dx = in.rect.z;
+        let dy = in.rect.w;
+        let a = in.ta;
+        let b = in.tb;
+        var du = b.x - a.x;
+        var dv = b.y - a.y;
+        if (has(s, F_FST)) {
+            du = du / 16.0;
+            dv = dv / 16.0;
+        } else {
+            var q = b.z;
+            if (q == 0.0) {
+                q = 1.0;
+            }
+            du = du / q * f32(1u << s.tw);
+            dv = dv / q * f32(1u << s.th);
+        }
+        var ux = px;
+        var uy = py;
+        let direct = s.tpsm == 0x00u || s.tpsm == 0x01u || s.tpsm == 0x02u || s.tpsm == 0x0Au || s.tpsm >= 0x30u;
+        let point = has(s, F_TME) && (!has(s, F_BILINEAR) || direct);
+        if (point && abs(du) >= abs(dx) * 0.999) {
+            ux = f32(x);
+        }
+        if (point && abs(dv) >= abs(dy) * 0.999) {
+            uy = f32(y);
+        }
+        var tx = 0.0;
+        var ty = 0.0;
+        if (dx != 0.0) {
+            tx = (ux - x0) / dx;
+        }
+        if (dy != 0.0) {
+            ty = (uy - y0) / dy;
+        }
+        let c = unpack_rgba(in.zc.x);
+        at = Attr(c.x, c.y, c.z, c.w, a.x + (b.x - a.x) * tx, a.y + (b.y - a.y) * ty, b.z, b.w, in.zc.y);
+    } else {
+        at = Attr(in.color.x, in.color.y, in.color.z, in.color.w, in.stqf.x, in.stqf.y, in.stqf.z, in.stqf.w, 0u);
+    }
+    let f = shade_frag(s, at, k, has(s, F_FST));
+    return HwFrag(f.color, f.alpha);
 }
 
 // ---- Import: the emulated frame and Z buffer into the native target at the start of a run of native draws

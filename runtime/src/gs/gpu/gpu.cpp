@@ -226,6 +226,7 @@ struct Batch {
     std::uint32_t fbp = 0, fbw = 0, fpsm = 0, zbp = 0, zpsm = 0;
     bool zte = false, zwrite = false;
     std::size_t run_start = 0;
+    bool hw = false;  // PS2_GS_HW: drawn by the render pipeline (hw_flush), not the compute raster
     int rx0 = 0, ry0 = 0, rx1 = -2, ry1 = -2;
     Range fb_range, z_range;
     std::vector<std::pair<std::uint32_t, std::uint32_t>> dbg_draws;  // frame debugger: (draw id, primitives) in this batch
@@ -240,7 +241,13 @@ struct SetupCache {
     Range tex;
     Range levels[7];
     std::uint32_t mips = 0;
+    bool hw = false;  // the setup can be drawn by the hardware GS renderer (hw_setup)
 } g_setup_cache;
+
+bool g_hw = false;  // PS2_GS_HW=1: the hardware GS renderer, step 1 (hw_flush)
+void hw_flush();
+bool hw_setup(const std::uint32_t *w);
+void hw_bind(const std::uint32_t *w);
 
 struct PreOp {
     bool clut = false;
@@ -551,10 +558,10 @@ struct Decode {
 };
 std::vector<Decode> g_decodes;
 
-void plan_decodes(std::uint32_t prims) {
+void plan_decodes(std::uint32_t prims, bool all = false) {
     Batch &b = g_batch;
     g_decodes.clear();
-    if (!g_decode || prims <= kDecodePrims) return;
+    if (!g_decode || (prims <= kDecodePrims && !all)) return;
     const std::uint32_t setups = static_cast<std::uint32_t>(b.setups.size() / kSetupWords);
     static const int kKey[] = {12, 13, 14, 15, 16, 17, 20, 22};
     for (std::uint32_t i = 0; i < setups; ++i) {
@@ -686,12 +693,31 @@ void note_raster(std::uint32_t prims, std::uint32_t tiles, std::uint32_t entries
     if (drawdbg::enabled()) drawdbg::batch(seq, b.dbg_draws);
 }
 
+// The batch's planned decodes (plan_decodes) in one dispatch (gs.wgsl decode): setup, decoded offset, texels, first thread
+void emit_decodes(std::uint32_t setup_offset) {
+    if (g_decodes.empty()) return;
+    const std::uint32_t n = static_cast<std::uint32_t>(g_decodes.size());
+    std::uint32_t *rec = g_arena.grow(n * 4u);
+    const std::uint32_t records = static_cast<std::uint32_t>(rec - g_arena.data());
+    std::uint32_t total = 0;
+    for (std::uint32_t i = 0; i < n; ++i) {
+        const Decode &d = g_decodes[i];
+        rec[i * 4] = setup_offset + d.setup * kSetupWords;
+        rec[i * 4 + 1] = d.offset;
+        rec[i * 4 + 2] = d.words;
+        rec[i * 4 + 3] = total;
+        total += d.words;
+    }
+    dispatch_linear(kDecode, total, push_params({records, n, total}));
+}
+
 void flush_batch() {
     Batch &b = g_batch;
     if (b.prims.empty()) {
         b.key = ~0ull;
         return;
     }
+    if (b.hw) return hw_flush();
     const std::uint32_t prims = static_cast<std::uint32_t>(b.prims.size() / kPrimWords);
     g_touched.clear();
     g_spans.clear();
@@ -710,22 +736,7 @@ void flush_batch() {
     plan_decodes(prims);
     const std::uint32_t prim_offset = arena_append(b.prims.data(), b.prims.size() * 4);
     const std::uint32_t setup_offset = arena_append(b.setups.data(), b.setups.size() * 4);
-    if (!g_decodes.empty()) {
-        // one dispatch for all of them (gs.wgsl decode): setup, decoded offset, texels, first thread per record
-        const std::uint32_t n = static_cast<std::uint32_t>(g_decodes.size());
-        std::uint32_t *rec = g_arena.grow(n * 4u);
-        const std::uint32_t records = static_cast<std::uint32_t>(rec - g_arena.data());
-        std::uint32_t total = 0;
-        for (std::uint32_t i = 0; i < n; ++i) {
-            const Decode &d = g_decodes[i];
-            rec[i * 4] = setup_offset + d.setup * kSetupWords;
-            rec[i * 4 + 1] = d.offset;
-            rec[i * 4 + 2] = d.words;
-            rec[i * 4 + 3] = total;
-            total += d.words;
-        }
-        dispatch_linear(kDecode, total, push_params({records, n, total}));
-    }
+    emit_decodes(setup_offset);
     std::uint32_t total = 0;
     for (std::uint32_t t : g_touched) total += g_tile_count[t];
     const std::uint32_t tiles = static_cast<std::uint32_t>(g_touched.size());
@@ -1588,7 +1599,7 @@ struct Native {
     std::map<std::string, std::uint64_t> unsupported;
 } g_nat;
 
-constexpr std::uint32_t kNativeTiles = 2048u, kNativeAlpha = 1024u, kNativeImport = 512u, kNativeColor = 256u, kNativeZWrite = 128u, kNativeConstant = 16u;
+constexpr std::uint32_t kNativePremul = 8192u, kNativeHw = 4096u, kNativeTiles = 2048u, kNativeAlpha = 1024u, kNativeImport = 512u, kNativeColor = 256u, kNativeZWrite = 128u, kNativeConstant = 16u;
 
 // GS ALPHA (Cv = ((A - B) * C >> 7) + D; A, B, D: 0 Cs, 1 Cd, 2 zero; C: 0 As, 1 Ad, 2 FIX) as fixed-function blending,
 // with the shader's alpha output As / 128 (§4.3). 0: not expressible without the destination alpha (C = Ad) or not seen.
@@ -1615,7 +1626,8 @@ WGPURenderPipeline native_pipeline(std::uint32_t key) {
     if (const auto it = g_nat.pipelines.find(key); it != g_nat.pipelines.end()) return it->second;
     const bool import = key & kNativeImport;
     const std::uint32_t blend = key & 15u;
-    const WGPUBlendFactor f = (key & kNativeConstant) ? WGPUBlendFactor_Constant : WGPUBlendFactor_SrcAlpha;
+    // kNativePremul: the shader multiplies Cs by its factor (Cs·C with C past 1), the hardware takes it as is
+    const WGPUBlendFactor f = (key & kNativePremul) ? WGPUBlendFactor_One : (key & kNativeConstant) ? WGPUBlendFactor_Constant : WGPUBlendFactor_SrcAlpha;
     const WGPUBlendFactor nf = (key & kNativeConstant) ? WGPUBlendFactor_OneMinusConstant : WGPUBlendFactor_OneMinusSrcAlpha;
     WGPUBlendState bs = WGPU_BLEND_STATE_INIT;
     bs.alpha.operation = WGPUBlendOperation_Add;
@@ -1652,7 +1664,7 @@ WGPURenderPipeline native_pipeline(std::uint32_t key) {
     constants[1].value = static_cast<double>(g_sy);
     WGPUFragmentState fs = WGPU_FRAGMENT_STATE_INIT;
     fs.module = g_nat.module;
-    fs.entryPoint = view(import ? "native_import_fs" : "native_fs");
+    fs.entryPoint = view(import ? "native_import_fs" : (key & kNativeHw) ? "hw_fs" : "native_fs");
     fs.constantCount = 2;
     fs.constants = constants;
     fs.targetCount = 2;
@@ -1666,7 +1678,7 @@ WGPURenderPipeline native_pipeline(std::uint32_t key) {
     rd.layout = g_nat.pipeline_layout;
     rd.vertex.module = g_nat.module;
     const bool full = import && !(key & kNativeTiles);  // the import of a whole run, or of a tile list (instanced)
-    rd.vertex.entryPoint = view(full ? "native_full_vs" : import ? "native_tile_vs" : "native_vs");
+    rd.vertex.entryPoint = view(full ? "native_full_vs" : import ? "native_tile_vs" : (key & kNativeHw) ? "hw_vs" : "native_vs");
     rd.vertex.constantCount = full ? 0 : 2;
     rd.vertex.constants = full ? nullptr : constants;
     rd.primitive.topology = WGPUPrimitiveTopology_TriangleList;
@@ -2141,11 +2153,7 @@ void tiles_flush() {
 
 // A native batch's frame and Z buffer: binds the target to them. A new binding imports lazily (every tile VRAM-newer);
 // the old one is written back first.
-void tiles_bind(const Context &c) {
-    const std::uint32_t fbp = (static_cast<std::uint32_t>(c.frame) & 0x1FFu) * 32u, fbw = static_cast<std::uint32_t>(c.frame >> 16) & 0x3Fu;
-    const std::uint32_t fpsm = static_cast<std::uint32_t>(c.frame >> 24) & 0x3Fu, zbp = (static_cast<std::uint32_t>(c.zbuf) & 0x1FFu) * 32u;
-    const std::uint32_t zpsm = 0x30u | (static_cast<std::uint32_t>(c.zbuf >> 24) & 0xFu);
-    const std::uint32_t rows = std::clamp<std::uint32_t>((static_cast<std::uint32_t>(c.scissor >> 48) & 0x7FFu) + 1u, 1u, 2048u);
+void tiles_bind_to(std::uint32_t fbp, std::uint32_t fbw, std::uint32_t fpsm, std::uint32_t zbp, std::uint32_t zpsm, std::uint32_t rows) {
     if (g_nat.bound && fbp == g_nat.fbp && fbw == g_nat.fbw && fpsm == g_nat.fpsm && zbp == g_nat.zbp && zpsm == g_nat.zpsm && rows * g_sy <= g_nat.target.height) return;
     tiles_flush();
     const std::uint32_t width = std::clamp<std::uint32_t>(fbw * 64u, 64u, 2048u) * g_sx, height = rows * g_sy;
@@ -2169,6 +2177,13 @@ void tiles_bind(const Context &c) {
     }
     g_nat.bound = true;
     ++g_nat.runs;
+}
+
+void tiles_bind(const Context &c) {
+    const std::uint32_t fbp = (static_cast<std::uint32_t>(c.frame) & 0x1FFu) * 32u, fbw = static_cast<std::uint32_t>(c.frame >> 16) & 0x3Fu;
+    const std::uint32_t fpsm = static_cast<std::uint32_t>(c.frame >> 24) & 0x3Fu, zbp = (static_cast<std::uint32_t>(c.zbuf) & 0x1FFu) * 32u;
+    const std::uint32_t zpsm = 0x30u | (static_cast<std::uint32_t>(c.zbuf >> 24) & 0xFu);
+    tiles_bind_to(fbp, fbw, fpsm, zbp, zpsm, std::clamp<std::uint32_t>((static_cast<std::uint32_t>(c.scissor >> 48) & 0x7FFu) + 1u, 1u, 2048u));
 }
 
 // A native batch drawing into scissor samples [sx0, sx1) x [sy0, sy1) with these writes (kTileColor, kTileZ): imports the
@@ -2462,14 +2477,182 @@ void native_record(const State &st, const std::uint8_t *payload, std::uint32_t b
     }
 }
 
+// ---- Hardware GS renderer, step 1 (PS2_GS_HW=1): emulated triangles and sprites drawn by the render pipeline (native.wgsl
+// hw_vs, hw_fs) into the native target, kept coherent with VRAM per tile as the native batches are. What it cannot draw
+// (DATE, PABE, partial FBMSK, blends the hardware cannot express, other frame formats, lines, points, F_RT_HIRES
+// sprites) stays on the compute raster, which writes back what it needs first (tiles_emulated).
+
+// Whether the hardware path can draw a setup (the same tests as native_record).
+bool hw_setup(const std::uint32_t *w) {
+    const std::uint32_t flags = w[0], fbmsk = w[4] & 0xFFFFFFu, amsk = w[4] >> 24;
+    if ((flags & 128u) || ((flags & 8u) && (flags & 1024u))) return false;
+    if ((fbmsk && fbmsk != 0xFFFFFFu) || (amsk && amsk != 0xFFu)) return false;
+    if (w[3] != PSMCT32 && w[3] != PSMCT24) return false;
+    if (w[2] == 0 || w[2] * 64u > 2048u) return false;
+    if (!native_blend((w[7] >> 12) & 0xFFu, flags & 8u)) return false;
+    if ((flags & 512u) && ((w[7] >> 8) & 3u) == 0) return false;
+    if ((flags & 64u) && (w[7] & 7u) == 0 && ((w[7] >> 4) & 3u) == 0) return false;
+    return true;
+}
+
+// A hardware primitive's frame and Z buffer: the target is bound to them first (what is queued for the old binding goes
+// into the stream before it).
+void hw_bind(const std::uint32_t *w) {
+    const std::uint32_t rows = std::clamp<std::uint32_t>((w[11] >> 16) + 1u, 1u, 2048u);
+    if (g_nat.bound && w[1] == g_nat.fbp && w[2] == g_nat.fbw && w[3] == g_nat.fpsm && w[5] == g_nat.zbp && w[6] == g_nat.zpsm &&
+        rows * g_sy <= g_nat.target.height)
+        return;
+    emit_all();
+    tiles_bind_to(w[1], w[2], w[3], w[5], w[6], rows);
+}
+
+void hw_flush() {
+    Batch &b = g_batch;
+    const std::uint32_t prims = static_cast<std::uint32_t>(b.prims.size() / kPrimWords);
+    const std::uint32_t setups = static_cast<std::uint32_t>(b.setups.size() / kSetupWords);
+    // what the textures read of the target goes back to VRAM first
+    for (std::uint32_t i = 0; i < setups; ++i) {
+        const std::uint32_t *w = b.setups.data() + i * kSetupWords;
+        if (w[0] & 2u)
+            for (std::uint32_t n = 0; n <= mip_levels(w); ++n) tiles_range(level_range(w, n), false);
+    }
+    tiles_writeback();
+    // the VRAM-newer tiles under the primitives come into the target, which then holds them newer
+    static std::vector<std::uint32_t> list;
+    list.clear();
+    std::uint64_t samples = 0;
+    const int t = static_cast<int>(kTilePx);
+    for (std::uint32_t i = 0; i < prims; ++i) {
+        const std::uint32_t *rec = b.prims.data() + i * kPrimWords;
+        const std::uint32_t f = b.setups[rec[0] * kSetupWords];
+        const bool zwrite = (f & 512u) && !(f & 32u);
+        int x0 = static_cast<int>(rec[2] & 0xFFFFu) / t, y0 = static_cast<int>(rec[2] >> 16) / t;
+        int x1 = static_cast<int>(rec[3] & 0xFFFFu) / t, y1 = static_cast<int>(rec[3] >> 16) / t;
+        if (!tiles_clip(x0, y0, x1, y1)) continue;
+        for (int y = y0; y <= y1; ++y) {
+            std::uint64_t m[2];
+            row_mask(x0, x1, m);
+            for (int w = 0; w < 2; ++w) {
+                std::uint64_t bits = g_nat.tv[y][w] & m[w];
+                g_nat.tv[y][w] &= ~m[w];
+                while (bits) {
+                    const int bit = __builtin_ctzll(bits);
+                    bits &= bits - 1;
+                    list.push_back(static_cast<std::uint32_t>(w * 64 + bit) | static_cast<std::uint32_t>(y) << 8);
+                    samples += tile_samples(static_cast<std::uint32_t>(w * 64 + bit), static_cast<std::uint32_t>(y));
+                }
+                g_nat.tc[y][w] |= m[w];
+                if (zwrite) g_nat.tz[y][w] |= m[w];
+            }
+        }
+    }
+    std::uint32_t zmax;
+    float scale;
+    native_depth(g_nat.zpsm, zmax, scale);
+    const NativeTarget &tg = g_nat.target;
+    if (!list.empty()) {
+        NativeDraw d;
+        d.pipeline = native_pipeline(kNativeImport | kNativeTiles);
+        d.color = tg.color_view;
+        d.depth = tg.depth_view;
+        d.alpha = tg.alpha_view;
+        d.param = push_params({g_nat.fbp, g_nat.fbw, g_nat.fpsm, g_nat.zbp, g_nat.zpsm, arena_append(list.data(), list.size() * 4), 0u, tg.width, tg.height, 0u, 0u,
+                               0u, 0u, zmax, f2u(scale), 0u});
+        d.vertices = 6;
+        d.instances = static_cast<std::uint32_t>(list.size());
+        d.scissor[2] = tg.width;
+        d.scissor[3] = tg.height;
+        g_native_draws.push_back(d);
+        g_nat.imported += samples;
+        ++g_nat.imports;
+    }
+    emit_native();  // the write-backs and the import go ahead of the decodes, which may read what they wrote back
+    plan_decodes(prims, true);
+    const std::uint32_t prim_offset = arena_append(b.prims.data(), b.prims.size() * 4);
+    const std::uint32_t setup_offset = arena_append(b.setups.data(), b.setups.size() * 4);
+    emit_decodes(setup_offset);
+    // one draw (or two: the alpha test's pass and fail pixels) per run of primitives with one setup and kind
+    for (std::uint32_t i = 0; i < prims;) {
+        const std::uint32_t *rec = b.prims.data() + i * kPrimWords;
+        std::uint32_t n = 1;
+        while (i + n < prims && b.prims[(i + n) * kPrimWords] == rec[0] && b.prims[(i + n) * kPrimWords + 1] == rec[1]) ++n;
+        const std::uint32_t *w = b.setups.data() + rec[0] * kSetupWords;
+        const std::uint32_t flags = w[0], alpha = (w[7] >> 12) & 0xFFu;
+        std::uint32_t blend = native_blend(alpha, flags & 8u);
+        if ((w[4] & 0xFFFFFFu) == 0xFFFFFFu) blend = kBlendKeep;
+        const bool zte = flags & 512u, zwrite = zte && !(flags & 32u);
+        const std::uint32_t ztst = (w[7] >> 8) & 3u, cmp = !zte || ztst == 1 ? 0u : ztst == 2 ? 1u : 2u;
+        const bool amsk = (w[4] >> 24) != 0, frame_alpha = !amsk && w[3] == PSMCT32;
+        struct Split {
+            std::uint32_t split;
+            bool color, zwrite, alpha;
+        } splits[2];
+        int count = 0;
+        const std::uint32_t atst = w[7] & 7u, afail = (w[7] >> 4) & 3u;
+        if (!(flags & 64u) || atst == 1) {
+            splits[count++] = {0, true, zwrite, frame_alpha};
+        } else {
+            if (atst != 0) splits[count++] = {1, true, zwrite, frame_alpha};
+            if (afail == 1 || afail == 3) splits[count++] = {2, true, false, frame_alpha && afail == 1};
+            else if (afail == 2) splits[count++] = {2, false, zwrite, false};
+        }
+        const std::uint32_t csel = (alpha >> 4) & 3u;
+        const bool factor_as = csel == 0 && (blend == kBlendLerp || blend == kBlendAdd || blend == kBlendSrc || blend == kBlendRevSub);
+        // 128 / 256: the GS's floor instead of the hardware's rounding (native.wgsl shade_frag); 512: the factor is FIX
+        const bool floors = blend == kBlendLerp || blend == kBlendAdd || blend == kBlendSrc;
+        const bool premul = blend == kBlendAdd || blend == kBlendSrc || blend == kBlendRevSub;  // Cs·C (+ Cd): C up to 255/128 exactly
+        const std::uint32_t pflags = (factor_as ? 0u : 16u) | (blend == kBlendDst ? 32u : 0u) | (blend == kBlendDst && csel == 2 ? 64u : 0u) |
+                                     (floors ? 128u : blend == kBlendRevSub ? 256u : 0u) | (csel == 2 ? 512u : 0u) | (premul ? 1024u : 0u);
+        const std::uint32_t sx0 = std::min((w[10] & 0xFFFFu) * g_sx, tg.width), sx1 = std::min(((w[10] >> 16) + 1) * g_sx, tg.width);
+        const std::uint32_t sy0 = std::min((w[11] & 0xFFFFu) * g_sy, tg.height), sy1 = std::min(((w[11] >> 16) + 1) * g_sy, tg.height);
+        for (int k = 0; k < count && sx0 < sx1 && sy0 < sy1; ++k) {
+            NativeDraw d;
+            d.param = push_params({prim_offset + i * kPrimWords, n, 0u, rec[1], setup_offset + rec[0] * kSetupWords, 0u, 0u, tg.width, tg.height, splits[k].split, 0u, pflags,
+                                   0u, zmax, f2u(scale), 0u});
+            std::uint32_t key = kNativeHw | blend | (cmp << 5) | (splits[k].zwrite ? kNativeZWrite : 0u) | (splits[k].color ? kNativeColor : 0u) |
+                                (splits[k].alpha ? kNativeAlpha : 0u);
+            if (premul) key |= kNativePremul;
+            else if (csel == 2u) key |= kNativeConstant;
+            d.pipeline = native_pipeline(key);
+            d.color = tg.color_view;
+            d.depth = tg.depth_view;
+            d.alpha = tg.alpha_view;
+            d.vertices = n * (rec[1] == 1 ? 6u : 3u);
+            d.scissor[0] = sx0;
+            d.scissor[1] = sy0;
+            d.scissor[2] = sx1 - sx0;
+            d.scissor[3] = sy1 - sy0;
+            d.constant = static_cast<double>(w[9]) / 128.0;
+            g_native_draws.push_back(d);
+            ++g_nat.draws;
+        }
+        g_nat.triangles += n;
+        i += n;
+    }
+    emit_native();
+    ++g_nat.drawn;
+    mark_rendered(pages(b.fbp, b.fbw, b.fpsm, b.minx, b.miny, b.maxx, b.maxy));
+    if (b.zwrite) mark_rendered(pages(b.zbp, b.fbw, b.zpsm, b.minx, b.miny, b.maxx, b.maxy));
+    b.prims.clear();
+    b.setups.clear();
+    b.boxes.clear();
+    b.dbg_draws.clear();
+    g_batch_reads.clear();
+    b.key = ~0ull;
+    b.hw = false;
+    b.minx = b.miny = 1 << 30;
+    b.maxx = b.maxy = -1;
+}
+
 bool native_init() {
-    g_nat.on = native::active();
-    if (!g_nat.on) return true;
     const auto on = [](const char *name) {
         const char *e = std::getenv(name);
         return e && *e && *e != '0';
     };
-    g_nat.replace = native::replace();
+    g_hw = on("PS2_GS_HW");
+    g_nat.on = native::active() || g_hw;
+    if (!g_nat.on) return true;
+    g_nat.replace = native::replace() || g_hw;
     g_nat.check = on("PS2_NATIVE_CHECK") && !g_nat.replace;
     g_nat.plight = on("PS2_NATIVE_PLIGHT");
     if (const char *e = std::getenv("PS2_NATIVE_INTERP")) g_nat.hw_interp = !std::strcmp(e, "hw");  // the hardware's attribute interpolation
@@ -2553,11 +2736,11 @@ bool native_init() {
     g_nat.writeback = wgpuDeviceCreateComputePipeline(g_device, &cd);
     cd.compute.entryPoint = view("native_writeback_tiles");
     g_nat.writeback_tiles = wgpuDeviceCreateComputePipeline(g_device, &cd);
-    g_nat.tiles = g_nat.replace && !on("PS2_NATIVE_RUNS");
+    g_nat.tiles = g_nat.replace && (g_hw || !on("PS2_NATIVE_RUNS"));
     if (!g_nat.module || !g_native_check || !g_nat.writeback || !g_nat.writeback_tiles || !native_pipeline(kNativeImport) ||
         !native_pipeline(kNativeImport | kNativeTiles)) {
         std::fprintf(stderr, "[native] shader or pipelines not created; native drawing off\n");
-        g_nat.on = false;
+        g_nat.on = g_hw = false;
         return false;
     }
     return true;
@@ -2841,6 +3024,7 @@ void draw(const State &st, const Vertex *v, int count, texcache::Run run) {
             for (std::uint32_t n = 1; n <= cache.mips; ++n) cache.levels[n] = level_range(w, n);
             if (texpack::active()) replace_texture(st, cache);
         }
+        cache.hw = g_hw && hw_setup(cache.setup);
     }
     // Scale > 1: a sprite sampling a render target in a direct format (g_rt_pages, or drawn by the batch still pending)
     // may read its samples on the fine grid (gs.wgsl F_RT_HIRES; the shader keeps 1:1 copies per sample). Uploaded
@@ -2963,10 +3147,17 @@ void draw(const State &st, const Vertex *v, int count, texcache::Run run) {
     maxy = std::min(maxy, 2047);
     if (minx > maxx || miny > maxy) return;
 
-    if (g_nat.bound) tiles_emulated(setup, flags, minx, miny, maxx, maxy, cache.tex, cache.levels, (flags & 2u) ? cache.mips : 0u);
+    // the hardware GS renderer: triangles and sprites of a setup it can draw; a sprite that scales a render target at
+    // scale > 1 (F_RT_HIRES) stays emulated
+    const bool hw = cache.hw && prim >= 3 && prim <= 6 && !(prim == 6 && (flags & kRtHires));
+    // a switch between the two paths ends the batch first: the tile state an emulated primitive notes (tiles_emulated)
+    // must not reach a hardware batch's flush, which marks its tiles native-newer
+    if (!g_batch.prims.empty() && g_batch.hw != hw) emit_all();
+    if (hw) hw_bind(setup);
+    else if (g_nat.bound) tiles_emulated(setup, flags, minx, miny, maxx, maxy, cache.tex, cache.levels, (flags & 2u) ? cache.mips : 0u);
     Batch &b = g_batch;
     const bool zte = flags & 512u;
-    const std::uint64_t key = cache.key;
+    const std::uint64_t key = cache.key | (hw ? 1ull << 62 : 0ull);
     if (b.key != ~0ull && b.key != key) emit_all();
     const Range &tex = cache.tex;
     if (flags & 2u) {
@@ -3002,6 +3193,7 @@ void draw(const State &st, const Vertex *v, int count, texcache::Run run) {
         b.zte = false;
         b.zwrite = false;
         b.rx1 = -2;
+        b.hw = hw;
     }
     b.zte = b.zte || zte;
     b.zwrite = b.zwrite || (zte && !(flags & 32u));
