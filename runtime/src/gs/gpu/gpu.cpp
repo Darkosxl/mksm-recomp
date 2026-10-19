@@ -1875,7 +1875,7 @@ void native_writeback() {
     d.writeback[0] = (g_nat.rx1 - g_nat.rx0 + 7) / 8;
     d.writeback[1] = (g_nat.ry1 - g_nat.ry0 + 7) / 8;
     g_native_draws.push_back(d);
-    emit_native();
+    emit_all();  // the uploads and CLUT loads queued during the run go first: its draws read them
     const int x0 = static_cast<int>(g_nat.rx0 / g_sx), y0 = static_cast<int>(g_nat.ry0 / g_sy);
     const int x1 = static_cast<int>((g_nat.rx1 - 1) / g_sx), y1 = static_cast<int>((g_nat.ry1 - 1) / g_sy);
     mark_rendered(pages(g_nat.fbp, g_nat.fbw, g_nat.fpsm, x0, y0, x1, y1));
