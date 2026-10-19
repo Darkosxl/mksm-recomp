@@ -108,6 +108,7 @@ void deliver_ring(int ch, std::uint32_t address, std::uint32_t qwc) {
 bool vif_stalled(int ch) { return (ch == 0 || ch == 1) && vif::stalled(ch); }
 
 void pause(int ch, bool end) {
+    if (ch == 1) debug::count(debug::kDmaVif1Pause);
     g_ch[ch].paused = true;
     g_ch[ch].pause_end = end;
 }

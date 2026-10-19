@@ -3,6 +3,8 @@
 #include "drawdbg.hpp"
 #include "gs.hpp"
 #include "queue.hpp"
+#include "../debug.hpp"
+#include "../seamv.hpp"
 #include "../vu_micro.hpp"
 
 #include "ps2/state.hpp"
@@ -92,7 +94,7 @@ struct GsSink {
     void image(const std::uint8_t *data, std::uint32_t qwords) { gs::write_image(data, qwords); }
 };
 
-void scan(Path &p, const std::uint8_t *data, std::uint32_t qwc) {
+void scan(int path, Path &p, const std::uint8_t *data, std::uint32_t qwc) {
     std::uint32_t i = 0;
     while (i < qwc) {
         Reg128 q;
@@ -118,7 +120,10 @@ void scan(Path &p, const std::uint8_t *data, std::uint32_t qwc) {
                 if (((p.regs >> (p.reg * 4)) & 0xFu) == 0xEu && at[8] >= 0x50 && at[8] <= 0x62) {
                     std::uint64_t value;
                     std::memcpy(&value, at, 8);
-                    if (at[8] >= 0x60) gs::signal(at[8], value);
+                    if (at[8] >= 0x60) {
+                        debug::count(static_cast<debug::Census>(debug::kGsSignalPath1 + path - 1));
+                        gs::signal(at[8], value);
+                    }
                     else if (at[8] <= 0x53) gs::note_transfer(at[8], value);
                 }
                 if (++p.reg >= p.nreg) {
@@ -179,6 +184,7 @@ void render(int path, const std::uint8_t *data, std::uint32_t qwc) {
 
 void transfer(int path, const std::uint8_t *data, std::uint32_t qwc) {
     if (path != 1) vu::flush_kicks();
+    if (path != 1 && seamv::on() && (!gs::queue::vu_active() || gs::queue::role() == gs::queue::Role::Vu)) seamv::gif(path, data, qwc);
     if (gs::drawdbg::enabled()) {
         const gs::drawdbg::Source src = gs::drawdbg::packet_source(path);
         if (gs::queue::active()) gs::queue::post(gs::queue::kTag, static_cast<std::uint32_t>(path), 0, &src, sizeof src);
@@ -188,11 +194,11 @@ void transfer(int path, const std::uint8_t *data, std::uint32_t qwc) {
         render(path, data, qwc);
         return;
     }
-    if (gs::queue::role() != gs::queue::Role::Vu) scan(g_scan[path], data, qwc);
+    if (gs::queue::role() != gs::queue::Role::Vu) scan(path, g_scan[path], data, qwc);
     gs::queue::post(gs::queue::kGif, static_cast<std::uint32_t>(path), qwc, data, qwc * 16);
 }
 
-void scan_signals(int path, const std::uint8_t *data, std::uint32_t qwc) { scan(g_scan[path], data, qwc); }
+void scan_signals(int path, const std::uint8_t *data, std::uint32_t qwc) { scan(path, g_scan[path], data, qwc); }
 
 bool busy(int path) { return g_paths[path].active; }
 

@@ -140,6 +140,7 @@ void vblank_start() {
 std::uint32_t intc_pending() { return g_intc_stat & g_intc_mask; }
 
 void intc_raise(unsigned cause) {
+    if (cause == 5) debug::count(debug::kIntcVif1);
     g_intc_stat |= 1u << cause;
     g_intc_latched |= 1u << cause;
     if (g_intc_mask & (1u << cause)) kernel::wake_idle();

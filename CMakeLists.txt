@@ -42,6 +42,7 @@ add_library(ps2runtime STATIC
     runtime/src/disc.cpp
     runtime/src/dmac.cpp
     runtime/src/vif.cpp
+    runtime/src/seamv.cpp
     runtime/src/vu_micro.cpp
     runtime/src/vu_jit.cpp
     runtime/src/vu_jit_web.cpp

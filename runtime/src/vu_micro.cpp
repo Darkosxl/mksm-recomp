@@ -7,6 +7,7 @@
 #include "gs/queue.hpp"
 #include "vu_jit_web.hpp"
 #include "hw.hpp"
+#include "seamv.hpp"
 #include "ps2/fpu.hpp"
 #include "ps2/system.hpp"
 #include "ps2/vu.hpp"
@@ -783,6 +784,7 @@ ProgramFn jit_program(std::uint64_t key, std::uint32_t address) {
 EntryCache g_entries[2048];
 
 void code_changed(int unit) {
+    if (unit == 1 && seamv::on()) seamv::code_changed();
     g_scan[unit & 1] = true;
     ++g_generation[unit & 1];
 }
@@ -1088,6 +1090,23 @@ void hash(ps2::Hash64 &h) {
     h.update(g_vu0_mem, sizeof g_vu0_mem);
     h.update(g_vu1_code, sizeof g_vu1_code);
     h.update(g_vu1_mem, sizeof g_vu1_mem);
+}
+
+void hash_units(ps2::Hash64 &vu0, ps2::Hash64 &vu1) {
+    vu0.update(g_vu0_code, sizeof g_vu0_code);
+    vu0.update(g_vu0_mem, sizeof g_vu0_mem);
+    for (const PendingKick &k : g_pending_kicks) {
+        const std::uint32_t head[2] = {k.start, k.count};
+        vu1.update(head, sizeof head);
+        vu1.update(k.data.data(), k.data.size());
+    }
+    vu1.update(g_vu1.vf, sizeof g_vu1.vf);
+    vu1.update(&g_vu1.acc, sizeof g_vu1.acc);
+    vu1.update(g_vu1.vi, sizeof g_vu1.vi);
+    const std::uint32_t words[11] = {g_vu1.q, g_vu1.p, g_vu1.i, g_vu1.r, g_vu1.mac, g_vu1.status, g_vu1.clip, g_vu1.cmsar0, g_vu1.tpc, g_top, g_itop};
+    vu1.update(words, sizeof words);
+    vu1.update(g_vu1_code, sizeof g_vu1_code);
+    vu1.update(g_vu1_mem, sizeof g_vu1_mem);
 }
 
 void state(ps2::state::Stream &s) {

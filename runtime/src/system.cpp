@@ -9,6 +9,7 @@
 #include "gs/queue.hpp"
 #include "gs/texpack.hpp"
 #include "hw.hpp"
+#include "seamv.hpp"
 #include "iop/iop.hpp"
 #include "iop/sif.hpp"
 #include "iop/sio2.hpp"
@@ -496,7 +497,7 @@ private:
 struct HashLog {
     std::FILE *out = nullptr;
     std::uint64_t every = 1;
-    bool split = false;
+    bool split = false, split_vu = false;
     std::uint64_t hashed = 0;
     double total_ms = 0.0, max_ms = 0.0;
 };
@@ -510,6 +511,9 @@ HashLog &hash_log() {
         }
         if (const char *v = std::getenv("PS2_HASH_LOG_EVERY")) l.every = std::max<std::uint64_t>(1, std::strtoull(v, nullptr, 10));
         l.split = std::getenv("PS2_HASH_SPLIT") != nullptr;
+        // PS2_HASH_SPLIT=2 also prints "vu0x" (VU0 code + data; its registers are in "eecpu") and "vu1x" (VU1 registers,
+        // TOP/ITOP, pending XGKICKs, code + data), the two halves of "vu"; they are not part of the frame hash
+        l.split_vu = l.split && std::strcmp(std::getenv("PS2_HASH_SPLIT"), "2") == 0;
         return l;
     }();
     return log;
@@ -557,6 +561,11 @@ void hash_frame() {
     std::fprintf(log.out, "%llu %016llx", static_cast<unsigned long long>(g_frames), static_cast<unsigned long long>(all.digest()));
     if (log.split)
         for (const auto &[name, value] : h.parts) std::fprintf(log.out, " %s=%016llx", name, static_cast<unsigned long long>(value));
+    if (log.split_vu) {
+        Hash64 vu0, vu1;
+        vu::hash_units(vu0, vu1);
+        std::fprintf(log.out, " vu0x=%016llx vu1x=%016llx", static_cast<unsigned long long>(vu0.digest()), static_cast<unsigned long long>(vu1.digest()));
+    }
     std::fputc('\n', log.out);
     std::fflush(log.out);
     const double ms = std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - start).count();
@@ -890,12 +899,20 @@ void run_vu_thread() {
         const std::uint8_t *payload = nullptr;
         while (in.peek(h, payload)) {
             debug::jitter(2);
+            if (seamv::on()) {
+                if (h.type == gs::queue::kVblank) seamv::vblank(h.arg0);
+                else if (h.type == gs::queue::kGif) seamv::gif(static_cast<int>(h.arg0), payload, h.arg1);
+            }
             switch (h.type) {
             case gs::queue::kVif1:
+                if (vif::null_sink()) break;
                 if (gs::drawdbg::enabled()) gs::drawdbg::set_vif1_ra(h.arg1);
+                else if (seamv::on()) vif::posted_source(h.arg1);
                 vif::transfer(1, payload, h.arg0);
                 break;
-            case gs::queue::kVif1Write: vif::write(1, h.arg0, h.arg1); break;
+            case gs::queue::kVif1Write:
+                if (!vif::null_sink()) vif::write(1, h.arg0, h.arg1);
+                break;
             case gs::queue::kVuReset:
                 vif::reset_vu_side();
                 vu::reset();
@@ -1052,7 +1069,8 @@ namespace {
 
 constexpr const char *kCensusNames[kCensusCount] = {
     "gs_download_dma", "gs_download_vif1fifo", "gs_download_qwords", "gs_download_cached", "gs_download_wait", "gs_csr_read",
-    "gs_priv_read", "vu1_mem_read", "vu1_mem_write", "vu1_code_read", "vu1_code_write", "vu0_mem_read", "rtc_read", "gs_signal"};
+    "gs_priv_read", "vu1_mem_read", "vu1_mem_write", "vu1_code_read", "vu1_code_write", "vu0_mem_read", "rtc_read", "gs_signal",
+    "gs_signal_path1", "gs_signal_path2", "gs_signal_path3", "gs_finish", "gs_label", "intc5_vif1", "d1_pause", "cmsar1"};
 
 struct Counter {
     std::uint64_t count = 0, first = 0, last = 0, frames = 0;
