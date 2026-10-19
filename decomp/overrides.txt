@@ -1,6 +1,15 @@
 # EE functions whose entry gets the decomp hook (decomp/README.md): address, then anything (name, notes).
 # Each needs a PS2_DECOMP(<address>, name) in decomp/src; retranslate after editing (mksm/build.sh --retranslate).
-00474EDC	strlen	decomp/src/libc/strlen.cpp
+002124C0	ArchiveGetFile	decomp/src/fileio/fileiodrv.cpp
+00213C78	MatrixSetTranslation	decomp/src/math/vu0math.cpp
+00213C98	MatrixGetTranslation	decomp/src/math/vu0math.cpp
+00213E08	sceVu0InnerProduct	decomp/src/math/vu0math.cpp
+00213E88	sceVu0TransposeMatrix	decomp/src/math/vu0math.cpp
+00214058	MatrixInverseRigid	decomp/src/math/vu0math.cpp
+00214658	MatrixTranslate	decomp/src/math/vu0math.cpp
+00214688	CopyVector	decomp/src/math/vu0math.cpp
+0021F618	MemCardStateSetFlag	decomp/src/memcard/syncmemcard.cpp
+00225FC0	SetCharRenderFlag	decomp/src/render/character.cpp
 0026DDD0	texture_set_link_c	decomp/src/renderer/texture_manager/texture_set_link_c.cpp
 0026DE10	texture_set_link_b	decomp/src/renderer/texture_manager/texture_set_link_b.cpp
 0026DE50	texture_get_link_a	decomp/src/renderer/texture_manager/texture_get_link_a.cpp
@@ -11,3 +20,4 @@
 00273C38	static_init_678920	decomp/src/static_init/static_init_678920.cpp
 00275260	screen_page_this_field	decomp/src/renderer/screen/screen_page_this_field.cpp
 002752B0	screen_page_other_field	decomp/src/renderer/screen/screen_page_other_field.cpp
+00474EDC	strlen	decomp/src/libc/strlen.cpp
