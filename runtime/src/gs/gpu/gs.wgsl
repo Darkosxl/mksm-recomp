@@ -574,8 +574,13 @@ struct Level {
     dec: u32,
 }
 
+// Level 0 is the setup's texture, or a texture-pack replacement 2^n the size in decoded[] (gpu.cpp replace_texture).
 fn level(s: Setup, n: u32) -> Level {
     if (n == 0u) {
+        if (has(s, F_REPLACED)) {
+            let r = data[s.mip_at];
+            return Level(s.tf, s.tw + r, s.th + r, s.minu << r, ((s.maxu + 1u) << r) - 1u, s.minv << r, ((s.maxv + 1u) << r) - 1u, s.dec);
+        }
         return Level(s.tf, s.tw, s.th, s.minu, s.maxu, s.minv, s.maxv, s.dec);
     }
     let w = data[s.mip_at + n - 1u];
@@ -599,15 +604,6 @@ fn load_texel(l: Loc, k: u32) -> u32 {
         return (scratch[(l.word - snapshot_lo) * SCALE * SCALE_Y + k] >> l.shift) & l.mask;
     }
     return load_at(l, k);
-}
-
-fn fetch(s: Setup, l: Level, xi: i32, yi: i32, k: u32) -> u32 {
-    let x = texel_x(s, l, xi);
-    let y = texel_y(s, l, yi);
-    if (l.dec != 0xFFFFFFFFu) {
-        return decoded[l.dec + (y << l.tw) + x];
-    }
-    return convert(s, load_texel(addr(l.f, x, y), k));
 }
 
 fn convert(s: Setup, raw: u32) -> u32 {
@@ -661,55 +657,86 @@ fn floor_div(a: i32, b: i32) -> i32 {
     return select(a / b, (a - b + 1) / b, a < 0);
 }
 
-// Fine texel (jx, jy): native texel (jx / SCALE, jy / SCALE_Y), sample (jy % SCALE_Y) * SCALE + jx % SCALE. A clamped
-// coordinate keeps the edge sample on the side it was clamped to.
-fn fetch_hi(s: Setup, l: Level, jx: i32, jy: i32) -> u32 {
-    let nx = floor_div(jx, i32(SCALE));
-    let ny = floor_div(jy, i32(SCALE_Y));
+// Texel (xi, yi) of level l, sample k. hi (F_RT_HIRES): (xi, yi) is a fine texel instead, native texel
+// (xi / SCALE, yi / SCALE_Y), sample (yi % SCALE_Y) * SCALE + xi % SCALE; a clamped coordinate keeps the edge sample on
+// the side it was clamped to. The only texel fetch of the raster: every inlined copy costs the kernel registers.
+fn fetch(s: Setup, l: Level, xi: i32, yi: i32, k: u32, hi: bool) -> u32 {
+    var nx = xi;
+    var ny = yi;
+    if (hi) {
+        nx = floor_div(xi, i32(SCALE));
+        ny = floor_div(yi, i32(SCALE_Y));
+    }
     let x = texel_x(s, l, nx);
     let y = texel_y(s, l, ny);
     if (l.dec != 0xFFFFFFFFu) {
         return decoded[l.dec + (y << l.tw) + x];
     }
-    var sx = u32(jx - nx * i32(SCALE));
-    var sy = u32(jy - ny * i32(SCALE_Y));
-    let wu = mode(s, 24u, 2u);
-    let wv = mode(s, 26u, 2u);
-    if ((wu == 1u || wu == 2u) && i32(x) != nx) {
-        sx = select(SCALE - 1u, 0u, i32(x) > nx);
-    }
-    if ((wv == 1u || wv == 2u) && i32(y) != ny) {
-        sy = select(SCALE_Y - 1u, 0u, i32(y) > ny);
-    }
-    return convert(s, load_texel(addr(l.f, x, y), sy * SCALE + sx));
-}
-
-fn sample_hi(s: Setup, l: Level, uin: f32, vin: f32, linear: bool) -> u32 {
-    let u = uin * f32(SCALE);
-    let v = vin * f32(SCALE_Y);
-    if (!linear) {
-        // 1/100 sample of slack: exact sample boundaries (2:1 at sample 1 of 3) must not round down
-        return fetch_hi(s, l, i32(floor(u + 0.01)), i32(floor(v + 0.01)));
-    }
-    let x0 = i32(floor(u - 0.5));
-    let y0 = i32(floor(v - 0.5));
-    return blend4(fetch_hi(s, l, x0, y0), fetch_hi(s, l, x0 + 1, y0), fetch_hi(s, l, x0, y0 + 1), fetch_hi(s, l, x0 + 1, y0 + 1), u - 0.5 - f32(x0), v - 0.5 - f32(y0));
-}
-
-fn sample(s: Setup, l: Level, uin: f32, vin: f32, k: u32, linear: bool) -> u32 {
-    if (RT_HIRES) {
-        if (rt_hires) {
-            return sample_hi(s, l, uin, vin, linear);
+    var sk = k;
+    if (hi) {
+        var sx = u32(xi - nx * i32(SCALE));
+        var sy = u32(yi - ny * i32(SCALE_Y));
+        let wu = mode(s, 24u, 2u);
+        let wv = mode(s, 26u, 2u);
+        if ((wu == 1u || wu == 2u) && i32(x) != nx) {
+            sx = select(SCALE - 1u, 0u, i32(x) > nx);
         }
+        if ((wv == 1u || wv == 2u) && i32(y) != ny) {
+            sy = select(SCALE_Y - 1u, 0u, i32(y) > ny);
+        }
+        sk = sy * SCALE + sx;
+    }
+    return convert(s, load_texel(addr(l.f, x, y), sk));
+}
+
+// One level, point or bilinear: 1 or 4 taps through the one fetch() above.
+fn sample(s: Setup, l: Level, uin: f32, vin: f32, k: u32, linear: bool) -> u32 {
+    let hi = RT_HIRES && rt_hires;
+    var x0: i32;
+    var y0: i32;
+    var fx = 0.0;
+    var fy = 0.0;
+    if (hi) {
+        let u = uin * f32(SCALE);
+        let v = vin * f32(SCALE_Y);
+        if (!linear) {
+            // 1/100 sample of slack: exact sample boundaries (2:1 at sample 1 of 3) must not round down
+            x0 = i32(floor(u + 0.01));
+            y0 = i32(floor(v + 0.01));
+        } else {
+            x0 = i32(floor(u - 0.5));
+            y0 = i32(floor(v - 0.5));
+            fx = u - 0.5 - f32(x0);
+            fy = v - 0.5 - f32(y0);
+        }
+    } else if (!linear) {
+        x0 = i32(floor(uin));
+        y0 = i32(floor(vin));
+    } else {
+        let u = uin - 0.5;
+        let v = vin - 0.5;
+        x0 = i32(floor(u));
+        y0 = i32(floor(v));
+        fx = u - f32(x0);
+        fy = v - f32(y0);
+    }
+    // taps (x0, y0), (x0 + 1, y0), (x0, y0 + 1), (x0 + 1, y0 + 1) shift through c3..c0
+    let taps = select(1u, 4u, linear);
+    var c0 = 0u;
+    var c1 = 0u;
+    var c2 = 0u;
+    var c3 = 0u;
+    for (var i = 0u; i < taps; i = i + 1u) {
+        let t = fetch(s, l, x0 + i32(i & 1u), y0 + i32(i >> 1u), k, hi);
+        c3 = c2;
+        c2 = c1;
+        c1 = c0;
+        c0 = t;
     }
     if (!linear) {
-        return fetch(s, l, i32(floor(uin)), i32(floor(vin)), k);
+        return c0;
     }
-    let u = uin - 0.5;
-    let v = vin - 0.5;
-    let x0 = i32(floor(u));
-    let y0 = i32(floor(v));
-    return blend4(fetch(s, l, x0, y0, k), fetch(s, l, x0 + 1, y0, k), fetch(s, l, x0, y0 + 1, k), fetch(s, l, x0 + 1, y0 + 1, k), u - f32(x0), v - f32(y0));
+    return blend4(c3, c2, c1, c0, fx, fy);
 }
 
 // GS texture LOD: K when LCM=1 or the coordinates are UV (no per-pixel Q), else log2(1/|Q|) * 2^L + K.
@@ -723,44 +750,52 @@ fn texture_lod(s: Setup, q: f32) -> f32 {
 
 // MXL=0 always filters with MMAG on level 0. Otherwise LOD <= 0 magnifies (MMAG, level 0) and LOD > 0 minifies with MMIN:
 // NEAREST/LINEAR stay on level 0, *_MIPMAP_NEAREST rounds the LOD to a level, *_MIPMAP_LINEAR blends floor(LOD) and the next level.
+// The level, its coordinate scale and the filter are chosen first; one sample() call (in a loop of 1 or 2 levels) does the rest.
 fn texture(s: Setup, u: f32, v: f32, q: f32, k: u32) -> u32 {
     let mxl = (s.mip >> 1u) & 7u;
-    if (mxl == 0u || has(s, F_REPLACED)) {
-        // Level 0. A texture-pack replacement is level 0 at 2^n the size in decoded[] (gpu.cpp replace_texture); one
-        // sample() call for both, since every inlined call costs the raster kernel registers.
-        var l = level(s, 0u);
-        var f = 1.0;
-        if (has(s, F_REPLACED)) {
-            let n = data[s.mip_at];
-            l = Level(s.tf, s.tw + n, s.th + n, s.minu << n, ((s.maxu + 1u) << n) - 1u, s.minv << n, ((s.maxv + 1u) << n) - 1u, s.dec);
-            f = f32(1u << n);
+    var n = 0u;
+    var scale = 1.0;
+    var levels = 1u;
+    var f = 0.0;
+    var linear = has(s, F_BILINEAR);
+    if (has(s, F_REPLACED)) {
+        scale = f32(1u << data[s.mip_at]);
+    } else if (mxl != 0u) {
+        let lod = texture_lod(s, q);
+        if (lod > 0.0) {
+            let mmin = (s.mip >> 4u) & 7u;
+            linear = mmin == 1u || (mmin & 4u) != 0u;
+            if (mmin >= 2u && mmin <= 5u) {
+                let l = min(lod, f32(mxl));
+                if ((mmin & 1u) == 0u) {
+                    n = min(u32(floor(l + 0.5)), mxl);
+                } else {
+                    n = min(u32(floor(l)), mxl - 1u);
+                    f = clamp(l - f32(n), 0.0, 1.0);
+                    levels = 2u;
+                }
+                scale = 1.0 / f32(1u << n);
+            }
         }
-        return sample(s, l, u * f, v * f, k, has(s, F_BILINEAR));
     }
-    let lod = texture_lod(s, q);
-    if (!(lod > 0.0)) {
-        return sample(s, level(s, 0u), u, v, k, has(s, F_BILINEAR));
+    var uu = u * scale;
+    var vv = v * scale;
+    var c0 = 0u;
+    var c1 = 0u;
+    for (var j = 0u; j < levels; j = j + 1u) {
+        c1 = c0;
+        c0 = sample(s, level(s, n + j), uu, vv, k, linear);
+        uu = uu * 0.5;
+        vv = vv * 0.5;
     }
-    let mmin = (s.mip >> 4u) & 7u;
-    let linear = mmin == 1u || (mmin & 4u) != 0u;
-    if (mmin < 2u || mmin > 5u) {
-        return sample(s, level(s, 0u), u, v, k, linear);
+    if (levels == 1u) {
+        return c0;
     }
-    let l = min(lod, f32(mxl));
-    if ((mmin & 1u) == 0u) {
-        let n = min(u32(floor(l + 0.5)), mxl);
-        let scale = 1.0 / f32(1u << n);
-        return sample(s, level(s, n), u * scale, v * scale, k, linear);
-    }
-    let n = min(u32(floor(l)), mxl - 1u);
-    let f = clamp(l - f32(n), 0.0, 1.0);
-    let scale = 1.0 / f32(1u << n);
-    let c0 = sample(s, level(s, n), u * scale, v * scale, k, linear);
-    let c1 = sample(s, level(s, n + 1u), u * scale * 0.5, v * scale * 0.5, k, linear);
+    // level n in c1, level n + 1 in c0
     var out = 0u;
     for (var ch = 0u; ch < 32u; ch = ch + 8u) {
-        let a = f32((c0 >> ch) & 0xFFu);
-        let b = f32((c1 >> ch) & 0xFFu);
+        let a = f32((c1 >> ch) & 0xFFu);
+        let b = f32((c0 >> ch) & 0xFFu);
         out = out | (u32(clamp(floor(a + (b - a) * f), 0.0, 255.0)) << ch);
     }
     return out;
