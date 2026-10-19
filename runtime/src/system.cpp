@@ -287,10 +287,16 @@ void fps_window() {
     if (!spec || !std::strchr(spec, ',')) return;
     static const std::uint64_t from = std::strtoull(spec, nullptr, 10), to = std::strtoull(std::strchr(spec, ',') + 1, nullptr, 10);
     static std::chrono::steady_clock::time_point t0;
-    if (g_frames == from) t0 = std::chrono::steady_clock::now();
+    static double gpu0 = 0.0;
+    if (g_frames == from) {
+        t0 = std::chrono::steady_clock::now();
+        gpu0 = gpu_busy_ms();
+    }
+    // GPU: timed passes (timestamp queries, GPU renderer only) per frame over the window
     if (g_frames == to && to > from)
-        std::fprintf(stderr, "[fps] frames %llu-%llu: %.1f fps\n", static_cast<unsigned long long>(from), static_cast<unsigned long long>(to),
-                     static_cast<double>(to - from) / std::chrono::duration<double>(std::chrono::steady_clock::now() - t0).count());
+        std::fprintf(stderr, "[fps] frames %llu-%llu: %.1f fps, GPU %.2f ms/frame\n", static_cast<unsigned long long>(from), static_cast<unsigned long long>(to),
+                     static_cast<double>(to - from) / std::chrono::duration<double>(std::chrono::steady_clock::now() - t0).count(),
+                     (gpu_busy_ms() - gpu0) / static_cast<double>(to - from));
 }
 
 void vblank() {

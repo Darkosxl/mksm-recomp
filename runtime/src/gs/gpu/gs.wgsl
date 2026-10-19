@@ -245,13 +245,6 @@ fn write_sample(psm: u32, bp: u32, bw: u32, x: u32, y: u32, k: u32, value: u32) 
     store(locate(psm, bp, bw, x, y), k, value);
 }
 
-fn write_pixel(psm: u32, bp: u32, bw: u32, x: u32, y: u32, value: u32) {
-    let l = locate(psm, bp, bw, x, y);
-    for (var k = 0u; k < SCALE * SCALE_Y; k = k + 1u) {
-        store(l, k, value);
-    }
-}
-
 fn bits_at(offset: u32, bit: u32, count: u32) -> u32 {
     let w = offset + bit / 32u;
     let s = bit % 32u;
@@ -279,12 +272,15 @@ fn cache_bits_at(offset: u32, bit: u32, count: u32) -> u32 {
 }
 
 
+// One thread per sample (prm(2) pixels x SCALE x SCALE_Y): the samples of a word sit side by side in vram, so a warp's
+// stores land together.
 @compute @workgroup_size(64)
 fn upload(@builtin(global_invocation_id) gid: vec3<u32>) {
-    let i = gid.x + gid.y * 64u * 1024u;
-    if (i >= prm(2u)) {
+    let j = gid.x + gid.y * 64u * 1024u;
+    if (j >= prm(2u) * SCALE * SCALE_Y) {
         return;
     }
+    let i = j / (SCALE * SCALE_Y);
     let records = prm(0u);
     var lo = 0u;
     var hi = prm(1u);
@@ -309,7 +305,7 @@ fn upload(@builtin(global_invocation_id) gid: vec3<u32>) {
     } else {
         v = bits_at(data[r + 8u], data[r + 9u] + k * bpp, bpp);
     }
-    write_pixel(data[r + 2u], data[r], data[r + 1u], x, y, v);
+    write_sample(data[r + 2u], data[r], data[r + 1u], x, y, j % (SCALE * SCALE_Y), v);
 }
 
 @compute @workgroup_size(64)
@@ -350,51 +346,45 @@ fn copy_write(@builtin(global_invocation_id) gid: vec3<u32>) {
     write_sample(prm(2u), prm(0u), prm(1u), (prm(3u) + x) & 0x7FFu, (prm(4u) + y) & 0x7FFu, k, scratch[(sy * w + sx) * n + k]);
 }
 
-// One workgroup per record n of a group of chained CLUT loads (record n turns slot src_n into dst_n = src_n+1).
-// vram doesn't change within a group, so every entry of dst_n is the one written by the newest record m <= n that
-// covers it, else the group's base slot: the values the records would leave one after another, without the serial
-// chain and its barriers.
+// A group of prm(1) chained CLUT loads (record n turns slot src_n into dst_n = src_n+1), one thread per CLUT entry
+// walking the records in order: vram doesn't change within a group, so entry e of dst_n is the one read by the newest
+// record m <= n that covers it, else the group's base slot.
 @compute @workgroup_size(256)
-fn load_clut(@builtin(local_invocation_index) k: u32, @builtin(workgroup_id) wg: vec3<u32>) {
-    let base = data[prm(0u)] * CLUT_ENTRIES;
-    let dst = data[prm(0u) + wg.x * 12u + 1u] * CLUT_ENTRIES;
-    for (var e = k; e < 512u; e = e + 256u) {
-        var value = clut[base + e];
-        for (var m = i32(wg.x); m >= 0; m = m - 1) {
-            let r = prm(0u) + u32(m) * 12u;
-            let cbp = data[r + 2u];
-            let cpsm = data[r + 3u];
-            let csa = data[r + 5u];
-            let eight = data[r + 6u] != 0u;
-            var entries = 16u;
-            if (eight) {
-                entries = 256u;
+fn load_clut(@builtin(global_invocation_id) gid: vec3<u32>) {
+    let e = gid.x;
+    var value = clut[data[prm(0u)] * CLUT_ENTRIES + e];
+    for (var m = 0u; m < prm(1u); m = m + 1u) {
+        let r = prm(0u) + m * 12u;
+        let cbp = data[r + 2u];
+        let cpsm = data[r + 3u];
+        let csa = data[r + 5u];
+        let eight = data[r + 6u] != 0u;
+        var entries = 16u;
+        if (eight) {
+            entries = 256u;
+        }
+        if (data[r + 4u] != 0u) {
+            let i = (e - csa * 16u) & 511u;
+            if (i < entries) {
+                value = read_pixel(cpsm, cbp, data[r + 7u], data[r + 8u] * 16u + i, data[r + 9u]);
             }
-            if (data[r + 4u] != 0u) {
-                let i = (e - csa * 16u) & 511u;
-                if (i < entries) {
-                    value = read_pixel(cpsm, cbp, data[r + 7u], data[r + 8u] * 16u + i, data[r + 9u]);
-                    break;
+        } else if (e < 256u) {
+            var i = e;
+            if (!eight) {
+                i = (e - (csa & 15u) * 16u) & 255u;
+            }
+            if (i < entries) {
+                var x = i & 7u;
+                var y = i >> 3u;
+                if (eight) {
+                    let j = (i & ~0x18u) | ((i & 0x08u) << 1u) | ((i & 0x10u) >> 1u);
+                    x = j & 15u;
+                    y = j >> 4u;
                 }
-            } else if (e < 256u) {
-                var i = e;
-                if (!eight) {
-                    i = (e - (csa & 15u) * 16u) & 255u;
-                }
-                if (i < entries) {
-                    var x = i & 7u;
-                    var y = i >> 3u;
-                    if (eight) {
-                        let j = (i & ~0x18u) | ((i & 0x08u) << 1u) | ((i & 0x10u) >> 1u);
-                        x = j & 15u;
-                        y = j >> 4u;
-                    }
-                    value = read_pixel(cpsm, cbp, 1u, x, y);
-                    break;
-                }
+                value = read_pixel(cpsm, cbp, 1u, x, y);
             }
         }
-        clut[dst + e] = value;
+        clut[data[r + 1u] * CLUT_ENTRIES + e] = value;
     }
 }
 
@@ -422,14 +412,11 @@ fn display(@builtin(global_invocation_id) gid: vec3<u32>) {
     scratch[prm(8u) + gid.y * w + gid.x] = c | 0xFF000000u;
 }
 
+// Primitive state (gpu.cpp make_setup). Frame and Z (words 1-3, 5, 6, 23) are the same for a whole batch and come from
+// the dispatch parameters instead (raster: fb_loc, z_loc, frame_psm, z_max).
 struct Setup {
     flags: u32,
-    fbp: u32,
-    fbw: u32,
-    fpsm: u32,
     fbmsk: u32,
-    zbp: u32,
-    zpsm: u32,
     modes: u32,
     aref: u32,
     fix: u32,
@@ -452,13 +439,10 @@ struct Setup {
     ta1: u32,
     fogcol: u32,
     clut: u32,
-    zmax: u32,
     dec: u32,
     mip: u32,
     mip_at: u32,
     tf: Fmt,
-    ff: Fmt,
-    zf: Fmt,
 }
 
 const F_IIP: u32 = 1u;
@@ -483,12 +467,7 @@ const F_RT_HIRES: u32 = 131072u;
 fn load_setup(at: u32) -> Setup {
     var s: Setup;
     s.flags = data[at];
-    s.fbp = data[at + 1u];
-    s.fbw = data[at + 2u];
-    s.fpsm = data[at + 3u];
     s.fbmsk = data[at + 4u];
-    s.zbp = data[at + 5u];
-    s.zpsm = data[at + 6u];
     s.modes = data[at + 7u];
     s.aref = data[at + 8u];
     s.fix = data[at + 9u];
@@ -511,13 +490,10 @@ fn load_setup(at: u32) -> Setup {
     s.ta1 = (data[at + 20u] >> 8u) & 0xFFu;
     s.fogcol = data[at + 21u];
     s.clut = data[at + 22u];
-    s.zmax = data[at + 23u];
     s.dec = data[at + 24u];
     s.mip = data[at + 25u];
     s.mip_at = at + 26u;
     s.tf = fmt_of(s.tpsm, s.tbp, s.tbw);
-    s.ff = fmt_of(s.fpsm, s.fbp, s.fbw);
-    s.zf = fmt_of(s.zpsm, s.zbp, s.fbw);
     return s;
 }
 
@@ -575,8 +551,13 @@ struct Level {
     dec: u32,
 }
 
+// Level 0 is the setup's texture, or a texture-pack replacement 2^n the size in decoded[] (gpu.cpp replace_texture).
 fn level(s: Setup, n: u32) -> Level {
     if (n == 0u) {
+        if (has(s, F_REPLACED)) {
+            let r = data[s.mip_at];
+            return Level(s.tf, s.tw + r, s.th + r, s.minu << r, ((s.maxu + 1u) << r) - 1u, s.minv << r, ((s.maxv + 1u) << r) - 1u, s.dec);
+        }
         return Level(s.tf, s.tw, s.th, s.minu, s.maxu, s.minv, s.maxv, s.dec);
     }
     let w = data[s.mip_at + n - 1u];
@@ -595,20 +576,17 @@ fn texel_y(s: Setup, l: Level, yi: i32) -> u32 {
 var<private> snapshot_lo: u32 = 0u;
 var<private> snapshot_hi: u32 = 0u;
 
+// Raster: pages snapshotted for this batch (gpu.cpp snapshot_batch), 512 bits from prm(16).
+fn snapshot_page(word: u32) -> bool {
+    let page = word >> 11u;
+    return ((prm(16u + (page >> 5u)) >> (page & 31u)) & 1u) != 0u;
+}
+
 fn load_texel(l: Loc, k: u32) -> u32 {
-    if (l.word >= snapshot_lo && l.word < snapshot_hi) {
+    if (l.word >= snapshot_lo && l.word < snapshot_hi && snapshot_page(l.word)) {
         return (scratch[(l.word - snapshot_lo) * SCALE * SCALE_Y + k] >> l.shift) & l.mask;
     }
     return load_at(l, k);
-}
-
-fn fetch(s: Setup, l: Level, xi: i32, yi: i32, k: u32) -> u32 {
-    let x = texel_x(s, l, xi);
-    let y = texel_y(s, l, yi);
-    if (l.dec != 0xFFFFFFFFu) {
-        return decoded[l.dec + (y << l.tw) + x];
-    }
-    return convert(s, load_texel(addr(l.f, x, y), k));
 }
 
 fn convert(s: Setup, raw: u32) -> u32 {
@@ -653,60 +631,95 @@ var<private> rt_hires: bool = false;
 // Pipeline constant, on only for batches that hold F_RT_HIRES sprites (gpu.cpp kRasterHi): elsewhere the fine-grid
 // path compiles out and the common raster costs nothing extra.
 override RT_HIRES: bool = false;
+// Profiling only (env PS2_RASTER_DIAG, gpu.cpp; never set otherwise): skip parts of the raster to attribute its time.
+// 1 no shading after the box test, 2 no plot after the edge test, 4 constant texel, 8 no destination read, 16 no Z,
+// 32 no frame write.
+override DIAG: u32 = 0u;
 
 fn floor_div(a: i32, b: i32) -> i32 {
     return select(a / b, (a - b + 1) / b, a < 0);
 }
 
-// Fine texel (jx, jy): native texel (jx / SCALE, jy / SCALE_Y), sample (jy % SCALE_Y) * SCALE + jx % SCALE. A clamped
-// coordinate keeps the edge sample on the side it was clamped to.
-fn fetch_hi(s: Setup, l: Level, jx: i32, jy: i32) -> u32 {
-    let nx = floor_div(jx, i32(SCALE));
-    let ny = floor_div(jy, i32(SCALE_Y));
+// Texel (xi, yi) of level l, sample k. hi (F_RT_HIRES): (xi, yi) is a fine texel instead, native texel
+// (xi / SCALE, yi / SCALE_Y), sample (yi % SCALE_Y) * SCALE + xi % SCALE; a clamped coordinate keeps the edge sample on
+// the side it was clamped to. The only texel fetch of the raster: every inlined copy costs the kernel registers.
+fn fetch(s: Setup, l: Level, xi: i32, yi: i32, k: u32, hi: bool) -> u32 {
+    var nx = xi;
+    var ny = yi;
+    if (hi) {
+        nx = floor_div(xi, i32(SCALE));
+        ny = floor_div(yi, i32(SCALE_Y));
+    }
     let x = texel_x(s, l, nx);
     let y = texel_y(s, l, ny);
     if (l.dec != 0xFFFFFFFFu) {
         return decoded[l.dec + (y << l.tw) + x];
     }
-    var sx = u32(jx - nx * i32(SCALE));
-    var sy = u32(jy - ny * i32(SCALE_Y));
-    let wu = mode(s, 24u, 2u);
-    let wv = mode(s, 26u, 2u);
-    if ((wu == 1u || wu == 2u) && i32(x) != nx) {
-        sx = select(SCALE - 1u, 0u, i32(x) > nx);
-    }
-    if ((wv == 1u || wv == 2u) && i32(y) != ny) {
-        sy = select(SCALE_Y - 1u, 0u, i32(y) > ny);
-    }
-    return convert(s, load_texel(addr(l.f, x, y), sy * SCALE + sx));
-}
-
-fn sample_hi(s: Setup, l: Level, uin: f32, vin: f32, linear: bool) -> u32 {
-    let u = uin * f32(SCALE);
-    let v = vin * f32(SCALE_Y);
-    if (!linear) {
-        // 1/100 sample of slack: exact sample boundaries (2:1 at sample 1 of 3) must not round down
-        return fetch_hi(s, l, i32(floor(u + 0.01)), i32(floor(v + 0.01)));
-    }
-    let x0 = i32(floor(u - 0.5));
-    let y0 = i32(floor(v - 0.5));
-    return blend4(fetch_hi(s, l, x0, y0), fetch_hi(s, l, x0 + 1, y0), fetch_hi(s, l, x0, y0 + 1), fetch_hi(s, l, x0 + 1, y0 + 1), u - 0.5 - f32(x0), v - 0.5 - f32(y0));
-}
-
-fn sample(s: Setup, l: Level, uin: f32, vin: f32, k: u32, linear: bool) -> u32 {
-    if (RT_HIRES) {
-        if (rt_hires) {
-            return sample_hi(s, l, uin, vin, linear);
+    var sk = k;
+    if (hi) {
+        var sx = u32(xi - nx * i32(SCALE));
+        var sy = u32(yi - ny * i32(SCALE_Y));
+        let wu = mode(s, 24u, 2u);
+        let wv = mode(s, 26u, 2u);
+        if ((wu == 1u || wu == 2u) && i32(x) != nx) {
+            sx = select(SCALE - 1u, 0u, i32(x) > nx);
         }
+        if ((wv == 1u || wv == 2u) && i32(y) != ny) {
+            sy = select(SCALE_Y - 1u, 0u, i32(y) > ny);
+        }
+        sk = sy * SCALE + sx;
+    }
+    return convert(s, load_texel(addr(l.f, x, y), sk));
+}
+
+// One level, point or bilinear: 1 or 4 taps through the one fetch() above.
+fn sample(s: Setup, l: Level, uin: f32, vin: f32, k: u32, linear: bool) -> u32 {
+    let hi = RT_HIRES && rt_hires;
+    var x0: i32;
+    var y0: i32;
+    var fx = 0.0;
+    var fy = 0.0;
+    if (hi) {
+        let u = uin * f32(SCALE);
+        let v = vin * f32(SCALE_Y);
+        if (!linear) {
+            // 1/100 sample of slack: exact sample boundaries (2:1 at sample 1 of 3) must not round down
+            x0 = i32(floor(u + 0.01));
+            y0 = i32(floor(v + 0.01));
+        } else {
+            x0 = i32(floor(u - 0.5));
+            y0 = i32(floor(v - 0.5));
+            fx = u - 0.5 - f32(x0);
+            fy = v - 0.5 - f32(y0);
+        }
+    } else if (!linear) {
+        x0 = i32(floor(uin));
+        y0 = i32(floor(vin));
+    } else {
+        let u = uin - 0.5;
+        let v = vin - 0.5;
+        x0 = i32(floor(u));
+        y0 = i32(floor(v));
+        fx = u - f32(x0);
+        fy = v - f32(y0);
+    }
+    // taps (x0, y0), (x0 + 1, y0), (x0, y0 + 1), (x0 + 1, y0 + 1) shift through c3..c0
+    let taps = select(1u, 4u, linear);
+    var c0 = 0u;
+    var c1 = 0u;
+    var c2 = 0u;
+    var c3 = 0u;
+    for (var i = 0u; i < taps; i = i + 1u) {
+        let t = fetch(s, l, x0 + i32(i & 1u), y0 + i32(i >> 1u), k, hi);
+        c3 = c2;
+        c2 = c1;
+        c1 = c0;
+        c0 = t;
     }
     if (!linear) {
-        return fetch(s, l, i32(floor(uin)), i32(floor(vin)), k);
+        return c0;
     }
-    let u = uin - 0.5;
-    let v = vin - 0.5;
-    let x0 = i32(floor(u));
-    let y0 = i32(floor(v));
-    return blend4(fetch(s, l, x0, y0, k), fetch(s, l, x0 + 1, y0, k), fetch(s, l, x0, y0 + 1, k), fetch(s, l, x0 + 1, y0 + 1, k), u - f32(x0), v - f32(y0));
+    return blend4(c3, c2, c1, c0, fx, fy);
 }
 
 // GS texture LOD: K when LCM=1 or the coordinates are UV (no per-pixel Q), else log2(1/|Q|) * 2^L + K.
@@ -720,44 +733,52 @@ fn texture_lod(s: Setup, q: f32) -> f32 {
 
 // MXL=0 always filters with MMAG on level 0. Otherwise LOD <= 0 magnifies (MMAG, level 0) and LOD > 0 minifies with MMIN:
 // NEAREST/LINEAR stay on level 0, *_MIPMAP_NEAREST rounds the LOD to a level, *_MIPMAP_LINEAR blends floor(LOD) and the next level.
+// The level, its coordinate scale and the filter are chosen first; one sample() call (in a loop of 1 or 2 levels) does the rest.
 fn texture(s: Setup, u: f32, v: f32, q: f32, k: u32) -> u32 {
     let mxl = (s.mip >> 1u) & 7u;
-    if (mxl == 0u || has(s, F_REPLACED)) {
-        // Level 0. A texture-pack replacement is level 0 at 2^n the size in decoded[] (gpu.cpp replace_texture); one
-        // sample() call for both, since every inlined call costs the raster kernel registers.
-        var l = level(s, 0u);
-        var f = 1.0;
-        if (has(s, F_REPLACED)) {
-            let n = data[s.mip_at];
-            l = Level(s.tf, s.tw + n, s.th + n, s.minu << n, ((s.maxu + 1u) << n) - 1u, s.minv << n, ((s.maxv + 1u) << n) - 1u, s.dec);
-            f = f32(1u << n);
+    var n = 0u;
+    var scale = 1.0;
+    var levels = 1u;
+    var f = 0.0;
+    var linear = has(s, F_BILINEAR);
+    if (has(s, F_REPLACED)) {
+        scale = f32(1u << data[s.mip_at]);
+    } else if (mxl != 0u) {
+        let lod = texture_lod(s, q);
+        if (lod > 0.0) {
+            let mmin = (s.mip >> 4u) & 7u;
+            linear = mmin == 1u || (mmin & 4u) != 0u;
+            if (mmin >= 2u && mmin <= 5u) {
+                let l = min(lod, f32(mxl));
+                if ((mmin & 1u) == 0u) {
+                    n = min(u32(floor(l + 0.5)), mxl);
+                } else {
+                    n = min(u32(floor(l)), mxl - 1u);
+                    f = clamp(l - f32(n), 0.0, 1.0);
+                    levels = 2u;
+                }
+                scale = 1.0 / f32(1u << n);
+            }
         }
-        return sample(s, l, u * f, v * f, k, has(s, F_BILINEAR));
     }
-    let lod = texture_lod(s, q);
-    if (!(lod > 0.0)) {
-        return sample(s, level(s, 0u), u, v, k, has(s, F_BILINEAR));
+    var uu = u * scale;
+    var vv = v * scale;
+    var c0 = 0u;
+    var c1 = 0u;
+    for (var j = 0u; j < levels; j = j + 1u) {
+        c1 = c0;
+        c0 = sample(s, level(s, n + j), uu, vv, k, linear);
+        uu = uu * 0.5;
+        vv = vv * 0.5;
     }
-    let mmin = (s.mip >> 4u) & 7u;
-    let linear = mmin == 1u || (mmin & 4u) != 0u;
-    if (mmin < 2u || mmin > 5u) {
-        return sample(s, level(s, 0u), u, v, k, linear);
+    if (levels == 1u) {
+        return c0;
     }
-    let l = min(lod, f32(mxl));
-    if ((mmin & 1u) == 0u) {
-        let n = min(u32(floor(l + 0.5)), mxl);
-        let scale = 1.0 / f32(1u << n);
-        return sample(s, level(s, n), u * scale, v * scale, k, linear);
-    }
-    let n = min(u32(floor(l)), mxl - 1u);
-    let f = clamp(l - f32(n), 0.0, 1.0);
-    let scale = 1.0 / f32(1u << n);
-    let c0 = sample(s, level(s, n), u * scale, v * scale, k, linear);
-    let c1 = sample(s, level(s, n + 1u), u * scale * 0.5, v * scale * 0.5, k, linear);
+    // level n in c1, level n + 1 in c0
     var out = 0u;
     for (var ch = 0u; ch < 32u; ch = ch + 8u) {
-        let a = f32((c0 >> ch) & 0xFFu);
-        let b = f32((c1 >> ch) & 0xFFu);
+        let a = f32((c1 >> ch) & 0xFFu);
+        let b = f32((c0 >> ch) & 0xFFu);
         out = out | (u32(clamp(floor(a + (b - a) * f), 0.0, 255.0)) << ch);
     }
     return out;
@@ -777,9 +798,28 @@ fn blend4(c00: u32, c10: u32, c01: u32, c11: u32, fx: f32, fy: f32) -> u32 {
     return out;
 }
 
+// Raster dispatch parameters (gpu.cpp flush_batch): the batch's frame format and its Z format's largest value.
+fn frame_psm() -> u32 {
+    return prm(9u);
+}
+
+fn z_max() -> u32 {
+    return prm(12u);
+}
+
+// Z24 whose words no other thread of the dispatch writes (gpu.cpp flush_batch: Z pages apart from the frame's, no
+// aliasing): the Z write stores the word the depth test loaded with the new Z in it, one store instead of AND + OR.
+fn z_owned() -> bool {
+    return prm(13u) != 0u;
+}
+
+// This thread's frame and Z words (raster): every primitive of a batch draws to the same frame and Z buffer.
+var<private> fb_loc: Loc;
+var<private> z_loc: Loc;
+
 fn read_frame(s: Setup, l: Loc, k: u32) -> u32 {
     let raw = load_at(l, k);
-    switch s.fpsm {
+    switch frame_psm() {
         case 0x01u {
             return raw | 0x80000000u;
         }
@@ -805,7 +845,7 @@ fn pack16(v: u32) -> u32 {
 }
 
 fn write_frame(s: Setup, l: Loc, k: u32, c: u32, mask: u32) {
-    switch s.fpsm {
+    switch frame_psm() {
         case 0x02u, 0x0Au {
             let old = load_at(l, k);
             var m16 = pack16(mask);
@@ -854,31 +894,35 @@ fn plot(s: Setup, x: i32, y: i32, k: u32, at: Attr) {
     if (scanmsk == 3u && (y & 1) != 0) {
         return;
     }
-    let ux = u32(x);
-    let uy = u32(y);
-    let z = min(at.z, s.zmax);
-    let fl = addr(s.ff, ux, uy);
-    var zl = Loc(0u, 0u, 0u);
+    let z = min(at.z, z_max());
+    let fl = fb_loc;
+    let zl = z_loc;
 
     var dst = 0u;
     var have_dst = false;
     if (has(s, F_DATE)) {
-        dst = read_frame(s, fl, k);
+        if ((DIAG & 8u) == 0u) {
+            dst = read_frame(s, fl, k);
+        }
         have_dst = true;
         if (((dst & 0x80000000u) != 0u) != has(s, F_DATM)) {
             return;
         }
     }
 
-    let zte = has(s, F_ZTE);
+    let zte = has(s, F_ZTE) && (DIAG & 16u) == 0u;
+    // The Z word as the depth test read it, when it did; with z_owned() the write stores it back whole.
+    var zword = 0u;
+    var zread = false;
     if (zte) {
         let ztst = mode(s, 8u, 2u);
         if (ztst == 0u) {
             return;
         }
-        zl = addr(s.zf, ux, uy);
         if (ztst != 1u) {
-            let old = load_at(zl, k) & s.zmax;
+            zword = atomicLoad(&vram[zl.word * SCALE * SCALE_Y + k]);
+            zread = true;
+            let old = ((zword >> zl.shift) & zl.mask) & z_max();
             if ((ztst == 2u && z < old) || (ztst == 3u && z <= old)) {
                 return;
             }
@@ -904,7 +948,10 @@ fn plot(s: Setup, x: i32, y: i32, k: u32, at: Attr) {
             u = at.s / q * f32(1u << s.tw);
             v = at.t / q * f32(1u << s.th);
         }
-        let t = texture(s, u, v, q, k);
+        var t = 0x80808080u;
+        if ((DIAG & 4u) == 0u) {
+            t = texture(s, u, v, q, k);
+        }
         let tr = i32(t & 0xFFu);
         let tg = i32((t >> 8u) & 0xFFu);
         let tb = i32((t >> 16u) & 0xFFu);
@@ -1006,10 +1053,10 @@ fn plot(s: Setup, x: i32, y: i32, k: u32, at: Attr) {
         }
     }
 
-    if (write_fb) {
+    if (write_fb && (DIAG & 32u) == 0u) {
         let colclamp = has(s, F_COLCLAMP);
         if (has(s, F_ABE) && (!has(s, F_PABE) || (a & 0x80) != 0)) {
-            if (!have_dst) {
+            if (!have_dst && (DIAG & 8u) == 0u) {
                 dst = read_frame(s, fl, k);
             }
             let cd = vec3<i32>(i32(dst & 0xFFu), i32((dst >> 8u) & 0xFFu), i32((dst >> 16u) & 0xFFu));
@@ -1068,7 +1115,11 @@ fn plot(s: Setup, x: i32, y: i32, k: u32, at: Attr) {
         write_frame(s, fl, k, u32(r) | (u32(g) << 8u) | (u32(b) << 16u) | (out_a << 24u), mask);
     }
     if (write_z && zte) {
-        store(zl, k, z);
+        if (zread && z_owned()) {
+            atomicStore(&vram[zl.word * SCALE * SCALE_Y + k], (zword & ~(zl.mask << zl.shift)) | ((z & zl.mask) << zl.shift));
+        } else {
+            store(zl, k, z);
+        }
     }
 }
 
@@ -1231,28 +1282,49 @@ fn shade_at(p: u32, s: Setup, x: i32, y: i32, k: u32, px: f32, py: f32) {
             at = Attr(c.x, c.y, c.z, c.w, t.x, t.y, t.z, t.w, data[p + 24u]);
         }
     }
+    if ((DIAG & 2u) != 0u) {
+        return;
+    }
     plot(s, x, y, k, at);
 }
 
 @compute @workgroup_size(64)
+// All of a batch's decodes in one dispatch: prm(1) records at data[prm(0)] (setup, decoded offset, texels, first
+// thread), prm(2) texels in all.
 fn decode(@builtin(global_invocation_id) gid: vec3<u32>) {
     let i = gid.x + gid.y * 64u * 1024u;
     if (i >= prm(2u)) {
         return;
     }
-    let s = load_setup(prm(0u));
-    let x = i & ((1u << s.tw) - 1u);
-    let y = i >> s.tw;
-    decoded[prm(1u) + i] = convert(s, load_at(addr(s.tf, x, y), 0u));
+    let records = prm(0u);
+    var lo = 0u;
+    var hi = prm(1u);
+    while (hi - lo > 1u) {
+        let mid = (lo + hi) / 2u;
+        if (data[records + mid * 4u + 3u] <= i) {
+            lo = mid;
+        } else {
+            hi = mid;
+        }
+    }
+    let r = records + lo * 4u;
+    let t = i - data[r + 3u];
+    let s = load_setup(data[r]);
+    let x = t & ((1u << s.tw) - 1u);
+    let y = t >> s.tw;
+    decoded[data[r + 1u] + t] = convert(s, load_at(addr(s.tf, x, y), 0u));
 }
 
 @compute @workgroup_size(64)
+// prm(1) pages listed at data[prm(2)], all samples, into scratch at their offset from word prm(0).
 fn snapshot(@builtin(global_invocation_id) gid: vec3<u32>) {
     let i = gid.x + gid.y * 64u * 1024u;
-    if (i >= prm(1u)) {
+    let per = 2048u * SCALE * SCALE_Y;
+    if (i >= prm(1u) * per) {
         return;
     }
-    scratch[i] = atomicLoad(&vram[prm(0u) * SCALE * SCALE_Y + i]);
+    let w = data[prm(2u) + i / per] * per + i % per;
+    scratch[w - prm(0u) * SCALE * SCALE_Y] = atomicLoad(&vram[w]);
 }
 
 @compute @workgroup_size(64)
@@ -1286,6 +1358,8 @@ fn raster(@builtin(workgroup_id) wid: vec3<u32>, @builtin(local_invocation_id) l
     let setups = prm(2u);
     snapshot_lo = prm(5u);
     snapshot_hi = prm(6u);
+    fb_loc = addr(fmt_of(prm(9u), prm(7u), prm(8u)), u32(x), u32(y));
+    z_loc = addr(fmt_of(prm(11u), prm(10u), prm(8u)), u32(x), u32(y));
     var last_setup = 0xFFFFFFFFu;
     var s: Setup;
     for (var i = 0u; i < count; i = i + 1u) {
@@ -1298,7 +1372,7 @@ fn raster(@builtin(workgroup_id) wid: vec3<u32>, @builtin(local_invocation_id) l
         }
         let lo = data[p + 2u];
         let hi = data[p + 3u];
-        if (x < i32(lo & 0xFFFFu) || y < i32(lo >> 16u) || x > i32(hi & 0xFFFFu) || y > i32(hi >> 16u)) {
+        if (x < i32(lo & 0xFFFFu) || y < i32(lo >> 16u) || x > i32(hi & 0xFFFFu) || y > i32(hi >> 16u) || (DIAG & 1u) != 0u) {
             continue;
         }
         shade_at(p, s, x, y, k, px, py);
