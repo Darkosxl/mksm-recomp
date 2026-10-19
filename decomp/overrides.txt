@@ -13,6 +13,7 @@
 00226B70	SetScreenBrightness	decomp/src/render/render_settings.cpp
 00226DF0	SetSkipModelRender	decomp/src/render/render_settings.cpp
 00236F30	SetDrawGsState	decomp/src/render/draw_gs_state.cpp
+002388B0	UploadTextureMatrices	decomp/src/render/texture_matrices.cpp
 00239C48	UploadLinkedTexturePass	decomp/src/render/upload_linked_texture_pass.cpp
 00248900	PackHighlightPass	decomp/src/render/highlight_pass.cpp
 0024C238	RadiansToAngle	decomp/src/render/ps2render.cpp

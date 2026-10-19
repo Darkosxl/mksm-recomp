@@ -2,6 +2,7 @@
 #include "ps2/decomp_hook.hpp"
 
 namespace decomp {
+extern ps2::DecompFn hook_002388B0;
 extern ps2::DecompFn hook_00239C48;
 }
 
@@ -814,6 +815,7 @@ L_00238750:
     c.budget -= 87;
     { const std::uint32_t t = c.r[31].w[0];  c.pc = t; return; }
 L_002388B0:
+    if (::decomp::hook_002388B0.on) [[unlikely]] { if (decomp_enter(c, ::decomp::hook_002388B0, depth)) return; }
     set32(c.r[29], c.r[29].w[0] - 352u);
     st128((c.r[29].w[0] + 320u) & ~15u, c.r[17]);
     st128((c.r[29].w[0] + 304u) & ~15u, c.r[18]);
