@@ -108,8 +108,8 @@ fn_241410 (0x241410, 2448 B, `unit_0050.cpp:1734`; R = 0x4f4b40):
 4. **Game-state updates inside the render layer**: per object in the table at 0x6680d8, a float timer at o+0x1a0 is
    advanced and wrapped (0x241768-0x2417e8); `[0x6b32e0]` = fn_37b3b8(0) (0x24182c); the frame counter `[0x4f4d64]`
    += 1 (0x241a6c-0x241a7c). These must keep running when the render path changes (§6).
-5. If `[0x4f50b8]`: GS register writes through fn_27d418(reg, value): ZBUF_1 (0x4e), XYOFFSET_1 (0x18), CLAMP_1
-   (0x08), FRAME_1 (0x4c), then the screen-copy object 0x67b750 (fn_278050, fn_278520, fn_27cf38).
+5. If `[0x4f50b8]`: GS register writes through fn_27d418(reg, value) (an immediate path-3 A+D packet built in the
+   scratchpad with sceGifPkAddGsAD, then a wait): ZBUF_1 (0x4e), XYOFFSET_1 (0x18), CLAMP_1 (0x08), FRAME_1 (0x4c), then the screen-copy object 0x67b750 (fn_278050, fn_278520, fn_27cf38).
 6. **anti_alias_or_blur** (0x227f58, 924 B): the post-FX pass.
 7. Wait, fn_2f6a90, **Gs_FlipFields** (0x2743d8), fn_2f6b08, wait.
 8. Lists for the 2D layer: fn_266d18 ×2 (0x241a40-0x241a64); `sceDmaSend(ch [0x4f4d7c], 0x4a5d10)` (0x241ad8, a
