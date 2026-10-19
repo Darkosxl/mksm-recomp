@@ -12,6 +12,7 @@
 00225FC0	SetCharRenderFlag	decomp/src/render/character.cpp
 00226B70	SetScreenBrightness	decomp/src/render/render_settings.cpp
 00226DF0	SetSkipModelRender	decomp/src/render/render_settings.cpp
+00236DB0	EmitTextureFilter	decomp/src/render/texture_filter.cpp
 0024C238	RadiansToAngle	decomp/src/render/ps2render.cpp
 00260B40	GetAssetObject	decomp/src/setup/ps2setup.cpp
 002655C0	GuardBandOutcode	decomp/src/render/guard_band.cpp
