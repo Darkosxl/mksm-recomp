@@ -1,0 +1,3 @@
+# EE functions whose entry gets the decomp hook (decomp/README.md): address, then anything (name, notes).
+# Each needs a PS2_DECOMP(<address>, name) in decomp/src; retranslate after editing (mksm/build.sh --retranslate).
+00474EDC	strlen	decomp/src/libc/strlen.cpp

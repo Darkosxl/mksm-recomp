@@ -23,7 +23,8 @@ if [ "$web" = 0 ] || [ "$retranslate" = 1 ]; then
   [ -x "$ROOT/build/tools/eerecomp" ] || CXX=${CXX:-clang++} PS2_JOBS=$jobs "$ROOT/scripts/setup.sh" --native-only
 fi
 if [ "$retranslate" = 1 ]; then
-  "$ROOT/build/tools/eerecomp" "$G/disc/SLUS_210.87" --entries "$M/entries.txt" --out "$M/generated" | tail -1
+  # decomp/overrides.txt: the functions with a hand-written replacement get the decomp hook (decomp/README.md)
+  "$ROOT/build/tools/eerecomp" "$G/disc/SLUS_210.87" --entries "$M/entries.txt" --overrides "$ROOT/decomp/overrides.txt" --out "$M/generated" | tail -1
   # VU1 microprograms recorded with PS2_VU_RECORD=games/mksm/vu1 become SIMD C++ (unseen ones are JIT'd/interpreted)
   ! compgen -G "$G/vu1/*.bin" > /dev/null || "$ROOT/build/tools/vurecomp" "$G/vu1" "$M/generated" | tail -1
 fi
