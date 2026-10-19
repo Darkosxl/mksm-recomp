@@ -12,7 +12,7 @@ using decomp::character::CharInstance;
 constexpr std::uint32_t kLastTexture = 0x006618ecu;  // the texture id requested last (requests repeat per mesh)
 constexpr std::uint32_t kTextureMode = 0x004f4c4cu;  // 1: upload at once, 2: queue for the frame
 constexpr std::uint32_t kUploadTexture = 0x0026bcf8u;  // TextureManager upload (fn_26bcf8)
-constexpr std::uint32_t kQueueMark = 0x00223fa8u;      // fn_223fa8, called with 16 + the entry's index
+constexpr std::uint32_t kQueueMark = 0x00223fa8u;      // fn_223fa8(16 + the entry index): an empty function (a compiled-out mark)
 // The upload queues, one per render buffer: 100 entries of 16 bytes each (the instance at +8); their two counts
 // follow the 0x1900-byte table.
 constexpr std::uint32_t kQueues = 0x00661ac8u;

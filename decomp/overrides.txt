@@ -13,6 +13,7 @@
 00226B70	SetScreenBrightness	decomp/src/render/render_settings.cpp
 00226DF0	SetSkipModelRender	decomp/src/render/render_settings.cpp
 00246120	RequestCharTexture	decomp/src/render/character/texture_request.cpp
+00246918	PackCharInstanceConstants	decomp/src/render/character/instance_constants.cpp
 0024C238	RadiansToAngle	decomp/src/render/ps2render.cpp
 00260B40	GetAssetObject	decomp/src/setup/ps2setup.cpp
 002655C0	GuardBandOutcode	decomp/src/render/guard_band.cpp
