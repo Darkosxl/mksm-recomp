@@ -109,15 +109,20 @@ def instance_constants(ctx, rng):  # fn_246918(inst)
     chain_alignment(ctx, rng)
 
 
-def segment_constants(ctx, rng):  # fn_246258(inst, a1, a2, a3) as fn_23a280 calls it
+def segment_constants(ctx, rng):  # fn_246258(inst, bone, &bone_index, flags) as fn_23a280 calls it
+    sp = ctx.gpr_lo32(29)
     inst = scramble(ctx, rng)
     ctx.gpr(4, arg(rng, inst))
-    # a2 -> a pointer to an array of 0x1c0-byte records, indexed by [inst + 0x18]; a1 + 0x50 a matrix
-    table = 0x01F00000
-    ctx.mem(table, "I", table + 0x100)
-    ctx.gpr(6, arg(rng, table))
-    ctx.gpr(5, arg(rng, ctx.gpr_lo32(5) & ~15 if rng.random() < 0.5 else 0x01F80000))
-    flags = rng.getrandbits(16) & 0x7000 | rng.choice([0, 0x2000])
+    # the segment record's first word is its bone index (real records sit in the scratchpad); a word in the free stack
+    # below the frames stands in for it, a1 is that bone's record as fn_23a280 computes it
+    bones, count = ctx.rd(inst + 0x18, "I"), ctx.rd(inst + 0x30, "I")
+    index = rng.randrange(count) if 0 < count <= 120 else 0
+    segment = sp - 0x4000
+    ctx.mem(segment, "I", index)
+    ctx.gpr(6, arg(rng, segment))
+    ctx.gpr(5, arg(rng, bones + 0x1C0 * index))
+    # draw flag 2 (the caller's condition), bits 12/13 = the CLAMP_1 modes, other bits random
+    flags = 2 | rng.getrandbits(16) & ~0x3000 | rng.choice([0, 0x1000, 0x2000, 0x3000])
     ctx.gpr(7, arg(rng, flags))
     chain_alignment(ctx, rng)
 

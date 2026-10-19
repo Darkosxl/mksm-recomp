@@ -14,6 +14,7 @@
 00226DF0	SetSkipModelRender	decomp/src/render/render_settings.cpp
 00245168	UpdateBoneMatrices	decomp/src/render/character/bone_matrices.cpp
 00246120	RequestCharTexture	decomp/src/render/character/texture_request.cpp
+00246258	PackBoneSegmentConstants	decomp/src/render/character/segment_constants.cpp
 00246918	PackCharInstanceConstants	decomp/src/render/character/instance_constants.cpp
 0024C238	RadiansToAngle	decomp/src/render/ps2render.cpp
 00260B40	GetAssetObject	decomp/src/setup/ps2setup.cpp

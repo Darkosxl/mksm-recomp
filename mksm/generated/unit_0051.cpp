@@ -4,6 +4,7 @@
 namespace decomp {
 extern ps2::DecompFn hook_00245168;
 extern ps2::DecompFn hook_00246120;
+extern ps2::DecompFn hook_00246258;
 extern ps2::DecompFn hook_00246918;
 }
 
@@ -2653,6 +2654,7 @@ L_00246238:
     c.budget -= 7;
     { const std::uint32_t t = c.r[31].w[0];  c.pc = t; return; }
 L_00246258:
+    if (::decomp::hook_00246258.on) [[unlikely]] { if (decomp_enter(c, ::decomp::hook_00246258, depth)) return; }
     c.r[8].sd[0] = static_cast<std::int32_t>(0x00660000u);
     set32(c.r[29], c.r[29].w[0] - 112u);
     set32(c.r[3], ld32((c.r[8].w[0] - 7424u)));
