@@ -37,11 +37,14 @@
 00246120	RequestCharTexture	decomp/src/render/character/texture_request.cpp
 00246258	PackBoneSegmentConstants	decomp/src/render/character/segment_constants.cpp
 00246918	PackCharInstanceConstants	decomp/src/render/character/instance_constants.cpp
+00246CF0	DrawFighterInstance	decomp/src/render/fighter_draw.cpp
 002478F0	PackCharacterBaseState	decomp/src/render/character_gs_state.cpp
 00247BD8	ChainCharacterBaseState	decomp/src/render/character_gs_state.cpp
 00248058	ChainCharacterHighlightState	decomp/src/render/character_gs_state.cpp
 00248900	PackHighlightPass	decomp/src/render/highlight_pass.cpp
+00249060	DrawInstanceSegments	decomp/src/render/instance_draw.cpp
 0024C238	RadiansToAngle	decomp/src/render/ps2render.cpp
+0024CF08	DrawInstance	decomp/src/render/instance_draw.cpp
 0024CFF8	SortMeshesByLinkedTexture	decomp/src/render/draw_sort.cpp
 00260B40	GetAssetObject	decomp/src/setup/ps2setup.cpp
 002655C0	GuardBandOutcode	decomp/src/render/guard_band.cpp

@@ -10,6 +10,7 @@ extern ps2::DecompFn hook_00245D48;
 extern ps2::DecompFn hook_00246120;
 extern ps2::DecompFn hook_00246258;
 extern ps2::DecompFn hook_00246918;
+extern ps2::DecompFn hook_00246CF0;
 extern ps2::DecompFn hook_002478F0;
 extern ps2::DecompFn hook_00247BD8;
 }
@@ -3383,6 +3384,7 @@ L_00246CD8:
     c.budget -= 6;
     { const std::uint32_t t = c.r[31].w[0];  c.pc = t; return; }
 L_00246CF0:
+    if (::decomp::hook_00246CF0.on) [[unlikely]] { if (decomp_enter(c, ::decomp::hook_00246CF0, depth)) return; }
     set32(c.r[29], c.r[29].w[0] - 256u);
     set32(c.r[2], 0u - 2u);
     st128((c.r[29].w[0] + 208u) & ~15u, c.r[17]);
