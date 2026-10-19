@@ -26,7 +26,8 @@ mkdir -p "$P/logs"; ctx=$(mktemp -d "$P/logs/difftest-cov.XXXXXX")
 trap 'rm -rf "$ctx"' EXIT
 
 replay() {  # replay <dir> <log>
-  if find "$1" -name '*.ctx' 2>/dev/null | grep -q .; then "$difftest" --keep-going "$1" > "$2" 2>&1 || true
+  # -print -quit: under pipefail, grep -q closing the pipe early would SIGPIPE a long find and read as "none"
+  if find "$1" -name '*.ctx' -print -quit 2>/dev/null | grep -q .; then "$difftest" --keep-going "$1" > "$2" 2>&1 || true
   else echo "no contexts" > "$2"; fi
   rm -rf "$1"
 }
