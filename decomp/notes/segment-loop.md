@@ -40,7 +40,8 @@ function uses:
 | +0x00 | index of the segment's per-instance state (`model+0x18 + i*0x1C0`; also its brightness byte) |
 | +0x10 | kind: picks the VU1 program family (jump table at 0x585240, below) |
 | +0x14 | pass bits, ANDed with `model+0xE18` when a1 = 0 |
-| +0x18, +0x20 | compared with 2 (a counter, the lit test in R+0xA0 = 3 mode) |
+| +0x18 | cull result (fn_249060 sets 2 on every segment at 0x249258; the character culls write it per segment): 2 here, with R+0xB4, gives draw bit 0x1 and counts in R+0xC0 (inferred: the segments that need the clipping variant of their program) |
+| +0x20 | in R+0xA0 = 3 mode, 0 or 2 forces draw bit 0x80 (lit) |
 | +0x60, +0x6C | bounding box min / max (floats) |
 | +0x12C, +0x1BC | sub-meshes: count and array (0x20 bytes each: +0 texture slot, +8 TEX0, +0x10 MIPTBP1, written by fn_24db78) |
 | +0x130 | 64-bit flags: bit 41 no packet C (and draw bit 0x10000), 42/43/46/47 draw bits 0x4000/0x8000/0x1000/0x2000, 54 fixed program (no near LOD, no counter), 57 unlit |
