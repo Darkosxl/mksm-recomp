@@ -1,4 +1,13 @@
 #include "units.hpp"
+#include "ps2/decomp_hook.hpp"
+
+namespace decomp {
+extern ps2::DecompFn hook_002124C0;
+extern ps2::DecompFn hook_00213C78;
+extern ps2::DecompFn hook_00213C98;
+extern ps2::DecompFn hook_00213E08;
+extern ps2::DecompFn hook_00213E88;
+}
 
 namespace gen {
 
@@ -3038,6 +3047,7 @@ L_002124B0:
     c.budget -= 3;
     { const std::uint32_t t = c.r[31].w[0];  c.pc = t; return; }
 L_002124C0:
+    if (::decomp::hook_002124C0.on) [[unlikely]] { if (decomp_enter(c, ::decomp::hook_002124C0, depth)) return; }
     c.r[10].d[0] = c.r[4].d[0] + 0ull;
     set32(c.r[3], 0u + 32u);
     set32(c.r[2], ld32((c.r[10].w[0] + 8u)));
@@ -4745,6 +4755,7 @@ L_00213C28:
     c.budget -= 20;
     { const std::uint32_t t = c.r[31].w[0];  c.pc = t; return; }
 L_00213C78:
+    if (::decomp::hook_00213C78.on) [[unlikely]] { if (decomp_enter(c, ::decomp::hook_00213C78, depth)) return; }
     c.f[0] = ld32((c.r[5].w[0]));
     st32((c.r[4].w[0] + 48u), c.f[0]);
     c.f[1] = ld32((c.r[5].w[0] + 4u));
@@ -4754,6 +4765,7 @@ L_00213C78:
     c.budget -= 8;
     { const std::uint32_t t = c.r[31].w[0];  c.pc = t; return; }
 L_00213C98:
+    if (::decomp::hook_00213C98.on) [[unlikely]] { if (decomp_enter(c, ::decomp::hook_00213C98, depth)) return; }
     c.f[0] = ld32((c.r[5].w[0] + 48u));
     st32((c.r[4].w[0]), c.f[0]);
     c.f[1] = ld32((c.r[5].w[0] + 52u));
@@ -4855,6 +4867,7 @@ L_00213DE8:
     c.budget -= 8;
     { const std::uint32_t t = c.r[31].w[0];  c.pc = t; return; }
 L_00213E08:
+    if (::decomp::hook_00213E08.on) [[unlikely]] { if (decomp_enter(c, ::decomp::hook_00213E08, depth)) return; }
     ld128((c.r[4].w[0]) & ~15u, c.vu0.vf[4]);
     ld128((c.r[5].w[0]) & ~15u, c.vu0.vf[5]);
     vu::mul(c.vu0, 14u, 5u, 4u, 5u);
@@ -4887,6 +4900,7 @@ L_00213E60:
     c.budget -= 10;
     { const std::uint32_t t = c.r[31].w[0];  c.pc = t; return; }
 L_00213E88:
+    if (::decomp::hook_00213E88.on) [[unlikely]] { if (decomp_enter(c, ::decomp::hook_00213E88, depth)) return; }
     ld128((c.r[5].w[0]) & ~15u, c.r[8]);
     ld128((c.r[5].w[0] + 16u) & ~15u, c.r[9]);
     ld128((c.r[5].w[0] + 32u) & ~15u, c.r[10]);
