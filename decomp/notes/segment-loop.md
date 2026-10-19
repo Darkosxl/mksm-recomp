@@ -70,7 +70,10 @@ to the scratchpad by the toSPR DMA channel (D9) while the previous one is packed
   segment after the next one is fetched. Anything taken at this seam must be copied at the call (or read from the RAM
   record, the list entry `[0x65E460 + 4*i]`).
 
-With `[0x4F4D5C]` != 2 the record pointer comes straight from the list.
+With `[0x4F4D5C]` != 2 the record pointer comes straight from the list. That is what the game does: `[0x4F4D5C]` is
+written only here (fn_216ac0 takes its address, likely a debug menu entry) and is 0 in every reference scene, and
+`[0x66609C]` (the chain in the scratchpad, below) is never written by code. Both modes are verified only on synthetic
+contexts (decomp/difftest/synth/batch_j.py).
 
 ## Per segment, in order
 
