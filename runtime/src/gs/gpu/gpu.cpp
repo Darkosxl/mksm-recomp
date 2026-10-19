@@ -1294,20 +1294,29 @@ bool init(Mode m) {
     WGPUShaderModuleDescriptor md = WGPU_SHADER_MODULE_DESCRIPTOR_INIT;
     md.nextInChain = &source.chain;
     WGPUShaderModule module = wgpuDeviceCreateShaderModule(g_device, &md);
+    // Profiling only: PS2_RASTER_DIAG=bits skips parts of the raster (gs.wgsl DIAG); unset, the constant is not passed.
+    const char *diag = std::getenv("PS2_RASTER_DIAG");
     for (int i = 0; i < kPipelines; ++i) {
         if (i == kRasterHi && g_samples == 1) continue;
         WGPUComputePipelineDescriptor cd = WGPU_COMPUTE_PIPELINE_DESCRIPTOR_INIT;
         cd.layout = g_pipeline_layout;
         cd.compute.module = module;
         cd.compute.entryPoint = view(kEntryPoints[i]);
-        WGPUConstantEntry constants[3] = {WGPU_CONSTANT_ENTRY_INIT, WGPU_CONSTANT_ENTRY_INIT, WGPU_CONSTANT_ENTRY_INIT};
-        constants[0].key = view("SCALE");
-        constants[0].value = static_cast<double>(g_sx);
-        constants[1].key = view("SCALE_Y");
-        constants[1].value = static_cast<double>(g_sy);
-        constants[2].key = view("RT_HIRES");
-        constants[2].value = 1.0;
-        cd.compute.constantCount = i == kRasterHi ? 3 : 2;
+        WGPUConstantEntry constants[4] = {WGPU_CONSTANT_ENTRY_INIT, WGPU_CONSTANT_ENTRY_INIT, WGPU_CONSTANT_ENTRY_INIT, WGPU_CONSTANT_ENTRY_INIT};
+        std::size_t n = 0;
+        constants[n].key = view("SCALE");
+        constants[n++].value = static_cast<double>(g_sx);
+        constants[n].key = view("SCALE_Y");
+        constants[n++].value = static_cast<double>(g_sy);
+        if (i == kRasterHi) {
+            constants[n].key = view("RT_HIRES");
+            constants[n++].value = 1.0;
+        }
+        if (diag && (i == kRaster || i == kRasterHi)) {
+            constants[n].key = view("DIAG");
+            constants[n++].value = static_cast<double>(std::strtoul(diag, nullptr, 0));
+        }
+        cd.compute.constantCount = n;
         cd.compute.constants = constants;
         g_pipelines[i] = wgpuDeviceCreateComputePipeline(g_device, &cd);
         if (!g_pipelines[i]) return false;

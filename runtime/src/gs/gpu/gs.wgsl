@@ -652,6 +652,10 @@ var<private> rt_hires: bool = false;
 // Pipeline constant, on only for batches that hold F_RT_HIRES sprites (gpu.cpp kRasterHi): elsewhere the fine-grid
 // path compiles out and the common raster costs nothing extra.
 override RT_HIRES: bool = false;
+// Profiling only (env PS2_RASTER_DIAG, gpu.cpp; never set otherwise): skip parts of the raster to attribute its time.
+// 1 no shading after the box test, 2 no plot after the edge test, 4 constant texel, 8 no destination read, 16 no Z,
+// 32 no frame write.
+override DIAG: u32 = 0u;
 
 fn floor_div(a: i32, b: i32) -> i32 {
     return select(a / b, (a - b + 1) / b, a < 0);
@@ -862,14 +866,16 @@ fn plot(s: Setup, x: i32, y: i32, k: u32, at: Attr) {
     var dst = 0u;
     var have_dst = false;
     if (has(s, F_DATE)) {
-        dst = read_frame(s, fl, k);
+        if ((DIAG & 8u) == 0u) {
+            dst = read_frame(s, fl, k);
+        }
         have_dst = true;
         if (((dst & 0x80000000u) != 0u) != has(s, F_DATM)) {
             return;
         }
     }
 
-    let zte = has(s, F_ZTE);
+    let zte = has(s, F_ZTE) && (DIAG & 16u) == 0u;
     if (zte) {
         let ztst = mode(s, 8u, 2u);
         if (ztst == 0u) {
@@ -903,7 +909,10 @@ fn plot(s: Setup, x: i32, y: i32, k: u32, at: Attr) {
             u = at.s / q * f32(1u << s.tw);
             v = at.t / q * f32(1u << s.th);
         }
-        let t = texture(s, u, v, q, k);
+        var t = 0x80808080u;
+        if ((DIAG & 4u) == 0u) {
+            t = texture(s, u, v, q, k);
+        }
         let tr = i32(t & 0xFFu);
         let tg = i32((t >> 8u) & 0xFFu);
         let tb = i32((t >> 16u) & 0xFFu);
@@ -1005,10 +1014,10 @@ fn plot(s: Setup, x: i32, y: i32, k: u32, at: Attr) {
         }
     }
 
-    if (write_fb) {
+    if (write_fb && (DIAG & 32u) == 0u) {
         let colclamp = has(s, F_COLCLAMP);
         if (has(s, F_ABE) && (!has(s, F_PABE) || (a & 0x80) != 0)) {
-            if (!have_dst) {
+            if (!have_dst && (DIAG & 8u) == 0u) {
                 dst = read_frame(s, fl, k);
             }
             let cd = vec3<i32>(i32(dst & 0xFFu), i32((dst >> 8u) & 0xFFu), i32((dst >> 16u) & 0xFFu));
@@ -1230,6 +1239,9 @@ fn shade_at(p: u32, s: Setup, x: i32, y: i32, k: u32, px: f32, py: f32) {
             at = Attr(c.x, c.y, c.z, c.w, t.x, t.y, t.z, t.w, data[p + 24u]);
         }
     }
+    if ((DIAG & 2u) != 0u) {
+        return;
+    }
     plot(s, x, y, k, at);
 }
 
@@ -1297,7 +1309,7 @@ fn raster(@builtin(workgroup_id) wid: vec3<u32>, @builtin(local_invocation_id) l
         }
         let lo = data[p + 2u];
         let hi = data[p + 3u];
-        if (x < i32(lo & 0xFFFFu) || y < i32(lo >> 16u) || x > i32(hi & 0xFFFFu) || y > i32(hi >> 16u)) {
+        if (x < i32(lo & 0xFFFFu) || y < i32(lo >> 16u) || x > i32(hi & 0xFFFFu) || y > i32(hi >> 16u) || (DIAG & 1u) != 0u) {
             continue;
         }
         shade_at(p, s, x, y, k, px, py);
