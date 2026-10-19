@@ -632,7 +632,13 @@ void flush_batch() {
     for (std::uint32_t t : g_touched) g_tile_count[t] = 0;
     std::uint32_t snapshot_lo, snapshot_hi;
     const std::uint32_t snapshot = snapshot_batch(prims, snapshot_lo, snapshot_hi);
-    const std::uint32_t param = push_params({tile_offset, prim_offset, setup_offset, tiles, list_offset, snapshot_lo, snapshot_hi, b.fbp, b.fbw, b.fpsm, b.zbp, b.zpsm, z_max(b.zpsm)});
+    // Z24 words only this batch's Z writes touch (gs.wgsl z_owned): Z pages apart from the frame's, inside GS memory,
+    // and no column past the buffer width (it would alias the next row of pages).
+    const Range fb_pages = pages(b.fbp, b.fbw, b.fpsm, b.minx, b.miny, b.maxx, b.maxy), z_pages = pages(b.zbp, b.fbw, b.zpsm, b.minx, b.miny, b.maxx, b.maxy);
+    const bool z_owned = b.zpsm == PSMZ24 && b.maxx < static_cast<int>(b.fbw) * 64 && z_pages.hi <= kMemorySize && fb_pages.hi <= kMemorySize &&
+                         !z_pages.overlaps(fb_pages.lo, fb_pages.hi);
+    const std::uint32_t param = push_params({tile_offset, prim_offset, setup_offset, tiles, list_offset, snapshot_lo, snapshot_hi, b.fbp, b.fbw, b.fpsm, b.zbp, b.zpsm,
+                                             z_max(b.zpsm), z_owned ? 1u : 0u});
     note_raster(prims, tiles, total, snapshot);
     bool hires = false;
     for (std::size_t i = 0; i < b.setups.size(); i += kSetupWords) hires = hires || (b.setups[i] & kRtHires);

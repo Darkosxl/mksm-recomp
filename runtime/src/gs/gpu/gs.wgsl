@@ -806,6 +806,12 @@ fn z_max() -> u32 {
     return prm(12u);
 }
 
+// Z24 whose words no other thread of the dispatch writes (gpu.cpp flush_batch: Z pages apart from the frame's, no
+// aliasing): the Z write stores the word the depth test loaded with the new Z in it, one store instead of AND + OR.
+fn z_owned() -> bool {
+    return prm(13u) != 0u;
+}
+
 // This thread's frame and Z words (raster): every primitive of a batch draws to the same frame and Z buffer.
 var<private> fb_loc: Loc;
 var<private> z_loc: Loc;
@@ -904,13 +910,18 @@ fn plot(s: Setup, x: i32, y: i32, k: u32, at: Attr) {
     }
 
     let zte = has(s, F_ZTE) && (DIAG & 16u) == 0u;
+    // The Z word as the depth test read it, when it did; with z_owned() the write stores it back whole.
+    var zword = 0u;
+    var zread = false;
     if (zte) {
         let ztst = mode(s, 8u, 2u);
         if (ztst == 0u) {
             return;
         }
         if (ztst != 1u) {
-            let old = load_at(zl, k) & z_max();
+            zword = atomicLoad(&vram[zl.word * SCALE * SCALE_Y + k]);
+            zread = true;
+            let old = ((zword >> zl.shift) & zl.mask) & z_max();
             if ((ztst == 2u && z < old) || (ztst == 3u && z <= old)) {
                 return;
             }
@@ -1103,7 +1114,11 @@ fn plot(s: Setup, x: i32, y: i32, k: u32, at: Attr) {
         write_frame(s, fl, k, u32(r) | (u32(g) << 8u) | (u32(b) << 16u) | (out_a << 24u), mask);
     }
     if (write_z && zte) {
-        store(zl, k, z);
+        if (zread && z_owned()) {
+            atomicStore(&vram[zl.word * SCALE * SCALE_Y + k], (zword & ~(zl.mask << zl.shift)) | ((z & zl.mask) << zl.shift));
+        } else {
+            store(zl, k, z);
+        }
     }
 }
 
