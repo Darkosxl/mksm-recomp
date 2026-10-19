@@ -7,7 +7,7 @@
 //   0 batch record (word offset in data: 14 register qwords, then kVertexWords per vertex, then the XGKICK oracle)
 //   1 program (1 567ce7d8, 2 002c80ed, 3 50bda0e2)   2 vertices   4 setup (word offset)   5, 6 XYOFFSET x, y (12.4)
 //   7, 8 target size in pixels   9 split: 0 every pixel, 1 alpha-test pass pixels, 2 fail pixels   10 GS primitive
-//   11 flags: 1 point light, 2 IIP, 4 oracle present   12 always 0 (see opaque())   13 Z max   14 depth per Z unit (f32)
+//   11 flags: 1 point light, 2 IIP, 4 oracle present, 8 hardware interpolation   12 always 0 (see opaque())   13 Z max   14 depth per Z unit (f32)
 //   15 strip vertices whose CLIP flags the ADC of a vertex ORs, counted back from it (the VU1 flag pipeline)
 // Import: 0 FBP, 1 FBW, 2 frame PSM, 3 ZBP, 4 Z PSM, 13 Z max, 14 depth per Z unit.
 
@@ -271,20 +271,97 @@ fn gs_z(k: u32) -> u32 {
 }
 
 // ---- Drawing
+//
+// The hardware rasterizer decides coverage; what each covered sample gets is computed as the compute raster does it
+// (gs.wgsl shade_at, case 0, with the primitive record gpu.cpp draw() would build): the provoking vertex (corner 0)
+// carries the whole triangle as flat inputs: its three GS positions (pixels), 1 / area, the inclusive edges, the
+// bounding box, the colours, S T Q F, and Z. So the barycentrics, colour, texture coordinates, fog and Z are the compute
+// raster's own expressions on the same values. Flag 8 (PS2_NATIVE_INTERP=hw) uses the hardware's interpolation instead.
 
-// Colour and fog are the kick vertex's plus interpolated deltas, Z the base vertex's plus a delta, as gs.wgsl shade_at()
-// does: equal vertex values stay exact under interpolation.
+// IEEE division, round to nearest even (the CPU's 1.0f / area in gpu.cpp draw()), by long division of the mantissas.
+fn fdiv_rne(a: u32, b: u32) -> u32 {
+    let sign = (a ^ b) & 0x80000000u;
+    let ma = (a & 0x7FFFFFu) | 0x800000u;
+    let mb = (b & 0x7FFFFFu) | 0x800000u;
+    var q = select(0u, 1u, ma >= mb);
+    var r = ma - q * mb;
+    for (var i = 0u; i < 24u; i = i + 1u) {
+        r = r << 1u;
+        q = q << 1u;
+        if (r >= mb) {
+            r = r - mb;
+            q = q | 1u;
+        }
+    }
+    var e = i32((a >> 23u) & 0xFFu) - i32((b >> 23u) & 0xFFu) + 127;
+    var half = 0u;
+    if (q >= 0x1000000u) {
+        half = q & 1u;
+        q = q >> 1u;
+    } else {
+        e = e - 1;
+        r = r << 1u;
+        if (r >= mb) {
+            r = r - mb;
+            half = 1u;
+        }
+    }
+    if (half != 0u && (r != 0u || (q & 1u) != 0u)) {
+        q = q + 1u;
+        if (q == 0x1000000u) {
+            q = q >> 1u;
+            e = e + 1;
+        }
+    }
+    if (e >= 255) {
+        return sign | 0x7F800000u;
+    }
+    if (e <= 0) {
+        return sign;
+    }
+    return sign | (u32(e) << 23u) | (q & 0x7FFFFFu);
+}
+
+fn rounded(x: f32) -> f32 {
+    return bitcast<f32>(opaque(bitcast<u32>(x)));
+}
+
 struct NativeOut {
     @builtin(position) pos: vec4<f32>,
-    @location(0) @interpolate(linear) dcolor: vec4<f32>,
-    @location(1) @interpolate(linear) stq: vec3<f32>,
-    @location(2) @interpolate(linear) dfz: vec2<f32>,
-    @location(3) @interpolate(flat) base: vec3<u32>,
+    @location(0) @interpolate(flat) xy01: vec4<f32>,
+    @location(1) @interpolate(flat) xy2: vec4<f32>,      // x2, y2, 1 / area, Z delta of vertex 1
+    @location(2) @interpolate(flat) tri: vec4<u32>,      // colours of vertices 0, 1, 2 (RGBA), inclusive edges
+    @location(3) @interpolate(flat) t0: vec4<f32>,       // S T Q F of vertex 0
+    @location(4) @interpolate(flat) t1: vec4<f32>,
+    @location(5) @interpolate(flat) t2: vec4<f32>,
+    @location(6) @interpolate(flat) zb: vec4<u32>,       // Z of vertex 0, box min (x | y << 16), box max, Z delta of vertex 2
+    // PS2_NATIVE_INTERP=hw: the kick vertex's colour and fog plus interpolated deltas, Z the base vertex's plus a delta
+    @location(7) @interpolate(linear) dcolor: vec4<f32>,
+    @location(8) @interpolate(linear) stq: vec3<f32>,
+    @location(9) @interpolate(linear) dfz: vec2<f32>,
+}
+
+fn screen_x(v: GsVertex) -> f32 {
+    return (f32(v.x) - f32(prm(5u))) / 16.0;
+}
+
+fn screen_y(v: GsVertex) -> f32 {
+    return (f32(v.y) - f32(prm(6u))) / 16.0;
+}
+
+// gpu.cpp draw(): the edge from (ax, ay) to (bx, by) includes its samples when it is a left or top edge
+fn inclusive(ax: f32, ay: f32, bx: f32, by: f32, sg: f32) -> bool {
+    let gx = (ay - by) * sg;
+    let gy = (bx - ax) * sg;
+    return gx > 0.0 || (gx == 0.0 && gy > 0.0);
+}
+
+fn first_sample(lo: f32, samples: u32) -> i32 {
+    return i32(floor(ceil(lo * f32(samples)) / f32(samples)));
 }
 
 // Vertex pulling: vertex_index = 3 * triangle + corner. The GS queue of the primitive's kick: strip (t, t+1, t+2), fan
-// (0, t+1, t+2), list (3t, 3t+1, 3t+2); the kick vertex's ADC drops the triangle. Corner 0 is the GS's v[0] (the depth
-// base of gs.wgsl z_at), corner 2 the kick vertex (the colour and fog base, and the colour of a flat-shaded triangle).
+// (0, t+1, t+2), list (3t, 3t+1, 3t+2); the kick vertex's ADC drops the triangle, as a zero area does.
 @vertex
 fn native_vs(@builtin(vertex_index) index: u32) -> NativeOut {
     let tri = index / 3u;
@@ -300,30 +377,75 @@ fn native_vs(@builtin(vertex_index) index: u32) -> NativeOut {
         c = a + 2u;
     }
     var out: NativeOut;
+    out.pos = vec4<f32>(-2.0, -2.0, 0.0, 1.0);
     if (adc(c) != 0u) {
-        out.pos = vec4<f32>(-2.0, -2.0, 0.0, 1.0);
         return out;
     }
     let own = select(select(c, b, corner == 1u), a, corner == 0u);
     let v = gs_vertex(own);
-    var vc = v;
-    if (corner != 2u) {
-        vc = gs_vertex(c);
-    }
-    var z0 = v.z;
-    if (corner != 0u) {
-        z0 = gs_z(a);
-    }
-    let fx = (f32(v.x) - f32(prm(5u))) / 16.0 * f32(SCALE) + 0.5;
-    let fy = (f32(v.y) - f32(prm(6u))) / 16.0 * f32(SCALE_Y) + 0.5;
-    out.pos = vec4<f32>(fx / f32(prm(7u)) * 2.0 - 1.0, 1.0 - fy / f32(prm(8u)) * 2.0, 0.0, 1.0);
-    let own_rgba = vec4<f32>(f32(v.rgba & 0xFFu), f32((v.rgba >> 8u) & 0xFFu), f32((v.rgba >> 16u) & 0xFFu), f32(v.rgba >> 24u));
-    let kick_rgba = vec4<f32>(f32(vc.rgba & 0xFFu), f32((vc.rgba >> 8u) & 0xFFu), f32((vc.rgba >> 16u) & 0xFFu), f32(vc.rgba >> 24u));
-    out.dcolor = select(vec4<f32>(0.0), own_rgba - kick_rgba, (prm(11u) & 2u) != 0u);
+    let fx = screen_x(v) * f32(SCALE) + 0.5;
+    let fy = screen_y(v) * f32(SCALE_Y) + 0.5;
+    let pos = vec4<f32>(fx / f32(prm(7u)) * 2.0 - 1.0, 1.0 - fy / f32(prm(8u)) * 2.0, 0.0, 1.0);
     out.stq = vec3<f32>(bitcast<f32>(v.s), bitcast<f32>(v.t), bitcast<f32>(v.q));
-    out.dfz = vec2<f32>(f32(v.f) - f32(vc.f), f32(i32(v.z) - i32(z0)));
-    out.base = vec3<u32>(vc.rgba, vc.f, z0);
+    let hw = (prm(11u) & 8u) != 0u;
+    if (hw) {
+        var vc = v;
+        if (corner != 2u) {
+            vc = gs_vertex(c);
+        }
+        let z0 = select(gs_z(a), v.z, corner == 0u);
+        let own_rgba = vec4<f32>(f32(v.rgba & 0xFFu), f32((v.rgba >> 8u) & 0xFFu), f32((v.rgba >> 16u) & 0xFFu), f32(v.rgba >> 24u));
+        let kick_rgba = vec4<f32>(f32(vc.rgba & 0xFFu), f32((vc.rgba >> 8u) & 0xFFu), f32((vc.rgba >> 16u) & 0xFFu), f32(vc.rgba >> 24u));
+        out.dcolor = select(vec4<f32>(0.0), own_rgba - kick_rgba, (prm(11u) & 2u) != 0u);
+        out.dfz = vec2<f32>(f32(v.f) - f32(vc.f), f32(i32(v.z) - i32(z0)));
+        out.tri = vec4<u32>(vc.rgba, vc.f, 0u, 0u);
+        out.zb = vec4<u32>(z0, 0u, 0u, 0u);
+        out.pos = pos;
+        return out;
+    }
+    if (corner != 0u) {  // flat inputs come from corner 0, the provoking vertex
+        out.pos = pos;
+        return out;
+    }
+    let vb = gs_vertex(b);
+    let vc = gs_vertex(c);
+    let x0 = screen_x(v);
+    let y0 = screen_y(v);
+    let x1 = screen_x(vb);
+    let y1 = screen_y(vb);
+    let x2 = screen_x(vc);
+    let y2 = screen_y(vc);
+    let area = rounded((x1 - x0) * (y2 - y0)) - rounded((x2 - x0) * (y1 - y0));
+    out.pos = pos;
+    out.zb = vec4<u32>(0u, 0xFFFFFFFFu, 0u, 0u);  // a dropped triangle (gpu.cpp draw() returns) covers no sample
+    if (area == 0.0) {
+        return out;
+    }
+    let inv = bitcast<f32>(fdiv_rne(0x3F800000u, bitcast<u32>(area)));
+    let sg = select(-1.0, 1.0, area > 0.0);
+    let edges = select(0u, 1u, inclusive(x1, y1, x2, y2, sg)) | select(0u, 2u, inclusive(x2, y2, x0, y0, sg)) | select(0u, 4u, inclusive(x0, y0, x1, y1, sg));
+    let s = load_setup(prm(4u));
+    let minx = max(max(s.scax0, first_sample(min(min(x0, x1), x2), SCALE)), 0);
+    let maxx = min(min(s.scax1, i32(ceil(max(max(x0, x1), x2))) - 1), 2047);
+    let miny = max(max(s.scay0, first_sample(min(min(y0, y1), y2), SCALE_Y)), 0);
+    let maxy = min(min(s.scay1, i32(ceil(max(max(y0, y1), y2))) - 1), 2047);
+    if (minx > maxx || miny > maxy) {
+        return out;
+    }
+    // a flat-shaded triangle takes the kick vertex's colour (gpu.cpp attrs)
+    let iip = (prm(11u) & 2u) != 0u;
+    out.xy01 = vec4<f32>(x0, y0, x1, y1);
+    out.xy2 = vec4<f32>(x2, y2, inv, f32(i32(vb.z) - i32(v.z)));
+    out.tri = vec4<u32>(select(vc.rgba, v.rgba, iip), select(vc.rgba, vb.rgba, iip), vc.rgba, edges);
+    out.t0 = vec4<f32>(bitcast<f32>(v.s), bitcast<f32>(v.t), bitcast<f32>(v.q), f32(v.f));
+    out.t1 = vec4<f32>(bitcast<f32>(vb.s), bitcast<f32>(vb.t), bitcast<f32>(vb.q), f32(vb.f));
+    out.t2 = vec4<f32>(bitcast<f32>(vc.s), bitcast<f32>(vc.t), bitcast<f32>(vc.q), f32(vc.f));
+    out.zb = vec4<u32>(v.z, u32(minx) | (u32(miny) << 16u), u32(maxx) | (u32(maxy) << 16u), bitcast<u32>(f32(i32(vc.z) - i32(v.z))));
     return out;
+}
+
+fn unpack_rgba(c: u32) -> vec4<f32> {
+    return vec4<f32>(f32(c & 0xFFu), f32((c >> 8u) & 0xFFu), f32((c >> 16u) & 0xFFu), f32(c >> 24u));
 }
 
 struct NativeFrag {
@@ -331,40 +453,85 @@ struct NativeFrag {
     @builtin(frag_depth) depth: f32,
 }
 
-// gs.wgsl plot() for one pixel, without the frame and Z buffer work the pipeline does: texture (TFX, TCC), fog, the
+// gs.wgsl plot() for one sample, without the frame and Z buffer work the pipeline does: texture (TFX, TCC), fog, the
 // alpha test (the split into pass and fail pixels), then the colour as integer / 255 and the blend factor As / 128.
 @fragment
 fn native_fs(in: NativeOut) -> NativeFrag {
     let s = load_setup(prm(4u));
-    let px = u32(in.pos.x);
-    let py = u32(in.pos.y);
-    let k = (py % SCALE_Y) * SCALE + px % SCALE;
-    let y = i32(py / SCALE_Y);
+    let sx = u32(in.pos.x);
+    let sy = u32(in.pos.y);
+    let x = i32(sx / SCALE);
+    let y = i32(sy / SCALE_Y);
+    let k = (sy % SCALE_Y) * SCALE + sx % SCALE;
     let scanmsk = mode(s, 28u, 2u);
     if ((scanmsk == 2u && (y & 1) == 0) || (scanmsk == 3u && (y & 1) != 0)) {
         discard;
     }
-    // z_at(): the base vertex's Z plus the floored delta
-    var z = in.base.z;
-    let step = floor(in.dfz.y);
-    if (step >= 0.0) {
-        z = z + u32(min(step, f32(0xFFFFFFFFu - z)));
+    var at: Attr;
+    if ((prm(11u) & 8u) != 0u) {
+        let c = unpack_rgba(in.tri.x) + in.dcolor;
+        var z = in.zb.x;
+        let step = floor(in.dfz.y);
+        if (step >= 0.0) {
+            z = z + u32(min(step, f32(0xFFFFFFFFu - z)));
+        } else {
+            z = z - u32(min(-step, f32(z)));
+        }
+        at = Attr(c.x, c.y, c.z, c.w, in.stq.x, in.stq.y, in.stq.z, f32(in.tri.y) + in.dfz.x, z);
     } else {
-        z = z - u32(min(-step, f32(z)));
+        // shade_at() case 0 on the record gpu.cpp would build
+        let lo = in.zb.y;
+        let hi = in.zb.z;
+        if (x < i32(lo & 0xFFFFu) || y < i32(lo >> 16u) || x > i32(hi & 0xFFFFu) || y > i32(hi >> 16u)) {
+            discard;
+        }
+        let px = f32(x) + f32(sx % SCALE) / f32(SCALE);
+        let py = f32(y) + f32(sy % SCALE_Y) / f32(SCALE_Y);
+        let x0 = in.xy01.x;
+        let y0 = in.xy01.y;
+        let x1 = in.xy01.z;
+        let y1 = in.xy01.w;
+        let x2 = in.xy2.x;
+        let y2 = in.xy2.y;
+        let inv = in.xy2.z;
+        let w0 = ((x1 - px) * (y2 - py) - (x2 - px) * (y1 - py)) * inv;
+        let w1 = ((x2 - px) * (y0 - py) - (x0 - px) * (y2 - py)) * inv;
+        let c2 = ((x0 - px) * (y1 - py) - (x1 - px) * (y0 - py)) * inv;
+        let inclusive = in.tri.w;
+        if (!edge_in(w0, inclusive & 1u) || !edge_in(w1, inclusive & 2u) || !edge_in(c2, inclusive & 4u)) {
+            discard;
+        }
+        let w2 = 1.0 - w0 - w1;
+        let v2 = unpack_rgba(in.tri.z);
+        let c = v2 + (unpack_rgba(in.tri.x) - v2) * w0 + (unpack_rgba(in.tri.y) - v2) * w1;
+        let t0 = in.t0;
+        let t1 = in.t1;
+        let t2 = in.t2;
+        var t = t0 * w0 + t1 * w1 + t2 * w2;
+        t.w = t2.w + (t0.w - t2.w) * w0 + (t1.w - t2.w) * w1;
+        let z0 = in.zb.x;
+        let d = in.xy2.w * w1 + bitcast<f32>(in.zb.w) * w2;
+        let step = floor(d);
+        var z = z0;
+        if (step >= 0.0) {
+            z = z0 + u32(min(step, f32(0xFFFFFFFFu - z0)));
+        } else {
+            z = z0 - u32(min(-step, f32(z0)));
+        }
+        at = Attr(c.x, c.y, c.z, c.w, t.x, t.y, t.z, t.w, z);
     }
-    z = min(z, prm(13u));
-    let c0 = in.base.x;
-    var r = i32(f32(c0 & 0xFFu) + in.dcolor.x);
-    var g = i32(f32((c0 >> 8u) & 0xFFu) + in.dcolor.y);
-    var b = i32(f32((c0 >> 16u) & 0xFFu) + in.dcolor.z);
-    var a = i32(f32(c0 >> 24u) + in.dcolor.w);
+    let z = min(at.z, prm(13u));
+    var r = i32(at.r);
+    var g = i32(at.g);
+    var b = i32(at.b);
+    var a = i32(at.a);
     if (has(s, F_TME)) {
-        var q = in.stq.z;
+        var q = at.q;
         if (q == 0.0) {
             q = 1.0;
         }
-        let u = in.stq.x / q * f32(1u << s.tw);
-        let v = in.stq.y / q * f32(1u << s.th);
+        let u = at.s / q * f32(1u << s.tw);
+        let v = at.t / q * f32(1u << s.th);
         let t = texture(s, u, v, q, k);
         let tr = i32(t & 0xFFu);
         let tg = i32((t >> 8u) & 0xFFu);
@@ -407,7 +574,7 @@ fn native_fs(in: NativeOut) -> NativeFrag {
         }
     }
     if (has(s, F_FGE)) {
-        let f = i32(f32(in.base.y) + in.dfz.x);
+        let f = i32(at.f);
         r = (f * r + (255 - f) * i32(s.fogcol & 0xFFu)) >> 8u;
         g = (f * g + (255 - f) * i32((s.fogcol >> 8u) & 0xFFu)) >> 8u;
         b = (f * b + (255 - f) * i32((s.fogcol >> 16u) & 0xFFu)) >> 8u;

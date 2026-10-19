@@ -1493,7 +1493,7 @@ struct NativeTarget {
 };
 
 struct Native {
-    bool on = false, check = false, plight = false;
+    bool on = false, check = false, plight = false, hw_interp = false;
     std::uint32_t adc_back = 0;
     WGPUShaderModule module = nullptr;
     WGPUPipelineLayout pipeline_layout = nullptr;
@@ -1896,7 +1896,7 @@ void native_record(const State &st, const std::uint8_t *payload, std::uint32_t b
     std::uint32_t zmax;
     float scale;
     native_depth(w[6], zmax, scale);
-    const std::uint32_t pflags = (g_nat.plight ? 1u : 0u) | ((flags & 1u) ? 2u : 0u) | (oracle ? 4u : 0u);
+    const std::uint32_t pflags = (g_nat.plight ? 1u : 0u) | ((flags & 1u) ? 2u : 0u) | (oracle ? 4u : 0u) | (g_nat.hw_interp ? 8u : 0u);
     const std::uint32_t ofx = static_cast<std::uint32_t>(c.xyoffset) & 0xFFFFu, ofy = static_cast<std::uint32_t>(c.xyoffset >> 32) & 0xFFFFu;
     for (int i = 0; i < count; ++i) {
         NativeDraw d;
@@ -1944,6 +1944,7 @@ bool native_init() {
     };
     g_nat.check = on("PS2_NATIVE_CHECK") && !native::skip_vu1();
     g_nat.plight = on("PS2_NATIVE_PLIGHT");
+    if (const char *e = std::getenv("PS2_NATIVE_INTERP")) g_nat.hw_interp = !std::strcmp(e, "hw");  // the hardware's attribute interpolation
     if (const char *e = std::getenv("PS2_NATIVE_ADC_BACK")) g_nat.adc_back = static_cast<std::uint32_t>(std::atoi(e));
     if (const char *e = std::getenv("PS2_NATIVE_DUMP")) {
         char dir[512] = {};
