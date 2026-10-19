@@ -2,6 +2,7 @@
 #include "../drawdbg.hpp"
 #include "../texpack.hpp"
 #include "ps2/system.hpp"
+#include "../queue.hpp"
 
 #include <webgpu/webgpu.h>
 #ifndef __EMSCRIPTEN__
@@ -10,13 +11,20 @@
 
 #include <algorithm>
 #include <array>
+#include <atomic>
 #include <cmath>
+#include <condition_variable>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
 #include <deque>
 #include <memory>
+#include <mutex>
+#ifdef __linux__
+#include <pthread.h>
+#endif
 #include <string>
+#include <thread>
 #include <unordered_map>
 
 extern const char kGsShader[];
@@ -27,6 +35,8 @@ void swizzle_tables(std::vector<std::uint32_t> &out);
 }
 
 namespace ps2::gs::gpu {
+
+void configure_surface();
 
 namespace {
 
@@ -73,8 +83,8 @@ std::uint32_t field_base(std::uint32_t field) { return g_copy_words + (field & 1
 bool g_timestamps = false;
 WGPUQuerySet g_queries = nullptr;
 WGPUBuffer g_query_resolve = nullptr, g_query_read = nullptr;
-bool g_query_pending = false, g_query_ready = false;
-std::uint64_t g_measured_ns = 0, g_measured = 0, g_total_passes = 0;
+std::atomic<bool> g_query_pending = false, g_query_ready = false;
+std::atomic<std::uint64_t> g_measured_ns = 0, g_measured = 0, g_total_passes = 0;
 WGPUDevice g_device = nullptr;
 WGPUQueue g_queue = nullptr;
 WGPUBuffer g_vram = nullptr, g_tables = nullptr, g_params = nullptr, g_data = nullptr, g_clut = nullptr, g_scratch = nullptr, g_readback = nullptr, g_decoded = nullptr;
@@ -132,6 +142,22 @@ struct Arena {
     std::uint32_t &operator[](std::size_t i) { return words[i]; }
 } g_arena;
 std::uint32_t g_clut_slot = 0, g_clut_loads = 0;
+
+// With the render thread on its own, submits run on a worker thread (submit()). Buffer writes made on the render thread
+// then travel with the next job, so the queue sees them in the same order as before.
+struct Write {
+    WGPUBuffer buffer;
+    std::uint64_t offset;
+    std::vector<std::uint8_t> bytes;
+};
+std::vector<Write> g_writes;
+bool g_worker_on = false;  // render thread only
+
+void queue_write(WGPUBuffer buffer, std::uint64_t offset, const void *data, std::uint64_t size) {
+    if (!g_worker_on) return wgpuQueueWriteBuffer(g_queue, buffer, offset, data, size);
+    const auto *p = static_cast<const std::uint8_t *>(data);
+    g_writes.push_back({buffer, offset, std::vector<std::uint8_t>(p, p + size)});
+}
 
 struct Image {
     bool active = false;
@@ -347,7 +373,7 @@ bool cache_insert(std::uint64_t key, const std::uint8_t *bytes, std::size_t n, s
     to[words - 1] = 0;
     to[words - 2] = 0;
     std::memcpy(to, bytes, n);
-    wgpuQueueWriteBuffer(g_queue, g_cache, static_cast<std::uint64_t>(offset) * 4, to, static_cast<std::uint64_t>(words) * 4);
+    queue_write(g_cache, static_cast<std::uint64_t>(offset) * 4, to, static_cast<std::uint64_t>(words) * 4);
     g_cache_ring.push_back({key, offset, words, n, g_serial});
     g_cache_index.emplace(key, &g_cache_ring.back());
     g_cache_head += words;
@@ -807,16 +833,16 @@ void rebuild_group() {
     g_group = wgpuDeviceCreateBindGroup(g_device, &d);
 }
 
-void ensure_capacity() {
+void ensure_capacity(std::size_t arena_words = g_arena.size(), std::size_t param_records = g_param_records.size()) {
     bool changed = false;
-    const std::uint64_t data_bytes = std::max<std::uint64_t>(g_arena.size() * 4, 16);
+    const std::uint64_t data_bytes = std::max<std::uint64_t>(arena_words * 4, 16);
     if (data_bytes > g_data_size) {
         if (g_data) wgpuBufferRelease(g_data);
         g_data_size = std::max<std::uint64_t>(g_data_size * 2, (data_bytes + (4u << 20) - 1) & ~((4ull << 20) - 1));
         g_data = make_buffer(g_data_size, WGPUBufferUsage_Storage | WGPUBufferUsage_CopyDst);
         changed = true;
     }
-    const std::uint64_t param_bytes = std::max<std::uint64_t>(g_param_records.size(), 1) * kParamStride;
+    const std::uint64_t param_bytes = std::max<std::uint64_t>(param_records, 1) * kParamStride;
     if (param_bytes > g_params_size) {
         if (g_params) wgpuBufferRelease(g_params);
         g_params_size = std::max<std::uint64_t>(g_params_size * 2, std::max<std::uint64_t>(param_bytes, 64 * 1024));
@@ -895,15 +921,13 @@ void profile_submit() {
 }
 
 // Browsers copy writes above about 1 MiB through a slower path, so large uploads go in pieces.
-void submit(WGPUTextureView present_view = nullptr) {
-    if (g_commands.empty() && !present_view) return;
-    if (g_profile_out && !present_view && g_timestamps && frame_count() >= g_profile_from && frame_count() < g_profile_to) {
-        profile_submit();
-        return;
-    }
-    ensure_capacity();
-    wgpuQueueWriteBuffer(g_queue, g_data, 0, g_arena.data(), g_arena.size() * 4);
-    wgpuQueueWriteBuffer(g_queue, g_params, 0, g_param_records.data(), g_param_records.size() * kParamStride);
+using ParamRecords = std::vector<std::array<std::uint32_t, kParamStride / 4>>;
+
+// Copies the commands' data into the GPU buffers, encodes them and submits (render thread, or the submit worker).
+void run_commands(Arena &arena, ParamRecords &params, std::vector<Command> &commands, WGPUTextureView present_view) {
+    ensure_capacity(arena.size(), params.size());
+    wgpuQueueWriteBuffer(g_queue, g_data, 0, arena.data(), arena.size() * 4);
+    wgpuQueueWriteBuffer(g_queue, g_params, 0, params.data(), params.size() * kParamStride);
     if (g_query_ready) {
         const void *mapped = wgpuBufferGetConstMappedRange(g_query_read, 0, 16);
         if (mapped) {
@@ -929,7 +953,7 @@ void submit(WGPUTextureView present_view = nullptr) {
     Pipeline current = kPipelines;
     ++g_submits;
     ++g_total_passes;
-    for (const Command &c : g_commands) {
+    for (const Command &c : commands) {
         ++g_dispatches[c.pipeline];
         if (c.pipeline != current) {
             wgpuComputePassEncoderSetPipeline(pass, g_pipelines[c.pipeline]);
@@ -983,16 +1007,145 @@ void submit(WGPUTextureView present_view = nullptr) {
 #else
     wgpuDevicePoll(g_device, false, nullptr);
 #endif
-    g_commands.clear();
+}
+
+// The submit worker: copies into wgpu staging (6-10 MB of prims, uploads and tile lists a frame, at ~2.3 GB/s), command
+// encoding and submits took a fifth of the render thread. Jobs run in order, two at most in flight. Anything that reads
+// GPU results or submits by itself drains it first (drain()). Off with PS2_SUBMIT_THREAD=0, when single-threaded
+// (captures; PS2_SUBMIT_THREAD=2 turns it on there to test it) and while profiling.
+struct Job {
+    Arena arena;
+    ParamRecords params;
+    std::vector<Command> commands;
+    std::vector<Write> writes;
+    bool present = false;
+};
+std::mutex g_job_mutex;
+std::condition_variable g_job_cv;
+std::deque<Job> g_jobs;
+std::vector<Job> g_spare_jobs;
+bool g_job_running = false, g_worker_started = false;
+
+void run_job(Job &j) {
+    for (const Write &w : j.writes) wgpuQueueWriteBuffer(g_queue, w.buffer, w.offset, w.bytes.data(), w.bytes.size());
+    if (!j.present) {
+        if (!j.commands.empty()) run_commands(j.arena, j.params, j.commands, nullptr);
+        return;
+    }
+    WGPUSurfaceTexture st = WGPU_SURFACE_TEXTURE_INIT;
+    wgpuSurfaceGetCurrentTexture(g_surface, &st);
+    if (st.status != WGPUSurfaceGetCurrentTextureStatus_SuccessOptimal && st.status != WGPUSurfaceGetCurrentTextureStatus_SuccessSuboptimal) {
+        if (st.texture) wgpuTextureRelease(st.texture);
+        run_commands(j.arena, j.params, j.commands, nullptr);
+        configure_surface();
+        return;
+    }
+    WGPUTextureView target = wgpuTextureCreateView(st.texture, nullptr);
+    run_commands(j.arena, j.params, j.commands, target);
+#ifndef __EMSCRIPTEN__
+    wgpuSurfacePresent(g_surface);
+#endif
+    wgpuTextureViewRelease(target);
+    wgpuTextureRelease(st.texture);
+}
+
+void submit_worker() {
+#ifdef __linux__
+    pthread_setname_np(pthread_self(), "gpusubmit");
+#endif
+    std::unique_lock lock(g_job_mutex);
+    for (;;) {
+        g_job_cv.wait(lock, [] { return !g_jobs.empty(); });
+        Job j = std::move(g_jobs.front());
+        g_jobs.pop_front();
+        g_job_running = true;
+        lock.unlock();
+        run_job(j);
+        j.arena.clear();
+        j.params.clear();
+        j.commands.clear();
+        j.writes.clear();
+        lock.lock();
+        g_spare_jobs.push_back(std::move(j));
+        g_job_running = false;
+        g_job_cv.notify_all();
+    }
+}
+
+bool worker_wanted() {
+#ifdef __EMSCRIPTEN__
+    return false;
+#else
+    static const char *e = std::getenv("PS2_SUBMIT_THREAD");  // 0: off, 2: also single-threaded (to test it)
+    if (e && std::strcmp(e, "0") == 0) return false;
+    return (queue::active() || (e && std::strcmp(e, "2") == 0)) && !g_profile_out;
+#endif
+}
+
+void after_submit() {
     g_command_info.clear();
     ++g_serial;
-    g_param_records.clear();
-    g_arena.clear();
     g_decoded_used = 0;
     g_clut_loads = 0;
 }
 
+// Hands the pending commands and writes to the worker (render thread).
+void enqueue(bool present) {
+    if (!g_worker_started) {
+        std::thread(submit_worker).detach();
+        g_worker_started = true;
+    }
+    std::unique_lock lock(g_job_mutex);
+    g_job_cv.wait(lock, [] { return g_jobs.size() < 2; });
+    Job j;
+    if (!g_spare_jobs.empty()) {
+        j = std::move(g_spare_jobs.back());
+        g_spare_jobs.pop_back();
+    }
+    std::swap(j.arena, g_arena);
+    std::swap(j.params, g_param_records);
+    std::swap(j.commands, g_commands);
+    std::swap(j.writes, g_writes);
+    j.present = present;
+    g_jobs.push_back(std::move(j));
+    g_job_cv.notify_all();
+}
+
+// Waits until the worker has submitted everything handed to it, including pending writes (render thread).
+void drain() {
+    if (!g_worker_started) return;
+    if (!g_writes.empty()) enqueue(false);
+    std::unique_lock lock(g_job_mutex);
+    g_job_cv.wait(lock, [] { return g_jobs.empty() && !g_job_running; });
+}
+
+void submit(WGPUTextureView present_view = nullptr) {
+    if (!present_view) g_worker_on = worker_wanted();
+    if (g_commands.empty() && g_writes.empty() && !present_view) return;
+    if (g_profile_out && !present_view && g_timestamps && frame_count() >= g_profile_from && frame_count() < g_profile_to) {
+        drain();
+        profile_submit();
+        return;
+    }
+    if (g_worker_on && !present_view) {
+        enqueue(false);
+        after_submit();
+        return;
+    }
+    drain();
+    for (const Write &w : g_writes) wgpuQueueWriteBuffer(g_queue, w.buffer, w.offset, w.bytes.data(), w.bytes.size());
+    g_writes.clear();
+    if (!g_commands.empty() || present_view) run_commands(g_arena, g_param_records, g_commands, present_view);
+    g_commands.clear();
+    g_param_records.clear();
+    g_arena.clear();
+    after_submit();
+}
+
+void drain();
+
 void read_back(WGPUBuffer source, std::uint64_t bytes, void *out, std::uint64_t offset = 0) {
+    drain();
     WGPUCommandEncoder enc = wgpuDeviceCreateCommandEncoder(g_device, nullptr);
     wgpuCommandEncoderCopyBufferToBuffer(enc, source, offset, g_readback, 0, bytes);
     WGPUCommandBuffer cmd = wgpuCommandEncoderFinish(enc, nullptr);
@@ -1347,7 +1500,7 @@ void replace_texture(const State &st, SetupCache &cache) {
             std::fprintf(stderr, "[texpack] replacement memory full (%u MB), starting over at frame %llu\n", kReplWords >> 18,
                          static_cast<unsigned long long>(last_reset));
         }
-        wgpuQueueWriteBuffer(g_queue, g_decoded, (static_cast<std::uint64_t>(kDecodedWords) + used) * 4, px.data(), px.size() * 4);
+        queue_write(g_decoded, (static_cast<std::uint64_t>(kDecodedWords) + used) * 4, px.data(), px.size() * 4);
         it = replaced.emplace(key, std::make_pair(kDecodedWords + used, scale)).first;
         used += static_cast<std::uint32_t>(px.size());
     }
@@ -1662,6 +1815,7 @@ void flush() {
 void wait_idle() {
     flush_all();
     submit();
+    drain();
     bool done = false;
     WGPUQueueWorkDoneCallbackInfo cb = WGPU_QUEUE_WORK_DONE_CALLBACK_INFO_INIT;
     cb.mode = WGPUCallbackMode_AllowProcessEvents;
@@ -1676,7 +1830,7 @@ struct PendingDownload {
     std::uint64_t capacity = 0;
     std::uint8_t *memory = nullptr;
     std::uint32_t offset = 0, bytes = 0, serial = 0;
-    bool busy = false, ready = false;
+    std::atomic<bool> busy = false, ready = false;  // map callbacks may run on the submit worker
 } g_pending;
 
 void collect_download() {
@@ -1698,6 +1852,7 @@ bool download_async(std::uint8_t *memory, std::uint32_t offset, std::uint32_t by
     flush_all();
     if (g_samples != 1) dispatch_linear(kResolve, bytes / 4, push_params({offset / 4}));
     submit();
+    drain();
     WGPUCommandEncoder enc = wgpuDeviceCreateCommandEncoder(g_device, nullptr);
     wgpuCommandEncoderCopyBufferToBuffer(enc, g_samples == 1 ? g_vram : g_scratch, offset, g_pending.buffer, 0, bytes);
     WGPUCommandBuffer cmd = wgpuCommandEncoderFinish(enc, nullptr);
@@ -1771,6 +1926,7 @@ void write_state(const std::vector<std::uint32_t> &vram, std::uint32_t scale, co
 
 void stats() {
     if (g_mode == Mode::off) return;
+    drain();
     std::fprintf(stderr, "[gpu] %llu submits, dispatches:", static_cast<unsigned long long>(g_submits));
     for (int i = 0; i < kPipelines; ++i) std::fprintf(stderr, " %s %llu", kEntryPoints[i], static_cast<unsigned long long>(g_dispatches[i]));
     std::fprintf(stderr, "\n");
@@ -1887,6 +2043,7 @@ bool attach_surface(const SurfaceTarget &target) {
 
 void resize_surface(std::uint32_t width, std::uint32_t height) {
     if (!g_surface || (width == g_surface_width && height == g_surface_height)) return;
+    drain();
     g_surface_width = width;
     g_surface_height = height;
     configure_surface();
@@ -1896,6 +2053,7 @@ bool has_surface() { return g_surface != nullptr; }
 
 bool present(const DisplaySource &src) {
     if (!g_surface) return false;
+    g_worker_on = worker_wanted();
     flush_all();
     const std::uint32_t current = field_base(g_field), previous = field_base(g_field + 1);
     static const bool weave_off = std::getenv("PS2_NO_DEINTERLACE") != nullptr;
@@ -1907,11 +2065,17 @@ bool present(const DisplaySource &src) {
     const float sw = static_cast<float>(g_surface_width), sh = static_cast<float>(g_surface_height);
     const float vw = std::min(sw, sh * display_aspect()), vh = vw / display_aspect();
     const std::uint32_t blit[8] = {src.width * g_sx, src.height * g_rows, current, previous, blend ? 1u : 0u, static_cast<std::uint32_t>(vw), static_cast<std::uint32_t>(vh), 0};
-    wgpuQueueWriteBuffer(g_queue, g_blit_params, 0, blit, sizeof blit);
+    queue_write(g_blit_params, 0, blit, sizeof blit);
     ++g_field;
     g_have_previous = true;
     g_last_width = src.width;
     g_last_height = src.height;
+    if (g_worker_on) {
+        enqueue(true);
+        after_submit();
+        return true;
+    }
+    drain();
     WGPUSurfaceTexture st = WGPU_SURFACE_TEXTURE_INIT;
     wgpuSurfaceGetCurrentTexture(g_surface, &st);
     if (st.status != WGPUSurfaceGetCurrentTextureStatus_SuccessOptimal && st.status != WGPUSurfaceGetCurrentTextureStatus_SuccessSuboptimal) {
@@ -1939,7 +2103,7 @@ struct Copy {
     WGPUBuffer buffer = nullptr;
     std::uint64_t size = 0, order = 0;
     std::uint32_t width = 0, height = 0;
-    bool busy = false, ready = false;
+    std::atomic<bool> busy = false, ready = false;  // map callbacks may run on the submit worker
 };
 Copy g_copies[3];
 std::uint64_t g_copy_order = 0;
@@ -1983,6 +2147,7 @@ bool display_async(const DisplaySource &src, std::vector<std::uint32_t> &rgba, s
         const std::uint32_t param = push_params({src.fbp, src.fbw, src.psm, src.dbx, src.dby, src.width, src.height, src.halved ? 1u : 0u, 0u, src.half ? 1u : 0u});
         g_commands.push_back({kDisplay, (src.width * g_sx + 7) / 8, (src.height * g_rows + 7) / 8, param});
         submit();
+        drain();
         WGPUCommandEncoder enc = wgpuDeviceCreateCommandEncoder(g_device, nullptr);
         wgpuCommandEncoderCopyBufferToBuffer(enc, g_scratch, 0, slot->buffer, 0, bytes);
         WGPUCommandBuffer cmd = wgpuCommandEncoderFinish(enc, nullptr);
