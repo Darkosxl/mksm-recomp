@@ -935,7 +935,7 @@ void run_vu_thread() {
         const std::uint8_t *payload = nullptr;
         while (in.peek(h, payload)) {
             debug::jitter(2);
-            if (h.type == gs::queue::kVblank && native::world()) native::vblank(h.arg0);
+            if (h.type == gs::queue::kVblank && native::active()) native::vblank(h.arg0);
             if (seamv::on()) {
                 if (h.type == gs::queue::kVblank) seamv::vblank(h.arg0);
                 else if (h.type == gs::queue::kGif) seamv::gif(static_cast<int>(h.arg0), payload, h.arg1);

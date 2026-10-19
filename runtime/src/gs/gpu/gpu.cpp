@@ -1558,6 +1558,7 @@ struct Native {
     std::vector<std::uint32_t> list;  // tiles waiting for a write-back (x | y << 8 | flags << 16)
     std::uint64_t bound_lo[2] = {}, bound_hi[2] = {};  // VRAM bytes of the bound frame and Z pages
     std::uint64_t imports = 0, tile_writebacks = 0;
+    std::uint64_t programs[32] = {};  // messages drawn per program (characters: per pass)
     std::map<std::string, std::uint64_t> unsupported;
 } g_nat;
 
@@ -1565,13 +1566,15 @@ constexpr std::uint32_t kNativeTiles = 2048u, kNativeAlpha = 1024u, kNativeImpor
 
 // GS ALPHA (Cv = ((A - B) * C >> 7) + D; A, B, D: 0 Cs, 1 Cd, 2 zero; C: 0 As, 1 Ad, 2 FIX) as fixed-function blending,
 // with the shader's alpha output As / 128 (§4.3). 0: not expressible without the destination alpha (C = Ad) or not seen.
-enum NativeBlend : std::uint32_t { kBlendNone = 1, kBlendKeep, kBlendZero, kBlendLerp, kBlendAdd, kBlendSrc, kBlendDst, kBlendRevSub };
+// kBlendDst (Cd·C): the shader outputs C/256 and blends Dst·src + Src·dst (= 2·Cd·C/256), so C up to 255 needs no clamp.
+// kBlendDstAlpha (0211, Cs·Ad + Cd): DstAlpha under the A/128 storage of the colour target's alpha (§4.3).
+enum NativeBlend : std::uint32_t { kBlendNone = 1, kBlendKeep, kBlendZero, kBlendLerp, kBlendAdd, kBlendSrc, kBlendDst, kBlendRevSub, kBlendDstAlpha };
 
 std::uint32_t native_blend(std::uint32_t alpha, bool abe) {
     if (!abe) return kBlendNone;
     const std::uint32_t a = alpha & 3u, b = (alpha >> 2) & 3u, c = (alpha >> 4) & 3u, d = (alpha >> 6) & 3u;
     if (a == b) return d == 0 ? kBlendNone : d == 1 ? kBlendKeep : kBlendZero;
-    if (c == 1) return 0;
+    if (c == 1) return a == 0 && b == 2 && d == 1 ? kBlendDstAlpha : 0;
     if (a == 0 && b == 1 && d == 1) return kBlendLerp;
     if (a == 0 && b == 2 && d == 1) return kBlendAdd;
     if (a == 0 && b == 2 && d == 2) return kBlendSrc;
@@ -1599,16 +1602,19 @@ WGPURenderPipeline native_pipeline(std::uint32_t key) {
     case kBlendLerp: bs.color.srcFactor = f, bs.color.dstFactor = nf; break;
     case kBlendAdd: bs.color.srcFactor = f, bs.color.dstFactor = WGPUBlendFactor_One; break;
     case kBlendSrc: bs.color.srcFactor = f; break;
-    case kBlendDst: bs.color.srcFactor = WGPUBlendFactor_Zero, bs.color.dstFactor = f; break;
+    case kBlendDst: bs.color.srcFactor = WGPUBlendFactor_Dst, bs.color.dstFactor = WGPUBlendFactor_Src; break;
+    case kBlendDstAlpha: bs.color.srcFactor = WGPUBlendFactor_DstAlpha, bs.color.dstFactor = WGPUBlendFactor_One; break;
     case kBlendRevSub: bs.color.operation = WGPUBlendOperation_ReverseSubtract, bs.color.srcFactor = f, bs.color.dstFactor = WGPUBlendFactor_One; break;
     case kBlendZero: bs.color.srcFactor = WGPUBlendFactor_Zero; break;
     default: break;
     }
     WGPUColorTargetState color = WGPU_COLOR_TARGET_STATE_INIT;
     color.format = WGPUTextureFormat_RGBA8Unorm;
+    // the colour target's alpha holds min(A, 128) / 128 for DstAlpha (§4.3): written with the frame's alpha
     color.writeMask = import ? WGPUColorWriteMask_All
-                      : (key & kNativeColor) && blend != kBlendKeep ? WGPUColorWriteMask_Red | WGPUColorWriteMask_Green | WGPUColorWriteMask_Blue
-                                                                    : WGPUColorWriteMask_None;
+                             : ((key & kNativeColor) && blend != kBlendKeep ? WGPUColorWriteMask_Red | WGPUColorWriteMask_Green | WGPUColorWriteMask_Blue
+                                                                             : WGPUColorWriteMask_None) |
+                                   ((key & kNativeAlpha) ? WGPUColorWriteMask_Alpha : WGPUColorWriteMask_None);
     if (!import && blend != kBlendNone && blend != kBlendKeep) color.blend = &bs;
     WGPUColorTargetState targets[2] = {color, WGPU_COLOR_TARGET_STATE_INIT};
     targets[1].format = WGPUTextureFormat_R8Uint;
@@ -2248,16 +2254,20 @@ void native_open(const State &st) {
     ++g_nat.runs;
 }
 
-void native_record(const State &st, const std::uint8_t *payload, std::uint32_t bytes) {
+void native_record(const State &st, const std::uint8_t *payload, std::uint32_t bytes, std::uint32_t pass) {
     native::Batch b;
     std::memcpy(&b, payload, sizeof b);
+    const bool character = native::character(b.program);
     g_nat.in_kick = false;
     const std::uint32_t kick_prims = g_nat.kick_prims;
     g_nat.kick_prims = 0;
     ++g_nat.batches;
-    const bool oracle = b.flags & native::kOracle;
+    // a character record: registers, constants, input, then each XGKICK's output (the oracle of pass `pass`)
+    const std::size_t char_in = (native::kCharRegQwords + native::kCharMemQwords + native::char_input_qwords(b.program, b.n)) * 16;
+    const bool oracle = (b.flags & native::kOracle) && (!character || pass < b.kicks);
     const std::size_t body = sizeof b + static_cast<std::size_t>(b.nad) * 16;
-    const std::size_t record = (native::kRegQwords * 4 + static_cast<std::size_t>(b.n) * native::kVertexWords * (oracle ? 2 : 1)) * 4;
+    const std::size_t record = character ? char_in + static_cast<std::size_t>(b.kicks) * b.n * 48
+                                         : (native::kRegQwords * 4 + static_cast<std::size_t>(b.n) * native::kVertexWords * (oracle ? 2 : 1)) * 4;
     const auto unsupported = [](const char *why) { ++g_nat.unsupported[why]; };
     if (bytes < body + record) return unsupported("short record");
     if (drawdbg::enabled() && drawdbg::skipped(st)) {  // framedbg isolation skipped the batch's emulated draw
@@ -2268,7 +2278,7 @@ void native_record(const State &st, const std::uint8_t *payload, std::uint32_t b
     if (!(st.prmodecont & 1u)) attr = (st.prim & 7u) | (st.prmode & ~7ull);
     const std::uint32_t prim = static_cast<std::uint32_t>(st.prim) & 7u;
     const Context &c = st.ctx[(attr >> 9) & 1u];
-    if (!g_nat.replace && (b.tags[1] & (1u << 14)) && ((b.tags[1] >> 15) & 0x7FFu) != (static_cast<std::uint32_t>(st.prim) & 0x7FFu)) ++g_nat.tag_prim;
+    if (!g_nat.replace && !character && (b.tags[1] & (1u << 14)) && ((b.tags[1] >> 15) & 0x7FFu) != (static_cast<std::uint32_t>(st.prim) & 0x7FFu)) ++g_nat.tag_prim;
     if (g_nat.tiles) {
         // the emulated primitives before this batch go first, with the write-backs they need; then the binding
         if (!g_batch.prims.empty() || !g_nat.list.empty() || g_nat.pending) emit_all();
@@ -2346,7 +2356,13 @@ void native_record(const State &st, const std::uint8_t *payload, std::uint32_t b
     g_nat.ry1 = std::max(g_nat.ry1, sy1);
     g_nat.zwritten = g_nat.zwritten || zwrite;
     const std::uint32_t setup_at = arena_append(w, sizeof w);
-    const std::uint32_t regs_at = arena_append(payload + body, record);
+    // a character's passes share one copy of the record (replace: one message draws them all)
+    static const std::uint8_t *last_payload = nullptr;
+    static std::uint32_t last_at = 0, last_seq = ~0u, last_frame = ~0u;
+    static std::uint64_t last_serial = ~0ull;
+    const bool shared = character && payload == last_payload && b.seq == last_seq && b.frame == last_frame && g_serial == last_serial;
+    const std::uint32_t regs_at = shared ? last_at : arena_append(payload + body, record);
+    last_payload = payload, last_at = regs_at, last_seq = b.seq, last_frame = b.frame, last_serial = g_serial;
     if (flags & 2u) {  // later uploads over these textures must wait for the native draws (as for the emulated ones)
         for (std::uint32_t n = 0; n <= mip_levels(w); ++n) {
             const Range r = level_range(w, n);
@@ -2359,11 +2375,16 @@ void native_record(const State &st, const std::uint8_t *payload, std::uint32_t b
     std::uint32_t zmax;
     float scale;
     native_depth(w[6], zmax, scale);
-    const std::uint32_t pflags = (g_nat.plight ? 1u : 0u) | ((flags & 1u) ? 2u : 0u) | (oracle ? 4u : 0u) | (g_nat.hw_interp ? 8u : 0u);
+    // 16: the alpha output is the stored alpha, not a blend factor; 32: Cd·C as C/256 (64: C = FIX)
+    const std::uint32_t csel = (static_cast<std::uint32_t>(c.alpha) >> 4) & 3u;
+    const bool factor_as = csel == 0 && (blend == kBlendLerp || blend == kBlendAdd || blend == kBlendSrc || blend == kBlendRevSub);
+    const std::uint32_t pflags = (g_nat.plight ? 1u : 0u) | ((flags & 1u) ? 2u : 0u) | (oracle ? 4u : 0u) | (g_nat.hw_interp ? 8u : 0u) | (factor_as ? 0u : 16u) |
+                                 (blend == kBlendDst ? 32u : 0u) | (blend == kBlendDst && csel == 2 ? 64u : 0u);
     const std::uint32_t ofx = static_cast<std::uint32_t>(c.xyoffset) & 0xFFFFu, ofy = static_cast<std::uint32_t>(c.xyoffset >> 32) & 0xFFFFu;
     for (int i = 0; i < count; ++i) {
         NativeDraw d;
-        d.param = push_params({regs_at, b.program, b.n, b.nad, setup_at, ofx, ofy, t.width, t.height, splits[i].split, prim, pflags, 0u, zmax, f2u(scale), g_nat.adc_back});
+        d.param = push_params({regs_at, b.program, b.n, character ? pass : b.nad, setup_at, ofx, ofy, t.width, t.height, splits[i].split, prim, pflags, 0u, zmax, f2u(scale),
+                               g_nat.adc_back});
         std::uint32_t key = blend | (cmp << 5) | (splits[i].zwrite ? kNativeZWrite : 0u) | (splits[i].color ? kNativeColor : 0u) | (splits[i].alpha ? kNativeAlpha : 0u);
         if (((c.alpha >> 4) & 3u) == 2u) key |= kNativeConstant;
         d.pipeline = native_pipeline(key);
@@ -2381,10 +2402,12 @@ void native_record(const State &st, const std::uint8_t *payload, std::uint32_t b
         ++g_nat.draws;
     }
     ++g_nat.drawn;
+    ++g_nat.programs[b.program & 31u];
     g_nat.triangles += tris;
     if (oracle && prim != 3) {
         // the GS's triangles for this kick against the strip breaks of the VU1 output (XYZF2 bit 15)
-        const std::uint8_t *out = payload + body + (native::kRegQwords * 4 + static_cast<std::size_t>(b.n) * native::kVertexWords) * 4;
+        const std::uint8_t *out = character ? payload + body + char_in + static_cast<std::size_t>(pass) * b.n * 48
+                                            : payload + body + (native::kRegQwords * 4 + static_cast<std::size_t>(b.n) * native::kVertexWords) * 4;
         std::uint32_t expected = 0, cross = 0;
         for (std::uint32_t k = 0; k < b.n; ++k) {
             std::uint32_t xyzw;
@@ -2400,7 +2423,7 @@ void native_record(const State &st, const std::uint8_t *payload, std::uint32_t b
 }
 
 bool native_init() {
-    g_nat.on = native::world();
+    g_nat.on = native::active();
     if (!g_nat.on) return true;
     const auto on = [](const char *name) {
         const char *e = std::getenv(name);
@@ -2509,6 +2532,9 @@ void native_stats() {
     if (g_nat.replace) std::fprintf(stderr, "; %llu write-backs", static_cast<unsigned long long>(g_nat.writebacks));
     else std::fprintf(stderr, "; vertex tag PRIM differs from the GS's in %llu", static_cast<unsigned long long>(g_nat.tag_prim));
     const double frames = static_cast<double>(std::max<std::uint64_t>(g_nat.frames, 1));
+    std::fprintf(stderr, "\n[native] drawn per program:");
+    for (std::uint32_t i = 0; i < 32; ++i)
+        if (g_nat.programs[i]) std::fprintf(stderr, " %u:%llu", i, static_cast<unsigned long long>(g_nat.programs[i]));
     if (g_nat.tiles)
         std::fprintf(stderr, "\n[native] tiles: %llu bindings, %llu imports, %llu write-backs", static_cast<unsigned long long>(g_nat.runs),
                      static_cast<unsigned long long>(g_nat.imports), static_cast<unsigned long long>(g_nat.tile_writebacks));
@@ -3205,8 +3231,8 @@ void native_begin(const State &st) {
     if (!g_nat.open) native_open(st);
 }
 
-void native_batch(const State &st, const std::uint8_t *payload, std::uint32_t bytes) {
-    if (g_nat.on) native_record(st, payload, bytes);
+void native_batch(const State &st, const std::uint8_t *payload, std::uint32_t bytes, std::uint32_t pass) {
+    if (g_nat.on) native_record(st, payload, bytes, pass);
 }
 
 void native_vblank(std::uint64_t frame) {

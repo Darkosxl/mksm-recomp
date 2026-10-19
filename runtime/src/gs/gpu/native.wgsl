@@ -144,6 +144,9 @@ fn vin(k: u32, w: u32) -> u32 {
 }
 
 fn oracle(k: u32, w: u32) -> u32 {
+    if (is_char()) {
+        return char_oracle(k, w);
+    }
     return data[prm(0u) + 56u + prm(2u) * 12u + k * 12u + w];
 }
 
@@ -186,6 +189,9 @@ fn clip_flags(k: u32) -> u32 {
 // The strip-break bit the program writes for vertex k: the input's bit 15 (Q0.w), and for the CLIP programs whether any
 // of the last three CLIP results it can see flags a vertex outside the clip volume (FCAND vi1, 0x3ffff).
 fn adc_window(k: u32, back: u32) -> u32 {
+    if (is_char()) {
+        return (char_in(k).adcw >> 15u) & 1u;
+    }
     let inw = vin(k, 3u) & 0xFFFFu;
     if (prm(1u) == 1u) {
         return inw & 0x8000u;
@@ -239,6 +245,9 @@ fn colour(k: u32) -> u32 {
 // STQ = ITOF12(s, t, q) * Q (+ the UV scroll hook @30E0: s, t += mem[17].xy * Q), fog F = clamp(A + B * Q) (vf5/vf11,
 // vf6.w/vf12.w); 50bda0e2 has no fog.
 fn gs_vertex(k: u32) -> GsVertex {
+    if (is_char()) {
+        return char_vertex(k);
+    }
     let h = homogeneous(k);
     let q = fdiv(ONE, h.w);
     var v: GsVertex;
@@ -266,8 +275,231 @@ fn gs_vertex(k: u32) -> GsVertex {
 }
 
 fn gs_z(k: u32) -> u32 {
+    if (is_char()) {
+        return char_vertex(k).z;
+    }
     let h = homogeneous(k);
     return (ftoi(fmul(h.z, fdiv(ONE, h.w)), 4u) >> 4u) & 0xFFFFFFu;
+}
+
+// ---- Characters (§3.4, §7.4): the six bodies of images A (3 passes) and B (1 pass), with the VU's arithmetic as above.
+// Record (gpu.cpp native_record, native.hpp Batch): vf0..vf31, then I in the first word of the next qword; mem[0..45];
+// the input from TOP (in[0..2], then per vertex 2 qwords (rigid: x y z nz, s t nx ny) or 3 (x y z wA, s t wB wC,
+// nx ny nz)); then n x 3 output qwords of each XGKICK. prm(1): 16 A rigid @00A8, 17 A 2 bones @07A8, 18 A 3 bones @0EF0,
+// 19 B rigid @0108, 20 B 2 bones @0410, 21 B 3 bones @08D0; prm(3): the pass (0 base, 1 highlight, 2 shading).
+
+fn is_char() -> bool {
+    return prm(1u) >= 16u;
+}
+
+fn char_rigid() -> bool {
+    return prm(1u) == 16u || prm(1u) == 19u;
+}
+
+fn char_stride() -> u32 {
+    return select(3u, 2u, char_rigid());
+}
+
+fn qword4(at: u32) -> vec4<u32> {
+    return vec4<u32>(data[at], data[at + 1u], data[at + 2u], data[at + 3u]);
+}
+
+fn creg(i: u32) -> vec4<u32> {
+    return qword4(prm(0u) + i * 4u);
+}
+
+fn cmem(m: u32) -> vec4<u32> {
+    return qword4(prm(0u) + 132u + m * 4u);
+}
+
+fn char_oracle(k: u32, w: u32) -> u32 {
+    return data[prm(0u) + 316u + (3u + prm(2u) * char_stride()) * 4u + (prm(3u) * prm(2u) + k) * 12u + w];
+}
+
+fn fix3(v: vec4<u32>) -> vec3<u32> {
+    return vec3<u32>(fixu(v.x), fixu(v.y), fixu(v.z));
+}
+
+fn fix4(v: vec4<u32>) -> vec4<u32> {
+    return vec4<u32>(fixu(v.x), fixu(v.y), fixu(v.z), fixu(v.w));
+}
+
+// MUL / MADD with a broadcast operand (MULAx, MADDy ...): the lanes go through the same RNE steps as one VU op
+fn mul3(a: vec3<u32>, b: u32) -> vec3<u32> {
+    return vec3<u32>(fmul(a.x, b), fmul(a.y, b), fmul(a.z, b));
+}
+
+fn madd3(acc: vec3<u32>, a: vec3<u32>, b: u32) -> vec3<u32> {
+    return vec3<u32>(fadd(acc.x, fmul(a.x, b)), fadd(acc.y, fmul(a.y, b)), fadd(acc.z, fmul(a.z, b)));
+}
+
+fn mul4(a: vec4<u32>, b: u32) -> vec4<u32> {
+    return vec4<u32>(fmul(a.x, b), fmul(a.y, b), fmul(a.z, b), fmul(a.w, b));
+}
+
+fn madd4(acc: vec4<u32>, a: vec4<u32>, b: u32) -> vec4<u32> {
+    return vec4<u32>(fadd(acc.x, fmul(a.x, b)), fadd(acc.y, fmul(a.y, b)), fadd(acc.z, fmul(a.z, b)), fadd(acc.w, fmul(a.w, b)));
+}
+
+// (a * v.x + b * v.y) + c * v.z (+ d * 1.0): MULAx, MADDAy, MADDz (MADDAz, MADDw)
+fn dot3(a: vec3<u32>, b: vec3<u32>, c: vec3<u32>, v: vec3<u32>) -> vec3<u32> {
+    return madd3(madd3(mul3(a, v.x), b, v.y), c, v.z);
+}
+
+struct CharIn {
+    p: vec3<u32>,   // position
+    n: vec3<u32>,   // model normal
+    w: vec3<u32>,   // bone weights
+    s: u32,         // S and T as loaded (MOVE: raw bits; the skinned strip break sits in bit 0 of S)
+    t: u32,
+    adcw: u32,      // XYZF2's last word: rigid nz as loaded (SQ.w), skinned 0x7fff + (S & 1) (ISW.w)
+}
+
+fn char_in(k: u32) -> CharIn {
+    let at = prm(0u) + 316u + (3u + k * char_stride()) * 4u;
+    let q0 = qword4(at);
+    let q1 = qword4(at + 4u);
+    var v: CharIn;
+    v.p = fix3(q0);
+    v.s = q1.x;
+    v.t = q1.y;
+    if (char_rigid()) {
+        v.n = vec3<u32>(fixu(q1.z), fixu(q1.w), fixu(q0.w));
+        v.w = vec3<u32>(0u);
+        v.adcw = q0.w;
+    } else {
+        v.n = fix3(qword4(at + 8u));
+        v.w = vec3<u32>(fixu(q0.w), fixu(q1.z), fixu(q1.w));
+        v.adcw = 0x7FFFu + (q1.x & 1u);
+    }
+    return v;
+}
+
+// Column j of the blended matrix: MULAw (bone A x wA), MADDAz (+ bone B x wB), MADDw (+ bone C x wC)
+fn char_column(j: u32, w: vec3<u32>) -> vec3<u32> {
+    switch prm(1u) {
+        case 17u {
+            return madd3(mul3(fix3(creg(5u + j)), w.x), fix3(creg(9u + j)), w.y);
+        }
+        case 18u {
+            return madd3(madd3(mul3(fix3(creg(5u + j)), w.x), fix3(creg(9u + j)), w.y), fix3(creg(13u + j)), w.z);
+        }
+        case 20u {
+            return madd3(mul3(fix3(creg(8u + j)), w.x), fix3(creg(12u + j)), w.y);
+        }
+        case 21u {
+            return madd3(madd3(mul3(fix3(creg(8u + j)), w.x), fix3(creg(12u + j)), w.y), fix3(creg(16u + j)), w.z);
+        }
+        default {
+            return fix3(creg(8u + j));  // A rigid: M = vf8..vf11
+        }
+    }
+}
+
+fn light_reg(i: u32) -> vec3<u32> {  // the transposed light directions (A 3 bones loads them from mem[4..6])
+    switch prm(1u) {
+        case 17u {
+            return fix3(creg(13u + i));
+        }
+        case 18u {
+            return fix3(cmem(4u + i));
+        }
+        case 19u {
+            return fix3(creg(9u + i));  // pre-rotated into model space by the init
+        }
+        default {
+            return fix3(creg(5u + i));
+        }
+    }
+}
+
+fn colour_reg(i: u32) -> vec4<u32> {  // light colours 0..2, then the ambient (raw: its w is moved, not computed)
+    switch prm(1u) {
+        case 16u {
+            return creg(12u + i);
+        }
+        case 18u {
+            return cmem(8u + i);
+        }
+        case 19u {
+            return creg(1u + i);
+        }
+        case 21u {
+            return creg(20u + i);
+        }
+        default {
+            return creg(16u + i);
+        }
+    }
+}
+
+fn char_vertex(k: u32) -> GsVertex {
+    let v = char_in(k);
+    var wp = vec3<u32>(0u);
+    var nw = v.n;
+    var clip: vec4<u32>;
+    if (prm(1u) == 19u) {
+        // B rigid: P x M premultiplied by the init (vf5..vf8)
+        clip = madd4(madd4(madd4(mul4(fix4(creg(5u)), v.p.x), fix4(creg(6u)), v.p.y), fix4(creg(7u)), v.p.z), fix4(creg(8u)), ONE);
+    } else {
+        let c0 = char_column(0u, v.w);
+        let c1 = char_column(1u, v.w);
+        let c2 = char_column(2u, v.w);
+        wp = madd3(dot3(c0, c1, c2, v.p), char_column(3u, v.w), ONE);
+        nw = dot3(c0, c1, c2, v.n);
+        clip = madd4(madd4(madd4(mul4(fix4(creg(1u)), wp.x), fix4(creg(2u)), wp.y), fix4(creg(3u)), wp.z), fix4(creg(4u)), ONE);
+    }
+    let q = fixu(fdiv(ONE, clip.w));
+    var out: GsVertex;
+    out.x = ftoi(fmul(clip.x, q), 4u) & 0xFFFFu;
+    out.y = ftoi(fmul(clip.y, q), 4u) & 0xFFFFu;
+    out.z = (ftoi(fmul(clip.z, q), 4u) >> 4u) & 0xFFFFFFu;
+    out.f = (v.adcw >> 4u) & 0xFFu;
+    out.q = ONE;
+    let which = prm(3u);
+    if (which == 0u) {
+        // d = max(L . n, 0); rgb = sum of colour x d + ambient; MINIi against I (2^23 + 255): the GS keeps the low bytes
+        let dd = dot3(light_reg(0u), light_reg(1u), light_reg(2u), nw);
+        let d = vec3<u32>(fmax(dd.x, 0u), fmax(dd.y, 0u), fmax(dd.z, 0u));
+        let amb = colour_reg(3u);
+        let rgb = madd3(dot3(fix3(colour_reg(0u)), fix3(colour_reg(1u)), fix3(colour_reg(2u)), d), fix3(amb), ONE);
+        let i = data[prm(0u) + 128u];
+        out.rgba = (fmin(rgb.x, i) & 0xFFu) | ((fmin(rgb.y, i) & 0xFFu) << 8u) | ((fmin(rgb.z, i) & 0xFFu) << 16u) | ((fmin(amb.w, i) & 0xFFu) << 24u);
+        out.s = v.s;
+        out.t = v.t;
+        return out;
+    }
+    // pass 2: UV from the world normal (projector vf16..vf19 in A rigid, mem[28..31] otherwise), RGBA mem[32];
+    // pass 3: UV from the world position (mem[24..27]), RGBA mem[44]
+    var r0: vec4<u32>;
+    var r1: vec4<u32>;
+    var r2: vec4<u32>;
+    var r3: vec4<u32>;
+    var src = nw;
+    var c = cmem(32u);
+    if (which == 2u) {
+        r0 = cmem(24u);
+        r1 = cmem(25u);
+        r2 = cmem(26u);
+        r3 = cmem(27u);
+        src = wp;
+        c = cmem(44u);
+    } else if (prm(1u) == 16u) {
+        r0 = creg(16u);
+        r1 = creg(17u);
+        r2 = creg(18u);
+        r3 = creg(19u);
+    } else {
+        r0 = cmem(28u);
+        r1 = cmem(29u);
+        r2 = cmem(30u);
+        r3 = cmem(31u);
+    }
+    let uv = madd3(dot3(fix3(r0), fix3(r1), fix3(r2), src), fix3(r3), ONE);
+    out.s = uv.x;
+    out.t = uv.y;
+    out.rgba = (c.x & 0xFFu) | ((c.y & 0xFFu) << 8u) | ((c.z & 0xFFu) << 16u) | ((c.w & 0xFFu) << 24u);
+    return out;
 }
 
 // ---- Drawing
@@ -614,8 +846,15 @@ fn native_fs(in: NativeOut) -> NativeFrag {
         }
     }
     var out: NativeFrag;
-    out.color = vec4<f32>(f32(r & 0xFF) / 255.0, f32(g & 0xFF) / 255.0, f32(b & 0xFF) / 255.0, f32(min(a & 0xFF, 128)) / 128.0);
     out.alpha = u32(a & 0xFF) | select(0u, 0x80u, has(s, F_FBA));
+    var rgb = vec3<f32>(f32(r & 0xFF), f32(g & 0xFF), f32(b & 0xFF)) / 255.0;
+    if ((prm(11u) & 32u) != 0u) {
+        // Cd·C (gpu.cpp kBlendDst): C/256 here, Dst·src + Src·dst in the blender
+        rgb = vec3<f32>(select(f32(a & 0xFF), f32(s.fix & 0xFFu), (prm(11u) & 64u) != 0u) / 256.0);
+    }
+    // the alpha output: As / 128 when the blend takes it as a factor, else the stored alpha (§4.3: min(A, 128) / 128)
+    let fa = select(f32(min(a & 0xFF, 128)), f32(min(out.alpha, 128u)), (prm(11u) & 16u) != 0u) / 128.0;
+    out.color = vec4<f32>(rgb, fa);
     out.depth = f32(z) * bitcast<f32>(prm(14u));
     return out;
 }
