@@ -28,9 +28,12 @@
 0023DB48	BuildHighlightMatrix	decomp/src/render/highlight_matrix.cpp
 00240438	ScrollSegmentUV	decomp/src/render/uv_scroll.cpp
 00242AD0	CullModelSegments	decomp/src/render/ps2render/cull_model_segments.cpp
+00242FF8	DrawModelSegments	decomp/src/render/draw_segments.cpp
 00244368	PackFighterConstants	decomp/src/render/character/fighter_constants.cpp
 00245168	UpdateBoneMatrices	decomp/src/render/character/bone_matrices.cpp
 002457D0	UpdateNodeMatrices	decomp/src/render/ps2render/update_node_matrices.cpp
+002459F8	CullCharacterSegments	decomp/src/render/character_cull.cpp
+00245D48	CullCharacterSegmentsProjected	decomp/src/render/character_cull.cpp
 00246120	RequestCharTexture	decomp/src/render/character/texture_request.cpp
 00246258	PackBoneSegmentConstants	decomp/src/render/character/segment_constants.cpp
 00246918	PackCharInstanceConstants	decomp/src/render/character/instance_constants.cpp
