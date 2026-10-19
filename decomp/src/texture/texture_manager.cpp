@@ -116,3 +116,22 @@ PS2_DECOMP(0026DD90, TextureManager::SetLinkedTexture) {
     c.r[v0].d[0] = b.flags;
     tick(c, 16);
 }
+
+// Reads the four parameters of texture slot a1's link C texture into *a2, *a3, *t0 and *t1 (raw float bits, copied
+// through f0 and f1). The segment packer fn_23a280 uses them when it draws the linked texture as a second pass.
+PS2_DECOMP(0026DF48, TextureManager::GetLinkParams) {
+    set32(c.r[v1], TextureSlot::kSize);  // the multiplier register
+    const TextureManager mgr = self(c);
+    const std::uint32_t slots = mgr.slots;
+    const std::uint32_t offset = TextureManager::scaled(c, c.r[a1].w[0]);
+    c.r[a1].d[0] = c.lo.d[0];
+    const TextureSlot tex{slots + offset};
+    set32(c.r[v0], tex.addr);
+    const unsigned out[4] = {a2, a3, t0, t1};
+    for (std::uint32_t i = 0; i < 4; ++i) {
+        std::uint32_t &f = c.f[i & 1];
+        f = tex.link_param(i);
+        st32(c.r[out[i]].w[0], f);
+    }
+    tick(c, 14);
+}

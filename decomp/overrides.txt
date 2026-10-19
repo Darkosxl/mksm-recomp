@@ -21,6 +21,7 @@
 0023DB48	BuildHighlightMatrix	decomp/src/render/highlight_matrix.cpp
 00240438	ScrollSegmentUV	decomp/src/render/uv_scroll.cpp
 0024C238	RadiansToAngle	decomp/src/render/ps2render.cpp
+0024CFF8	SortMeshesByLinkedTexture	decomp/src/render/draw_sort.cpp
 00260B40	GetAssetObject	decomp/src/setup/ps2setup.cpp
 002655C0	GuardBandOutcode	decomp/src/render/guard_band.cpp
 0026CD50	TextureManager::ComputeBufferWidth	decomp/src/texture/texture_manager.cpp
@@ -33,9 +34,14 @@
 0026DE50	texture_get_link_a	decomp/src/renderer/texture_manager/texture_get_link_a.cpp
 0026DE88	texture_get_link_b	decomp/src/renderer/texture_manager/texture_get_link_b.cpp
 0026DEC0	texture_get_link_c	decomp/src/renderer/texture_manager/texture_get_link_c.cpp
+0026DF48	TextureManager::GetLinkParams	decomp/src/texture/texture_manager.cpp
 0026DF80	texture_set_link_c_params	decomp/src/renderer/texture_manager/texture_set_link_c_params.cpp
 0026F068	cri_set_vsync_callback	decomp/src/cri/file/cri_set_vsync_callback.cpp
 00273C38	static_init_678920	decomp/src/static_init/static_init_678920.cpp
 00275260	screen_page_this_field	decomp/src/renderer/screen/screen_page_this_field.cpp
 002752B0	screen_page_other_field	decomp/src/renderer/screen/screen_page_other_field.cpp
+00275300	screen_zbuffer_page	decomp/src/renderer/screen/screen_zbuffer.cpp
+002753A0	screen_zbuffer_format	decomp/src/renderer/screen/screen_zbuffer.cpp
+00326140	ObjectGetGroundY	decomp/src/paradox/object.cpp
+00379988	PointLightIsOn	decomp/src/paradox/point_light.cpp
 00474EDC	strlen	decomp/src/libc/strlen.cpp

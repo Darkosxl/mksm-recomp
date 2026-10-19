@@ -66,6 +66,9 @@ struct TextureSlot {
     Field<std::uint64_t> tex0{addr + 0x230};     // GS TEX0 register: base, width, format, size, CLUT
     Field<std::uint64_t> miptbp1{addr + 0x238};  // GS MIPTBP1 register: base and width of mip levels 1-3
     Field<std::uint16_t> linked{addr + 0x246};   // slot number, valid when flags & kHasLinked
+
+    // the four float parameters (raw bits) of the texture linked as "link C" (texture_set_link_c_params, 0x26DF80)
+    Field<std::uint32_t> link_param(std::uint32_t i) const { return {addr + 0x180 + 4 * i}; }
 };
 
 struct TextureManager {
