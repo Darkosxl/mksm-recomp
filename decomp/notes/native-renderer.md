@@ -367,6 +367,29 @@ constants mem[0..45]. Values seen are in §7.1 (R3).
 | 37-39, 45 | - | pass-2 A+D |
 | 40-43 | - | pass-3 A+D |
 
+**Confirmed by decomp** (batch h: PackFighterConstants 0x244368, PackCharInstanceConstants 0x246918,
+PackBoneSegmentConstants 0x246258, all bit-exact on difftest). The character constants the EE uploads (UNPACK V4-32,
+4-qword blocks after the header at 0x4f4d90):
+
+| mem | Source | Meaning |
+|---|---|---|
+| 0-3 | 0x660f20 (the fighters' flat mode: 0x660f60) | P |
+| 4-7 | 0x661960 | light directions, transposed: lanes 0-2 = normalize(bone position − rig light i), in the bone's space (× the inverse of its rotation unless [0x4f4c48]); lane 3 = an extra direction (light 2 + fn_23cae8's vector, × −[0x4f4c1c], which is 0 in the ELF data). The flat mode sends identity |
+| 8-11 | 0x6619a0 (sceVu0LightColorMatrix) | rows 8-10: rig colour i × attenuation (1 inside `near` +32, 0 beyond `far` +36, linear between), .w = 25.0 (or [0x4f4c18] for light 0 when [0x4f6e44]); row 11: the rig's ambient (rig +0x90) with .w = 0. The 2²³ bias of §3.4 is not in the code, so it would be in the rig data |
+| 12-15, 20-23 | bone world matrix; [0x6610a0] × bone | only the one-bone segment path (fn_246258, image C @2520): the bone and the clip matrix |
+| 24-27 | 0x6634a0 | pass-3 projector |
+| 28-31 | instance +0x1060 | pass-2 projector (per instance) |
+| 37-39 | A+D | segment path: ALPHA_1 = 0x2000000068, TEST_1 = 0x50001 (ATST NEVER), TEX0_1 = 0 |
+| 45 | A+D | one-pass fighters: FBA_1 = 1 |
+
+The GS state around the batches goes as a DIRECT A+D block, not through VU1: FBA_1, TEX1_1 bilinear (0x60), CLAMP_1
+clamp/clamp (the segment path takes it from flag bits 12/13, plus a TEXFLUSH), and for the fighters PRIM = tristrip,
+Gouraud, textured, alpha-blended (0x5c), with FGE by [0x4f4c08] and AA1 by [0x4f6e94] and the owner's flags; the flat
+mode draws untextured (0x4c). Pass 1's TEX0 is the skin slot's with TFX = MODULATE, TCC = RGB. VU1 double buffering is
+BASE 0x2e / OFFSET 0x1e9. The bone palette is computed whole on the EE every frame by UpdateBoneMatrices (0x245168):
+[0x6660a0][i] = bone i's world matrix, [0x6660a4][i] = its skinning matrix (same rotation, translation world.t −
+pivot·R, no bind rotation), 120 bones, 64 bytes each: a native shader can take [0x6660a4] as its palette.
+
 ### 3.3 World family (image C, six bodies)
 
 Skeleton (e.g. @0BA8 at `vu1_000.cpp:275`):
@@ -465,6 +488,10 @@ whole batch, in[0] to the last vertex, is one `UNPACK V4-32` straight from the m
   with set A and the other fighters with set B; set B there has one light (lights 2 and 3 black) and its pass-1 A+D is
   ALPHA 0x44 (0101) with TEST 0x733cb (alpha ≥ 0x3c, AFAIL RGB_ONLY, Z GREATER): the "0x3C RGB_ONLY pass" of §5.2.
 - Capacity: about 48-49 vertices per batch.
+- **Confirmed by decomp** (batch h, table in §3.2): the three lights are point lights of the mesh's rig, turned into
+  directions from the bone's position once per mesh on the EE, with a linear near/far falloff folded into their
+  colours; the pass-2 projector is per instance and the pass-3 one global. A one-pass fighter draw (fn_244368's
+  fourth argument 0) sends neither projector, texture nor pass packers, only the A+D at mem[45] (FBA_1 = 1).
 
 ### 3.5 post_fx (image D, @0000, 50 instructions)
 
