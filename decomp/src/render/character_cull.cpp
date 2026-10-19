@@ -4,7 +4,7 @@
 //   0  culled: nothing is drawn
 //   1  entirely inside the guard frustum: every segment is drawn, the segment flags are not touched
 //   2  per segment: segment.visible (+0x18) = 1 to draw it, 0 to skip it
-// fn_246cf0 calls CullCharacterSegmentsLod when it was given a level-of-detail factor (t1 != 0; fn_23df70, fn_23fa00,
+// fn_246cf0 calls CullCharacterSegmentsProjected when its t1 argument is nonzero (callers fn_23df70, fn_23fa00,
 // fn_24cbf8) and CullCharacterSegments otherwise (the in-game fighters from fn_23ff60).
 //
 // The tests are the engine's VU0 clip tests (two 3-plane matrices per frustum object, one VCLIP per matrix):
@@ -39,7 +39,7 @@ constexpr std::uint32_t kCullCode = 0x4c;         // CullCharacterSegments store
 constexpr std::uint32_t kAlwaysPerSegment = 0xdc8; // nonzero: skip the sphere test, test every segment
 constexpr std::uint32_t kSphereCentre = 0xf40;    // bounding sphere: centre (offset from the root, xyzw) ...
 constexpr std::uint32_t kSphereRadius = 0xf6c;    // ... and radius
-constexpr std::uint32_t kLod = 0x1008;            // the level of detail being drawn
+constexpr std::uint32_t kStreamedTexture = 0x1008; // the texture fn_246120 uploads on demand (inferred)
 }  // namespace model
 
 // A segment record: one mesh piece bound to one bone
@@ -48,7 +48,7 @@ constexpr std::uint32_t kSize = 0x1d0;
 constexpr std::uint32_t kBone = 0x00;     // index into the bone matrices
 constexpr std::uint32_t kHasBox = 0x14;   // 0: never drawn by the box test
 constexpr std::uint32_t kVisible = 0x18;  // the output: 1 = draw this segment
-constexpr std::uint32_t kLod = 0x1c;      // the level of detail this segment belongs to
+constexpr std::uint32_t kTexture = 0x1c;  // compared with model+0x1008 (inferred: the segment's texture)
 constexpr std::uint32_t kBox = 0x30;      // box test data (fn_22c630 reads its corners at +0x60)
 constexpr std::uint32_t kRadius = 0x78;   // bounding radius around the bone's position
 }  // namespace segment
@@ -63,8 +63,9 @@ constexpr std::uint32_t kPosition = 0xa0;       // the placement node's position
 
 constexpr std::uint32_t kBoneMatrices = 0x006660A0;  // pointer to the current skeleton's world matrices, 64 bytes each
 constexpr std::uint32_t kViewProjection = 0x006612A0; // 4x4, row vectors
-constexpr std::uint32_t kBoundsHook = 0x004F4B58;    // nonzero: fn_245168 runs on the model before the test
-constexpr std::uint32_t kOtherLods = 0x004F4B2C;     // nonzero: draw the segments of every LOD but the current one
+constexpr std::uint32_t kPoseFirst = 0x004F4B58;     // nonzero (1 in the ELF data): pose the skeleton before the test
+constexpr std::uint32_t kSkipStreamed = 0x004F4B2C;  // nonzero (1 in the ELF data): draw the segments whose texture
+                                                     // is not the streamed one; zero: only those whose texture is
 constexpr std::uint32_t kViewFrustum = 0x0077F920;
 constexpr std::uint32_t kGuardFrustum = 0x0077FE80;
 constexpr std::uint32_t kBoxFrustum = 0x0077FF90;
@@ -78,7 +79,7 @@ constexpr std::uint32_t kMatrixMultiply = 0x00213CE8;  // (dst, a, b): dst = b x
 constexpr std::uint32_t kSetBoxMargin = 0x0022C620;
 constexpr std::uint32_t kBoxTest = 0x0022C630;
 constexpr std::uint32_t kSphereTest = 0x0022C838;
-constexpr std::uint32_t kBoundsHookFn = 0x00245168;
+constexpr std::uint32_t kPoseSkeleton = 0x00245168;  // (model, 0, mode): every bone's world matrix (inferred)
 
 enum Cull : std::uint32_t { kCulled = 0, kInside = 1, kPerSegment = 2 };
 
@@ -148,10 +149,10 @@ bool update_root(Cpu &c, std::uint32_t ra_translation, std::uint32_t ra_multiply
     return call(c, kMatrixMultiply, Ra{ra_multiply});
 }
 
-// fn_245168(model, 0, mode) when kBoundsHook is set; the model is in model_reg. False when control left.
-bool bounds_hook(Cpu &c, unsigned model_reg, std::uint32_t mode, std::uint32_t ra) {
+// fn_245168(model, 0, mode) when kPoseFirst is set; the model is in model_reg. False when control left.
+bool pose_skeleton(Cpu &c, unsigned model_reg, std::uint32_t mode, std::uint32_t ra) {
     li(c, v0, 0x004F0000);
-    lw(c, v1, kBoundsHook);
+    lw(c, v1, kPoseFirst);
     tick(c, 4);
     if (c.r[v1].d[0] == 0) return true;
     mov(c, a0, model_reg);
@@ -159,7 +160,7 @@ bool bounds_hook(Cpu &c, unsigned model_reg, std::uint32_t mode, std::uint32_t r
     if (mode) li(c, a2, mode);
     else c.r[a2].d[0] = 0;
     tick(c, 5);
-    return call(c, kBoundsHookFn, Ra{ra});
+    return call(c, kPoseSkeleton, Ra{ra});
 }
 
 // fn_22c630's other arguments: a1 = the segment's bone matrix (v0 = the matrix array), a2 = its box
@@ -211,7 +212,7 @@ PS2_DECOMP(002459F8, CullCharacterSegments) {
     tick(c, 5);
     if (c.r[v1].d[0] == c.r[v0].d[0]) {
         // class 0x20036: a box test per segment, with the box frustum's margin at 300 for the test
-        if (!bounds_hook(c, s1, 0, 0x00245A88)) return;
+        if (!pose_skeleton(c, s1, 0, 0x00245A88)) return;
         lw(c, v1, m + model::kSegmentCount);
         lw(c, s0, m + model::kSegments);
         tick(c, 4);
@@ -322,14 +323,14 @@ PS2_DECOMP(002459F8, CullCharacterSegments) {
     li(c, v0, kInside);
     tick(c, 3);
     if (c.r[a0].d[0] == c.r[v0].d[0]) {
-        if (!bounds_hook(c, s1, 0, 0x00245C80)) return;
+        if (!pose_skeleton(c, s1, 0, 0x00245C80)) return;
         li(c, v0, kInside);
         tick(c, 3);
         return finish(kInside);
     }
 
     // a box test per segment, with whatever margin the box frustum has
-    if (!bounds_hook(c, s1, 0, 0x00245CB0)) return;
+    if (!pose_skeleton(c, s1, 0, 0x00245CB0)) return;
     lw(c, v1, m + model::kSegmentCount);
     lw(c, s0, m + model::kSegments);
     tick(c, 4);
@@ -365,11 +366,10 @@ PS2_DECOMP(002459F8, CullCharacterSegments) {
     return finish(kPerSegment);
 }
 
-// fn_245d48: frustum cull of a character model (a1) drawn at a level of detail: the tests run on the projected
-// (screen-space) bounding sphere, doubled for the whole model, and per segment on a sphere around its bone, and only
-// the segments of the current LOD (model+0x1008) are drawn (all the others when kOtherLods is set). Returns the Cull
-// code in v0.
-PS2_DECOMP(00245D48, CullCharacterSegmentsLod) {
+// fn_245d48: frustum cull of a character model (a1) on its projected bounding spheres: the model's sphere (radius
+// doubled) and, per segment, a sphere around its bone, both through the view-projection matrix and divided by w.
+// Each segment is also kept or dropped by its texture (kSkipStreamed). Returns the Cull code in v0.
+PS2_DECOMP(00245D48, CullCharacterSegmentsProjected) {
     StackFrame f(c, 0x110);
     f.sq(s2, 0xd0);
     f.sq(s3, 0xc0);
@@ -448,26 +448,26 @@ PS2_DECOMP(00245D48, CullCharacterSegmentsLod) {
     tick(c, 2);
 
     if (c.r[v1].d[0] == c.r[s3].d[0]) {
-        // inside: no per-segment test, only the LOD selection
-        if (!bounds_hook(c, s2, 1, 0x00245F0C)) return;
+        // inside: no per-segment test, only the texture split
+        if (!pose_skeleton(c, s2, 1, 0x00245F0C)) return;
         lw(c, v1, m + model::kSegmentCount);
         lw(c, s0, m + model::kSegments);
         tick(c, 4);
         if (c.r[v1].sd[0] <= 0) return finish(kPerSegment);
         li(c, v0, 0x004F0000);
         mov(c, s1, v1);
-        lw(c, a0, kOtherLods);  // read once
+        lw(c, a0, kSkipStreamed);  // read once
         li(c, a1, 1);
         tick(c, 5);
         for (;;) {
             const std::uint32_t seg = w(c, s0);
             tick(c, 2);
-            lw(c, v1, seg + segment::kLod);
-            lw(c, v0, m + model::kLod);
+            lw(c, v1, seg + segment::kTexture);
+            lw(c, v0, m + model::kStreamedTexture);
             tick(c, 4);
-            const bool other_lod = c.r[v1].d[0] != c.r[v0].d[0];
-            if (c.r[a0].d[0] == 0 && other_lod && poll(c, 0x00245F48)) return;  // the original's backward branch
-            if (other_lod == (c.r[a0].d[0] != 0)) {
+            const bool not_streamed = c.r[v1].d[0] != c.r[v0].d[0];
+            if (c.r[a0].d[0] == 0 && not_streamed && poll(c, 0x00245F48)) return;  // the original's backward branch
+            if (not_streamed == (c.r[a0].d[0] != 0)) {
                 st32(seg + segment::kVisible, w(c, a1));
                 tick(c, 1);
             } else {
@@ -484,8 +484,8 @@ PS2_DECOMP(00245D48, CullCharacterSegmentsLod) {
         return finish(kPerSegment);
     }
 
-    // per segment: the segments of the selected LOD are tested with a sphere around their bone
-    if (!bounds_hook(c, s2, 1, 0x00245FA4)) return;
+    // per segment: the segments the texture split keeps are tested with a sphere around their bone
+    if (!pose_skeleton(c, s2, 1, 0x00245FA4)) return;
     lw(c, v1, m + model::kSegmentCount);
     lw(c, s0, m + model::kSegments);
     tick(c, 4);
@@ -507,15 +507,15 @@ PS2_DECOMP(00245D48, CullCharacterSegmentsLod) {
     tick(c, 13);
     for (;;) {
         const std::uint32_t seg = w(c, s0);
-        lw(c, v0, kOtherLods);
+        lw(c, v0, kSkipStreamed);
         tick(c, 3);
-        const bool other_lods = c.r[v0].d[0] != 0;
-        lw(c, v1, seg + segment::kLod);
-        lw(c, v0, m + model::kLod);
+        const bool skip_streamed = c.r[v0].d[0] != 0;
+        lw(c, v1, seg + segment::kTexture);
+        lw(c, v0, m + model::kStreamedTexture);
         tick(c, 4);
-        const bool other_lod = c.r[v1].d[0] != c.r[v0].d[0];
-        if (other_lods && !other_lod) tick(c, 2);
-        bool hide = other_lod != other_lods;
+        const bool not_streamed = c.r[v1].d[0] != c.r[v0].d[0];
+        if (skip_streamed && !not_streamed) tick(c, 2);
+        bool hide = not_streamed != skip_streamed;
         if (!hide) {
             // the bone's position (its world matrix's translation row), projected
             lw(c, v0, seg + segment::kBone);
