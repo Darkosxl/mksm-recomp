@@ -8,3 +8,4 @@
 0026DEC0	texture_get_link_c	decomp/src/renderer/texture_manager/texture_get_link_c.cpp
 0026DF80	texture_set_link_c_params	decomp/src/renderer/texture_manager/texture_set_link_c_params.cpp
 0026F068	cri_set_vsync_callback	decomp/src/cri/file/cri_set_vsync_callback.cpp
+00273C38	static_init_678920	decomp/src/static_init/static_init_678920.cpp
