@@ -450,6 +450,7 @@ fn unpack_rgba(c: u32) -> vec4<f32> {
 
 struct NativeFrag {
     @location(0) color: vec4<f32>,
+    @location(1) alpha: u32,  // the frame's alpha as the GS writes it (As, FBA), unblended
     @builtin(frag_depth) depth: f32,
 }
 
@@ -614,6 +615,7 @@ fn native_fs(in: NativeOut) -> NativeFrag {
     }
     var out: NativeFrag;
     out.color = vec4<f32>(f32(r & 0xFF) / 255.0, f32(g & 0xFF) / 255.0, f32(b & 0xFF) / 255.0, f32(min(a & 0xFF, 128)) / 128.0);
+    out.alpha = u32(a & 0xFF) | select(0u, 0x80u, has(s, F_FBA));
     out.depth = f32(z) * bitcast<f32>(prm(14u));
     return out;
 }
@@ -644,8 +646,45 @@ fn native_import_fs(in: ImportOut) -> NativeFrag {
     let z = read_sample(prm(4u), prm(3u), prm(1u), x, y, k) & prm(13u);
     var out: NativeFrag;
     out.color = vec4<f32>(f32(c & 0xFFu) / 255.0, f32((c >> 8u) & 0xFFu) / 255.0, f32((c >> 16u) & 0xFFu) / 255.0, f32(min(c >> 24u, 128u)) / 128.0);
+    out.alpha = c >> 24u;
     out.depth = f32(z) * bitcast<f32>(prm(14u));
     return out;
+}
+
+// ---- Replace mode: the end of a run writes the target back to compute VRAM, one thread per sample of the run's box
+// (prm 5..8: x0 y0 x1 y1 in samples; 0..4 the frame and Z buffer as for the import; 9 the run wrote Z). Only words
+// whose value changed are stored, so samples no native draw touched keep their VRAM word bit for bit (whatever the
+// import could not represent, e.g. the low bits of a 32-bit Z).
+@group(0) @binding(9) var nat_color: texture_2d<f32>;
+@group(0) @binding(10) var nat_depth: texture_depth_2d;
+@group(0) @binding(11) var nat_alpha: texture_2d<u32>;
+
+@compute @workgroup_size(8, 8)
+fn native_writeback(@builtin(global_invocation_id) gid: vec3<u32>) {
+    let px = prm(5u) + gid.x;
+    let py = prm(6u) + gid.y;
+    if (px >= prm(7u) || py >= prm(8u)) {
+        return;
+    }
+    let x = px / SCALE;
+    let y = py / SCALE_Y;
+    let k = (py % SCALE_Y) * SCALE + px % SCALE;
+    let at = vec2<i32>(i32(px), i32(py));
+    let c = textureLoad(nat_color, at, 0);
+    var v = u32(round(c.x * 255.0)) | (u32(round(c.y * 255.0)) << 8u) | (u32(round(c.z * 255.0)) << 16u);
+    if (prm(2u) == 0x00u) {
+        v = v | (textureLoad(nat_alpha, at, 0).x << 24u);
+    }
+    if (read_sample(prm(2u), prm(0u), prm(1u), x, y, k) != v) {
+        write_sample(prm(2u), prm(0u), prm(1u), x, y, k, v);
+    }
+    if (prm(9u) != 0u) {
+        let d = textureLoad(nat_depth, at, 0);
+        let scale = bitcast<f32>(prm(14u));
+        if (d != f32(read_sample(prm(4u), prm(3u), prm(1u), x, y, k) & prm(13u)) * scale) {
+            write_sample(prm(4u), prm(3u), prm(1u), x, y, k, min(u32(round(d / scale)), prm(13u)));
+        }
+    }
 }
 
 // ---- The per-vertex oracle (PS2_NATIVE_CHECK): gs_vertex() against the batch's XGKICK packet, one thread per vertex.

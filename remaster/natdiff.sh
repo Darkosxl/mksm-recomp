@@ -4,7 +4,7 @@
 #   1. dumps the draws of the frames around the capture frame (PS2_DRAW_DUMP, framedbg's draws.ndjson);
 #   2. picks the draw groups that isolate the category (natdiff.py groups: classify.py's rules, categories.json): every
 #      other group is skipped (PS2_DRAW_SKIP, from capture - 4), the clear is kept;
-#   3. runs again isolated with the native path side by side (PS2_NATIVE=<category>, PS2_NATIVE_CHECK=1) and dumps the
+#   3. runs again isolated with the native path side by side (PS2_NATIVE=<category> PS2_NATIVE_MIRROR=1, PS2_NATIVE_CHECK=1) and dumps the
 #      first run of native draws at or after the capture frame (PS2_NATIVE_DUMP): the emulated frame and Z before and
 #      after it, and the native target;
 #   4. compares inside the category's mask (natdiff.py compare): heatmap.png, emu.png, nat.png, depth.png and one JSON
@@ -33,7 +33,7 @@ if [ "${ISO:-1}" != 0 ]; then
 fi
 iso=(); [ -z "$skip" ] || iso=(PS2_DRAW_SKIP="$skip" PS2_DRAW_SKIP_FROM=$((frame - 4)))
 # shellcheck disable=SC2086
-env "${iso[@]}" PS2_NATIVE="$category" PS2_NATIVE_CHECK="${PS2_NATIVE_CHECK:-1}" PS2_NATIVE_DUMP="$frame,$out/dump" \
+env "${iso[@]}" PS2_NATIVE="$category" PS2_NATIVE_MIRROR=1 PS2_NATIVE_CHECK="${PS2_NATIVE_CHECK:-1}" PS2_NATIVE_DUMP="$frame,$out/dump" \
   "$here/remaster/run.sh" "$out/run" $((frame + 3)) "$D/states/$state" $args > /dev/null
 grep '^\[native\]' "$out/run/run.log" >&2 || true
 "$py" -I "$here/remaster/natdiff.py" compare "$out/dump" --scene "$scene" --category "$category" --out "$out/natdiff.json"

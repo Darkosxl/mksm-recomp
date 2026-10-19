@@ -28,11 +28,11 @@ struct Config {
             const char *e = std::getenv(name);
             return e && *e && *e != '0';
         };
-        skip = world && on("PS2_NATIVE_SKIP_VU1");
+        skip = world && !on("PS2_NATIVE_MIRROR");
         check = world && on("PS2_NATIVE_CHECK") && !skip;
         r14 = on("PS2_R14");
         if (world)
-            std::fprintf(stderr, "[native] world programs drawn natively too (side by side)%s%s\n", skip ? "; VU1 skipped for them" : "",
+            std::fprintf(stderr, "[native] world programs drawn natively%s%s\n", skip ? " instead of by VU1 and the emulated GS" : " too (side by side)",
                          check ? "; per-vertex check against the XGKICK" : "");
         if (r14) std::fprintf(stderr, "[native] R14: @3778/@3288 run after their colour UNPACK\n");
     }
@@ -91,7 +91,7 @@ bool g_pending = false;
 bool g_r14_deferred = false;
 
 bool world() { return config().world; }
-bool skip_vu1() { return config().skip; }
+bool replace() { return config().skip; }
 bool r14() { return config().r14; }
 
 void vblank(std::uint32_t frame) {
@@ -118,7 +118,7 @@ bool program(int kind, std::uint32_t top) {
     const std::uint32_t n = word(top + 1 + nad, 0) & 0x7FFFu;
     // the batch and its output (at TOP+0xC4) inside one 500-qword half of the VU1 double buffer
     if (!n || 0xC4 + nad + 2 + 3 * n > 500) return false;
-    g_batch = Batch{g_draw, n, nad, top, 0u, g_seq++, g_frame, 0u};
+    g_batch = Batch{g_draw, n, nad, top, 0u, g_seq++, g_frame, 0u, {word(top, 1), word(top + 1 + nad, 1)}};
     if (config().skip) g_batch.flags |= kSkipped;
     g_buf.assign(vertices_at() + n * kVertexWords * 4, 0);
     std::uint8_t *p = g_buf.data() + kHeader;

@@ -126,8 +126,9 @@ std::vector<Command> g_commands;
 constexpr Pipeline kNativeDraws = static_cast<Pipeline>(kPipelines + 1);
 struct NativeDraw {
     WGPURenderPipeline pipeline = nullptr;
-    WGPUTextureView color = nullptr, depth = nullptr;
+    WGPUTextureView color = nullptr, depth = nullptr, alpha = nullptr;
     std::uint32_t param = 0, vertices = 0, check = 0;  // check: workgroups of the per-vertex oracle (native_check)
+    std::uint32_t writeback[2] = {};                    // workgroups of the write-back to VRAM at a run's end (replace)
     std::uint32_t scissor[4] = {};
     double constant = 0.0;  // blend constant (FIX / 128)
 };
@@ -775,10 +776,13 @@ void batch_ranges() {
 
 bool batch_conflict(const Range &r, bool clut) {
     Batch &b = g_batch;
-    if (b.prims.empty()) return false;
-    batch_ranges();
-    if (b.fb_range.overlaps(r.lo, r.hi)) return true;
-    if (b.zte && b.z_range.overlaps(r.lo, r.hi)) return true;
+    if (!b.prims.empty()) {
+        batch_ranges();
+        if (b.fb_range.overlaps(r.lo, r.hi)) return true;
+        if (b.zte && b.z_range.overlaps(r.lo, r.hi)) return true;
+    } else if (g_native_draws.size() == g_native_emitted) {
+        return false;  // (native draws not yet emitted read their textures too)
+    }
     if (!clut)
         for (const Range &t : g_batch_reads)
             if (t.overlaps(r.lo, r.hi)) return true;
@@ -846,7 +850,11 @@ void emit_all() {
     emit_native();
 }
 
+bool native_overlaps(const Range &r);
+void native_close();
+
 void queue_pre(const PreOp &op) {
+    if (native_overlaps(op.range)) native_close();  // over what an open run of native draws holds in its target
     if (batch_conflict(op.range, op.clut)) emit_all();
     g_pre.push_back(op);
 }
@@ -944,6 +952,8 @@ WGPUBuffer make_buffer(std::uint64_t size, WGPUBufferUsage usage) {
     return wgpuDeviceCreateBuffer(g_device, &d);
 }
 
+void native_writeback_group();
+
 void rebuild_group() {
     if (g_group) wgpuBindGroupRelease(g_group);
     WGPUBindGroupEntry e[8] = {};
@@ -971,6 +981,7 @@ void rebuild_group() {
         d.entryCount = 9;
         d.entries = n;
         g_native_group = wgpuDeviceCreateBindGroup(g_device, &d);
+        native_writeback_group();
     }
 }
 
@@ -1487,16 +1498,21 @@ void attrs(std::uint32_t *rec, int n, const Vertex &v, bool fst, const Vertex *c
 // remaster/natdiff.py).
 
 struct NativeTarget {
-    WGPUTexture color = nullptr, depth = nullptr;
-    WGPUTextureView color_view = nullptr, depth_view = nullptr;
+    WGPUTexture color = nullptr, depth = nullptr, alpha = nullptr;
+    WGPUTextureView color_view = nullptr, depth_view = nullptr, alpha_view = nullptr;
     std::uint32_t width = 0, height = 0;
 };
 
 struct Native {
-    bool on = false, check = false, plight = false, hw_interp = false;
+    bool on = false, replace = false, check = false, plight = false, hw_interp = false;
     std::uint32_t adc_back = 0;
     WGPUShaderModule module = nullptr;
     WGPUPipelineLayout pipeline_layout = nullptr;
+    WGPUBindGroupLayout writeback_layout = nullptr;
+    WGPUBindGroup writeback_group = nullptr;
+    WGPUComputePipeline writeback = nullptr;
+    std::uint32_t rx0 = 0, ry0 = 0, rx1 = 0, ry1 = 0;  // replace: the samples the run's batches may have drawn
+    bool zwritten = false;
     std::unordered_map<std::uint32_t, WGPURenderPipeline> pipelines;
     NativeTarget target;
     bool open = false, in_kick = false;
@@ -1509,10 +1525,11 @@ struct Native {
     std::vector<std::uint8_t> pre_rgba;
     std::vector<std::uint32_t> pre_z;
     std::uint64_t runs = 0, batches = 0, drawn = 0, draws = 0, triangles = 0, isolated = 0, oracle_batches = 0, prim_mismatch = 0, cross_batch = 0;
+    std::uint64_t writebacks = 0, tag_prim = 0;
     std::map<std::string, std::uint64_t> unsupported;
 } g_nat;
 
-constexpr std::uint32_t kNativeImport = 512u, kNativeColor = 256u, kNativeZWrite = 128u, kNativeConstant = 16u;
+constexpr std::uint32_t kNativeAlpha = 1024u, kNativeImport = 512u, kNativeColor = 256u, kNativeZWrite = 128u, kNativeConstant = 16u;
 
 // GS ALPHA (Cv = ((A - B) * C >> 7) + D; A, B, D: 0 Cs, 1 Cd, 2 zero; C: 0 As, 1 Ad, 2 FIX) as fixed-function blending,
 // with the shader's alpha output As / 128 (§4.3). 0: not expressible without the destination alpha (C = Ad) or not seen.
@@ -1532,7 +1549,7 @@ std::uint32_t native_blend(std::uint32_t alpha, bool abe) {
 }
 
 // key: blend (bits 0-3), FIX factor (16), depth compare (bits 5-6: always, gequal, greater), Z write (128), colour (256),
-// the import (512)
+// the import (512), alpha (1024: the frame's alpha, As | FBA, into the r8uint target, unblended as the GS writes it)
 WGPURenderPipeline native_pipeline(std::uint32_t key) {
     if (const auto it = g_nat.pipelines.find(key); it != g_nat.pipelines.end()) return it->second;
     const bool import = key & kNativeImport;
@@ -1561,6 +1578,9 @@ WGPURenderPipeline native_pipeline(std::uint32_t key) {
                       : (key & kNativeColor) && blend != kBlendKeep ? WGPUColorWriteMask_Red | WGPUColorWriteMask_Green | WGPUColorWriteMask_Blue
                                                                     : WGPUColorWriteMask_None;
     if (!import && blend != kBlendNone && blend != kBlendKeep) color.blend = &bs;
+    WGPUColorTargetState targets[2] = {color, WGPU_COLOR_TARGET_STATE_INIT};
+    targets[1].format = WGPUTextureFormat_R8Uint;
+    targets[1].writeMask = import || (key & kNativeAlpha) ? WGPUColorWriteMask_All : WGPUColorWriteMask_None;
     WGPUConstantEntry constants[2] = {WGPU_CONSTANT_ENTRY_INIT, WGPU_CONSTANT_ENTRY_INIT};
     constants[0].key = view("SCALE");
     constants[0].value = static_cast<double>(g_sx);
@@ -1571,8 +1591,8 @@ WGPURenderPipeline native_pipeline(std::uint32_t key) {
     fs.entryPoint = view(import ? "native_import_fs" : "native_fs");
     fs.constantCount = 2;
     fs.constants = constants;
-    fs.targetCount = 1;
-    fs.targets = &color;
+    fs.targetCount = 2;
+    fs.targets = targets;
     WGPUDepthStencilState ds = WGPU_DEPTH_STENCIL_STATE_INIT;
     ds.format = WGPUTextureFormat_Depth32Float;
     ds.depthWriteEnabled = import || (key & kNativeZWrite) ? WGPUOptionalBool_True : WGPUOptionalBool_False;
@@ -1593,22 +1613,53 @@ WGPURenderPipeline native_pipeline(std::uint32_t key) {
     return p;
 }
 
+// replace: the write-back's bindings (native.wgsl native_writeback): VRAM, the swizzle tables, params, the target
+void native_writeback_group() {
+    const NativeTarget &t = g_nat.target;
+    if (!g_nat.writeback_layout || !t.color || !g_vram) return;
+    if (g_nat.writeback_group) wgpuBindGroupRelease(g_nat.writeback_group);
+    WGPUBindGroupEntry e[6];
+    for (WGPUBindGroupEntry &x : e) x = WGPU_BIND_GROUP_ENTRY_INIT;
+    const WGPUBuffer buffers[3] = {g_vram, g_tables, g_params};
+    for (int i = 0; i < 3; ++i) {
+        e[i].binding = static_cast<std::uint32_t>(i);
+        e[i].buffer = buffers[i];
+        e[i].size = i == 2 ? kParamStride : WGPU_WHOLE_SIZE;
+    }
+    e[3].binding = 9;
+    e[3].textureView = t.color_view;
+    e[4].binding = 10;
+    e[4].textureView = t.depth_view;
+    e[5].binding = 11;
+    e[5].textureView = t.alpha_view;
+    WGPUBindGroupDescriptor d = WGPU_BIND_GROUP_DESCRIPTOR_INIT;
+    d.layout = g_nat.writeback_layout;
+    d.entryCount = 6;
+    d.entries = e;
+    g_nat.writeback_group = wgpuDeviceCreateBindGroup(g_device, &d);
+}
+
 void native_target(std::uint32_t width, std::uint32_t height) {
     NativeTarget &t = g_nat.target;
     if (t.color && t.width == width && t.height == height) return;
-    // a replaced target stays alive: commands already queued draw into it
+    // a replaced target stays alive: commands already queued draw into it (the write-back group is global: drain first)
+    if (t.color && g_nat.replace) drain();
     WGPUTextureDescriptor td = WGPU_TEXTURE_DESCRIPTOR_INIT;
-    td.usage = WGPUTextureUsage_RenderAttachment | WGPUTextureUsage_CopySrc;
+    td.usage = WGPUTextureUsage_RenderAttachment | WGPUTextureUsage_CopySrc | WGPUTextureUsage_TextureBinding;
     td.dimension = WGPUTextureDimension_2D;
     td.size = WGPUExtent3D{width, height, 1};
     td.format = WGPUTextureFormat_RGBA8Unorm;
     t.color = wgpuDeviceCreateTexture(g_device, &td);
     td.format = WGPUTextureFormat_Depth32Float;
     t.depth = wgpuDeviceCreateTexture(g_device, &td);
+    td.format = WGPUTextureFormat_R8Uint;
+    t.alpha = wgpuDeviceCreateTexture(g_device, &td);
     t.color_view = wgpuTextureCreateView(t.color, nullptr);
     t.depth_view = wgpuTextureCreateView(t.depth, nullptr);
+    t.alpha_view = wgpuTextureCreateView(t.alpha, nullptr);
     t.width = width;
     t.height = height;
+    native_writeback_group();
 }
 
 // Z max and the depth of one Z unit for a Z buffer format: depth32float holds Z / 2^bits exactly (§4.3).
@@ -1636,35 +1687,62 @@ void encode_native(WGPUCommandEncoder enc, const Command &c, const std::vector<N
         wgpuComputePassEncoderEnd(pass);
         wgpuComputePassEncoderRelease(pass);
     }
-    WGPURenderPassColorAttachment color = WGPU_RENDER_PASS_COLOR_ATTACHMENT_INIT;
-    color.view = d[0].color;
-    color.loadOp = WGPULoadOp_Load;
-    color.storeOp = WGPUStoreOp_Store;
-    WGPURenderPassDepthStencilAttachment depth = WGPU_RENDER_PASS_DEPTH_STENCIL_ATTACHMENT_INIT;
-    depth.view = d[0].depth;
-    depth.depthLoadOp = WGPULoadOp_Load;
-    depth.depthStoreOp = WGPUStoreOp_Store;
-    WGPURenderPassDescriptor rd = WGPU_RENDER_PASS_DESCRIPTOR_INIT;
-    rd.colorAttachmentCount = 1;
-    rd.colorAttachments = &color;
-    rd.depthStencilAttachment = &depth;
-    WGPURenderPassEncoder rp = wgpuCommandEncoderBeginRenderPass(enc, &rd);
+    // render passes over the target, broken by the write-backs (a compute pass each)
+    WGPURenderPassEncoder rp = nullptr;
+    WGPUTextureView view = nullptr;
     WGPURenderPipeline current = nullptr;
+    const auto end = [&] {
+        if (!rp) return;
+        wgpuRenderPassEncoderEnd(rp);
+        wgpuRenderPassEncoderRelease(rp);
+        rp = nullptr;
+    };
     for (std::uint32_t i = 0; i < count; ++i) {
-        if (d[i].color != color.view || !d[i].pipeline) continue;  // the target was replaced in between (or no pipeline)
+        const std::uint32_t offset = d[i].param * kParamStride;
+        if (d[i].writeback[0]) {
+            end();
+            WGPUComputePassDescriptor cd = WGPU_COMPUTE_PASS_DESCRIPTOR_INIT;
+            WGPUComputePassEncoder pass = wgpuCommandEncoderBeginComputePass(enc, &cd);
+            wgpuComputePassEncoderSetPipeline(pass, g_nat.writeback);
+            wgpuComputePassEncoderSetBindGroup(pass, 0, g_nat.writeback_group, 1, &offset);
+            wgpuComputePassEncoderDispatchWorkgroups(pass, d[i].writeback[0], d[i].writeback[1], 1);
+            wgpuComputePassEncoderEnd(pass);
+            wgpuComputePassEncoderRelease(pass);
+            continue;
+        }
+        if (!d[i].pipeline) continue;
+        if (rp && d[i].color != view) end();
+        if (!rp) {
+            WGPURenderPassColorAttachment colors[2] = {WGPU_RENDER_PASS_COLOR_ATTACHMENT_INIT, WGPU_RENDER_PASS_COLOR_ATTACHMENT_INIT};
+            colors[0].view = d[i].color;
+            colors[1].view = d[i].alpha;
+            for (WGPURenderPassColorAttachment &a : colors) {
+                a.loadOp = WGPULoadOp_Load;
+                a.storeOp = WGPUStoreOp_Store;
+            }
+            WGPURenderPassDepthStencilAttachment depth = WGPU_RENDER_PASS_DEPTH_STENCIL_ATTACHMENT_INIT;
+            depth.view = d[i].depth;
+            depth.depthLoadOp = WGPULoadOp_Load;
+            depth.depthStoreOp = WGPUStoreOp_Store;
+            WGPURenderPassDescriptor rd = WGPU_RENDER_PASS_DESCRIPTOR_INIT;
+            rd.colorAttachmentCount = 2;
+            rd.colorAttachments = colors;
+            rd.depthStencilAttachment = &depth;
+            rp = wgpuCommandEncoderBeginRenderPass(enc, &rd);
+            view = d[i].color;
+            current = nullptr;
+        }
         if (d[i].pipeline != current) {
             wgpuRenderPassEncoderSetPipeline(rp, d[i].pipeline);
             current = d[i].pipeline;
         }
-        const std::uint32_t offset = d[i].param * kParamStride;
         wgpuRenderPassEncoderSetBindGroup(rp, 0, g_native_group, 1, &offset);
         wgpuRenderPassEncoderSetScissorRect(rp, d[i].scissor[0], d[i].scissor[1], d[i].scissor[2], d[i].scissor[3]);
         const WGPUColor constant{d[i].constant, d[i].constant, d[i].constant, d[i].constant};
         wgpuRenderPassEncoderSetBlendConstant(rp, &constant);
         wgpuRenderPassEncoderDraw(rp, d[i].vertices, 1, 0, 0);
     }
-    wgpuRenderPassEncoderEnd(rp);
-    wgpuRenderPassEncoderRelease(rp);
+    end();
 }
 
 void read_texture(WGPUTexture texture, WGPUTextureAspect aspect, std::vector<std::uint8_t> &out) {
@@ -1784,11 +1862,48 @@ void native_dump() {
     std::fprintf(stderr, "[native] frame %u: dump written to %s\n", g_nat.dump_from, dir.c_str());
 }
 
+// replace: the run's samples go back to compute VRAM (native.wgsl native_writeback, only the words that changed), in
+// the command stream before whatever ended the run
+void native_writeback() {
+    if (g_nat.rx0 >= g_nat.rx1 || g_nat.ry0 >= g_nat.ry1) return;
+    std::uint32_t zmax;
+    float scale;
+    native_depth(g_nat.zpsm, zmax, scale);
+    NativeDraw d;
+    d.param = push_params({g_nat.fbp, g_nat.fbw, g_nat.fpsm, g_nat.zbp, g_nat.zpsm, g_nat.rx0, g_nat.ry0, g_nat.rx1, g_nat.ry1, g_nat.zwritten ? 1u : 0u, 0u, 0u,
+                           0u, zmax, f2u(scale), 0u});
+    d.writeback[0] = (g_nat.rx1 - g_nat.rx0 + 7) / 8;
+    d.writeback[1] = (g_nat.ry1 - g_nat.ry0 + 7) / 8;
+    g_native_draws.push_back(d);
+    emit_native();
+    const int x0 = static_cast<int>(g_nat.rx0 / g_sx), y0 = static_cast<int>(g_nat.ry0 / g_sy);
+    const int x1 = static_cast<int>((g_nat.rx1 - 1) / g_sx), y1 = static_cast<int>((g_nat.ry1 - 1) / g_sy);
+    mark_rendered(pages(g_nat.fbp, g_nat.fbw, g_nat.fpsm, x0, y0, x1, y1));
+    if (g_nat.zwritten) mark_rendered(pages(g_nat.zbp, g_nat.fbw, g_nat.zpsm, x0, y0, x1, y1));
+    ++g_nat.writebacks;
+}
+
 void native_close() {
     g_nat.open = false;
+    if (g_nat.replace) native_writeback();
     if (g_nat.dump_state != 1) return;
     native_dump();
     g_nat.dump_state = 2;
+}
+
+// replace: whether VRAM range r holds samples an open run has drawn into its target and not written back yet
+bool native_overlaps(const Range &r) {
+    if (!g_nat.on || !g_nat.replace || !g_nat.open || g_nat.rx0 >= g_nat.rx1) return false;
+    const int x0 = static_cast<int>(g_nat.rx0 / g_sx), y0 = static_cast<int>(g_nat.ry0 / g_sy);
+    const int x1 = static_cast<int>((g_nat.rx1 - 1) / g_sx), y1 = static_cast<int>((g_nat.ry1 - 1) / g_sy);
+    if (pages(g_nat.fbp, g_nat.fbw, g_nat.fpsm, x0, y0, x1, y1).overlaps(r.lo, r.hi)) return true;
+    return g_nat.zwritten && pages(g_nat.zbp, g_nat.fbw, g_nat.zpsm, x0, y0, x1, y1).overlaps(r.lo, r.hi);
+}
+
+// Anything else that reads or writes VRAM ends the run first (an emulated draw, a copy, a download, the display;
+// uploads and CLUT loads only when they overlap it, queue_pre).
+void native_sync() {
+    if (g_nat.on && g_nat.open && !g_nat.in_kick) native_close();
 }
 
 void native_open(const State &st) {
@@ -1804,6 +1919,9 @@ void native_open(const State &st) {
     const std::uint32_t height = std::clamp<std::uint32_t>((static_cast<std::uint32_t>(c.scissor >> 48) & 0x7FFu) + 1u, 1u, 2048u) * g_sy;
     native_target(width, height);
     emit_all();
+    g_nat.rx0 = g_nat.ry0 = ~0u;
+    g_nat.rx1 = g_nat.ry1 = 0;
+    g_nat.zwritten = false;
     if (g_nat.dump_state == 0 && g_nat.dump_frame >= 0 && g_nat.frame >= static_cast<std::uint64_t>(g_nat.dump_frame)) {
         frame_images(g_nat.pre_rgba, g_nat.pre_z);
         g_nat.dump_state = 1;
@@ -1817,6 +1935,7 @@ void native_open(const State &st) {
     d.pipeline = native_pipeline(kNativeImport);
     d.color = g_nat.target.color_view;
     d.depth = g_nat.target.depth_view;
+    d.alpha = g_nat.target.alpha_view;
     d.param = param;
     d.vertices = 3;
     d.scissor[2] = width;
@@ -1843,17 +1962,27 @@ void native_record(const State &st, const std::uint8_t *payload, std::uint32_t b
         ++g_nat.isolated;
         return;
     }
-    if (!g_nat.open) native_open(st);
     std::uint64_t attr = st.prim;
     if (!(st.prmodecont & 1u)) attr = (st.prim & 7u) | (st.prmode & ~7ull);
     const std::uint32_t prim = static_cast<std::uint32_t>(st.prim) & 7u;
     const Context &c = st.ctx[(attr >> 9) & 1u];
+    if (!g_nat.replace && (b.tags[1] & (1u << 14)) && ((b.tags[1] >> 15) & 0x7FFu) != (static_cast<std::uint32_t>(st.prim) & 0x7FFu)) ++g_nat.tag_prim;
+    if (g_nat.open && g_nat.replace) {  // a run draws into one frame and Z buffer, at most as high as its target
+        const std::uint32_t fbp = (static_cast<std::uint32_t>(c.frame) & 0x1FFu) * 32u, fbw = static_cast<std::uint32_t>(c.frame >> 16) & 0x3Fu;
+        const std::uint32_t fpsm = static_cast<std::uint32_t>(c.frame >> 24) & 0x3Fu, zbp = (static_cast<std::uint32_t>(c.zbuf) & 0x1FFu) * 32u;
+        const std::uint32_t zpsm = 0x30u | (static_cast<std::uint32_t>(c.zbuf >> 24) & 0xFu);
+        const std::uint32_t rows = ((static_cast<std::uint32_t>(c.scissor >> 48) & 0x7FFu) + 1u) * g_sy;
+        if (fbp != g_nat.fbp || fbw != g_nat.fbw || fpsm != g_nat.fpsm || zbp != g_nat.zbp || zpsm != g_nat.zpsm || rows > g_nat.target.height) native_close();
+    }
+    if (!g_nat.open) native_open(st);
     std::uint32_t w[kSetupWords];
     const std::uint32_t flags = make_setup(st, attr, w);
     if (prim < 3 || prim > 5) return unsupported("primitive");
     if (flags & 128u) return unsupported("DATE");
-    const std::uint32_t fbmsk = w[4] & 0xFFFFFFu;
+    if ((flags & 8u) && (flags & 1024u)) return unsupported("PABE");
+    const std::uint32_t fbmsk = w[4] & 0xFFFFFFu, amsk = w[4] >> 24;
     if (fbmsk && fbmsk != 0xFFFFFFu) return unsupported("FBMSK");
+    if (amsk && amsk != 0xFFu) return unsupported("FBMSK alpha");
     if (w[3] != PSMCT32 && w[3] != PSMCT24) return unsupported("frame format");
     std::uint32_t blend = native_blend(static_cast<std::uint32_t>(c.alpha) & 0xFFu, flags & 8u);
     if (!blend) return unsupported("blend");
@@ -1866,22 +1995,42 @@ void native_record(const State &st, const std::uint8_t *payload, std::uint32_t b
     // the alpha test: pass pixels, then (AFAIL not KEEP) fail pixels in a second draw (PCSX2's split, §4.4)
     struct Split {
         std::uint32_t split;
-        bool color, zwrite;
+        bool color, zwrite, alpha;
     } splits[2];
     int count = 0;
     const std::uint32_t atst = w[7] & 7u, afail = (w[7] >> 4) & 3u;
+    const bool alpha = !amsk && w[3] == PSMCT32;
     if (!(flags & 64u) || atst == 1) {
-        splits[count++] = {0, true, zwrite};
+        splits[count++] = {0, true, zwrite, alpha};
     } else {
-        if (atst != 0) splits[count++] = {1, true, zwrite};
-        if (afail == 1 || afail == 3) splits[count++] = {2, true, false};
-        else if (afail == 2) splits[count++] = {2, false, zwrite};
+        if (atst != 0) splits[count++] = {1, true, zwrite, alpha};
+        if (afail == 1 || afail == 3) splits[count++] = {2, true, false, alpha && afail == 1};
+        else if (afail == 2) splits[count++] = {2, false, zwrite, false};
     }
     if (!count) return unsupported("alpha test never");
     const NativeTarget &t = g_nat.target;
     const std::uint32_t sx0 = std::min((w[10] & 0xFFFFu) * g_sx, t.width), sx1 = std::min(((w[10] >> 16) + 1) * g_sx, t.width);
     const std::uint32_t sy0 = std::min((w[11] & 0xFFFFu) * g_sy, t.height), sy1 = std::min(((w[11] >> 16) + 1) * g_sy, t.height);
     if (sx0 >= sx1 || sy0 >= sy1) return unsupported("scissor");
+    if (g_nat.replace && (flags & 2u) && g_nat.rx0 < g_nat.rx1) {
+        // a texture the run has drawn into (still only in the target): write the run back first
+        const int x0 = static_cast<int>(g_nat.rx0 / g_sx), y0 = static_cast<int>(g_nat.ry0 / g_sy);
+        const int x1 = static_cast<int>((g_nat.rx1 - 1) / g_sx), y1 = static_cast<int>((g_nat.ry1 - 1) / g_sy);
+        const Range fb = pages(g_nat.fbp, g_nat.fbw, g_nat.fpsm, x0, y0, x1, y1), z = pages(g_nat.zbp, g_nat.fbw, g_nat.zpsm, x0, y0, x1, y1);
+        for (std::uint32_t n = 0; n <= mip_levels(w); ++n) {
+            const Range r = level_range(w, n);
+            if (fb.overlaps(r.lo, r.hi) || (g_nat.zwritten && z.overlaps(r.lo, r.hi))) {
+                native_close();
+                native_open(st);
+                break;
+            }
+        }
+    }
+    g_nat.rx0 = std::min(g_nat.rx0, sx0);
+    g_nat.ry0 = std::min(g_nat.ry0, sy0);
+    g_nat.rx1 = std::max(g_nat.rx1, sx1);
+    g_nat.ry1 = std::max(g_nat.ry1, sy1);
+    g_nat.zwritten = g_nat.zwritten || zwrite;
     const std::uint32_t setup_at = arena_append(w, sizeof w);
     const std::uint32_t regs_at = arena_append(payload + body, record);
     if (flags & 2u) {  // later uploads over these textures must wait for the native draws (as for the emulated ones)
@@ -1901,11 +2050,12 @@ void native_record(const State &st, const std::uint8_t *payload, std::uint32_t b
     for (int i = 0; i < count; ++i) {
         NativeDraw d;
         d.param = push_params({regs_at, b.program, b.n, b.nad, setup_at, ofx, ofy, t.width, t.height, splits[i].split, prim, pflags, 0u, zmax, f2u(scale), g_nat.adc_back});
-        std::uint32_t key = blend | (cmp << 5) | (splits[i].zwrite ? kNativeZWrite : 0u) | (splits[i].color ? kNativeColor : 0u);
+        std::uint32_t key = blend | (cmp << 5) | (splits[i].zwrite ? kNativeZWrite : 0u) | (splits[i].color ? kNativeColor : 0u) | (splits[i].alpha ? kNativeAlpha : 0u);
         if (((c.alpha >> 4) & 3u) == 2u) key |= kNativeConstant;
         d.pipeline = native_pipeline(key);
         d.color = t.color_view;
         d.depth = t.depth_view;
+        d.alpha = t.alpha_view;
         d.vertices = tris * 3;
         d.check = i == 0 && oracle && g_nat.check ? (b.n + 63) / 64 : 0;
         d.scissor[0] = sx0;
@@ -1942,7 +2092,8 @@ bool native_init() {
         const char *e = std::getenv(name);
         return e && *e && *e != '0';
     };
-    g_nat.check = on("PS2_NATIVE_CHECK") && !native::skip_vu1();
+    g_nat.replace = native::replace();
+    g_nat.check = on("PS2_NATIVE_CHECK") && !g_nat.replace;
     g_nat.plight = on("PS2_NATIVE_PLIGHT");
     if (const char *e = std::getenv("PS2_NATIVE_INTERP")) g_nat.hw_interp = !std::strcmp(e, "hw");  // the hardware's attribute interpolation
     if (const char *e = std::getenv("PS2_NATIVE_ADC_BACK")) g_nat.adc_back = static_cast<std::uint32_t>(std::atoi(e));
@@ -1991,7 +2142,39 @@ bool native_init() {
     cd.compute.module = g_nat.module;
     cd.compute.entryPoint = view("native_check");
     g_native_check = wgpuDeviceCreateComputePipeline(g_device, &cd);
-    if (!g_nat.module || !g_native_check || !native_pipeline(kNativeImport)) {
+    // the write-back: VRAM, tables, params and the target's three textures
+    WGPUBindGroupLayoutEntry we[6];
+    for (WGPUBindGroupLayoutEntry &x : we) {
+        x = WGPU_BIND_GROUP_LAYOUT_ENTRY_INIT;
+        x.visibility = WGPUShaderStage_Compute;
+    }
+    for (int i = 0; i < 3; ++i) {
+        we[i].binding = static_cast<std::uint32_t>(i);
+        we[i].buffer.type = types[i];
+        we[i].buffer.hasDynamicOffset = i == 2;
+        we[i].buffer.minBindingSize = i == 2 ? kParamStride : 0;
+    }
+    const WGPUTextureSampleType samples[3] = {WGPUTextureSampleType_UnfilterableFloat, WGPUTextureSampleType_Depth, WGPUTextureSampleType_Uint};
+    for (int i = 0; i < 3; ++i) {
+        we[3 + i].binding = 9u + static_cast<std::uint32_t>(i);
+        we[3 + i].texture.sampleType = samples[i];
+        we[3 + i].texture.viewDimension = WGPUTextureViewDimension_2D;
+    }
+    ld.entryCount = 6;
+    ld.entries = we;
+    g_nat.writeback_layout = wgpuDeviceCreateBindGroupLayout(g_device, &ld);
+    pld.bindGroupLayouts = &g_nat.writeback_layout;
+    WGPUConstantEntry constants[2] = {WGPU_CONSTANT_ENTRY_INIT, WGPU_CONSTANT_ENTRY_INIT};
+    constants[0].key = view("SCALE");
+    constants[0].value = static_cast<double>(g_sx);
+    constants[1].key = view("SCALE_Y");
+    constants[1].value = static_cast<double>(g_sy);
+    cd.layout = wgpuDeviceCreatePipelineLayout(g_device, &pld);
+    cd.compute.entryPoint = view("native_writeback");
+    cd.compute.constantCount = 2;
+    cd.compute.constants = constants;
+    g_nat.writeback = wgpuDeviceCreateComputePipeline(g_device, &cd);
+    if (!g_nat.module || !g_native_check || !g_nat.writeback || !native_pipeline(kNativeImport)) {
         std::fprintf(stderr, "[native] shader or pipelines not created; native drawing off\n");
         g_nat.on = false;
         return false;
@@ -2005,6 +2188,8 @@ void native_stats() {
                  static_cast<unsigned long long>(g_nat.runs), static_cast<unsigned long long>(g_nat.batches), static_cast<unsigned long long>(g_nat.drawn),
                  static_cast<unsigned long long>(g_nat.draws), static_cast<unsigned long long>(g_nat.triangles), static_cast<unsigned long long>(g_nat.isolated));
     for (const auto &[reason, n] : g_nat.unsupported) std::fprintf(stderr, ", %llu %s", static_cast<unsigned long long>(n), reason.c_str());
+    if (g_nat.replace) std::fprintf(stderr, "; %llu write-backs", static_cast<unsigned long long>(g_nat.writebacks));
+    else std::fprintf(stderr, "; vertex tag PRIM differs from the GS's in %llu", static_cast<unsigned long long>(g_nat.tag_prim));
     std::fprintf(stderr, "\n");
     if (g_nat.check) {
         const std::vector<std::uint32_t> c = native_check_counts();
@@ -2494,7 +2679,7 @@ void image_data(const std::uint8_t *data, std::size_t bytes) {
 }
 
 void local_copy(const State &s) {
-    if (g_nat.on && g_nat.open && !g_nat.in_kick) native_close();
+    native_sync();
     flush_all();
     const std::uint64_t buf = s.bitbltbuf, pos = s.trxpos, reg = s.trxreg;
     const std::uint32_t w = static_cast<std::uint32_t>(reg) & 0xFFFu, h = static_cast<std::uint32_t>(reg >> 32) & 0xFFFu;
@@ -2536,6 +2721,7 @@ void load_clut(std::uint64_t tex0, std::uint64_t texclut) {
 
 
 void flush() {
+    native_sync();
     if (g_mode == Mode::off) return;
     flush_all();
     submit();
@@ -2571,6 +2757,7 @@ void collect_download() {
 }
 
 bool download_async(std::uint8_t *memory, std::uint32_t offset, std::uint32_t bytes, std::uint32_t serial) {
+    native_sync();
     collect_download();
     if (g_pending.busy) return false;
     if (g_pending.capacity < bytes) {
@@ -2612,6 +2799,7 @@ bool finish_download(std::uint32_t serial) {
 }
 
 void download(std::uint8_t *memory, std::uint32_t offset, std::uint32_t bytes) {
+    native_sync();
     flush_all();
     if (g_samples == 1) {
         submit();
@@ -2624,6 +2812,7 @@ void download(std::uint8_t *memory, std::uint32_t offset, std::uint32_t bytes) {
 }
 
 void read_state(std::vector<std::uint32_t> &vram, std::uint32_t &scale, std::vector<std::uint32_t> &clut) {
+    native_sync();
     flush_all();
     submit();
     scale = g_sx == g_sy ? g_sx : g_sx | g_sy << 8;  // square scales keep the old single number
@@ -2634,6 +2823,7 @@ void read_state(std::vector<std::uint32_t> &vram, std::uint32_t &scale, std::vec
 }
 
 void write_state(const std::vector<std::uint32_t> &vram, std::uint32_t scale, const std::vector<std::uint32_t> &clut) {
+    native_sync();
     wait_idle();
     const std::size_t words = kMemorySize / 4;
     const std::uint32_t from_x = scale & 0xFFu, from_y = scale >> 8 ? scale >> 8 : from_x;
@@ -2663,7 +2853,7 @@ void stats() {
 }
 
 void native_begin(const State &st) {
-    if (!g_nat.on) return;
+    if (!g_nat.on || g_nat.replace) return;  // replace: no XGKICK follows; the batch opens the run itself
     g_nat.in_kick = true;
     g_nat.kick_prims = 0;
     if (!g_nat.open) native_open(st);
@@ -2795,6 +2985,7 @@ void resize_surface(std::uint32_t width, std::uint32_t height) {
 bool has_surface() { return g_surface != nullptr; }
 
 bool present(const DisplaySource &src) {
+    native_sync();
     if (!g_surface) return false;
     g_worker_on = worker_wanted();
     flush_all();
@@ -2852,6 +3043,7 @@ Copy g_copies[3];
 std::uint64_t g_copy_order = 0;
 
 bool display_async(const DisplaySource &src, std::vector<std::uint32_t> &rgba, std::uint32_t &width, std::uint32_t &height) {
+    native_sync();
 #ifdef __EMSCRIPTEN__
     wgpuInstanceProcessEvents(g_instance);
 #else
@@ -2915,6 +3107,7 @@ bool display_async(const DisplaySource &src, std::vector<std::uint32_t> &rgba, s
 }
 
 bool display(const DisplaySource &src, std::vector<std::uint32_t> &rgba, std::uint32_t &width, std::uint32_t &height) {
+    native_sync();
     flush_all();
     const std::uint32_t param = push_params({src.fbp, src.fbw, src.psm, src.dbx, src.dby, src.width, src.height, src.halved ? 1u : 0u, 0u, src.half ? 1u : 0u});
     g_commands.push_back({kDisplay, (src.width * g_sx + 7) / 8, (src.height * g_rows + 7) / 8, param});

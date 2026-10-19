@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
 # Desktop frame rate of the reference scenes: the 3-thread layout (PS2_THREADS=1, as with a window), uncapped,
 # measured over the 600 frames after each scene's capture frame (PS2_FPS). Env PS2_SCALE etc. pass through.
-# usage: remaster/perf.sh [scene...]   (default: all of remaster/scenes.tsv) → one "scene fps" line each
+# usage: remaster/perf.sh [scene...]   (default: all of remaster/scenes.tsv) → one "scene fps" line each, with the
+# CPU ms/frame of the emulation, render and VU1 threads
 set -euo pipefail
 here=$(cd "$(dirname "$0")/.." && pwd)
 D=$(cd "$here/../.." && pwd)/remaster-data
@@ -16,5 +17,6 @@ for scene in "${scenes[@]}"; do
   # shellcheck disable=SC2086
   PS2_THREADS=1 PS2_FPS=$frame,$((frame + 600)) "$here/remaster/run.sh" "$out" $((frame + 602)) "$D/states/$state" $args > /dev/null
   fps=$(grep -oP '^\[fps\].*: \K[\d.]+' "$out/run.log" || echo "?")
-  printf '%-8s %6s fps\n' "$scene" "$fps"
+  cpu=$(grep -oP '^\[cpu\].*ms/frame: \K.*' "$out/run.log" || true)
+  printf '%-8s %6s fps   %s\n' "$scene" "$fps" "$cpu"
 done

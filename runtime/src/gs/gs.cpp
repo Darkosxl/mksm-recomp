@@ -1042,12 +1042,19 @@ void render_native(std::uint32_t type, const std::uint8_t *data, std::uint32_t b
     native::Batch b;
     if (bytes < sizeof b) return;
     std::memcpy(&b, data, sizeof b);
-    if (b.flags & native::kSkipped)
+    if (b.flags & native::kSkipped) {
+        // what the skipped GIF packet would have set: each tag's PRIM (PRE), and the A+D registers between them
+        const auto prim = [](std::uint32_t tag_hi) {
+            if (tag_hi & (1u << 14)) write(0x00, (tag_hi >> 15) & 0x7FFu);
+        };
+        prim(b.tags[0]);
         for (std::uint32_t i = 0; i < b.nad && sizeof b + (i + 1) * 16 <= bytes; ++i) {
             Reg128 q;
             std::memcpy(&q, data + sizeof b + i * 16, 16);
             write_packed(0xE, q);
         }
+        prim(b.tags[1]);
+    }
 #ifdef PS2_GPU
     if (gpu_on()) gpu::native_batch(g_state, data, bytes);
 #endif
