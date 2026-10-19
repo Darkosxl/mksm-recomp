@@ -14,10 +14,15 @@
 00226DF0	SetSkipModelRender	decomp/src/render/render_settings.cpp
 0023CAE8	DirectionFromAngles	decomp/src/render/ps2render/direction_from_angles.cpp
 0023CAE8	DirectionFromAngles	decomp/src/render/ps2render/direction_from_angles.cpp
+0023CAE8	DirectionFromAngles	decomp/src/render/ps2render/direction_from_angles.cpp
+0023D128	SetNodeLightMatrices	decomp/src/render/ps2render/set_node_light_matrices.cpp
 0023D128	SetNodeLightMatrices	decomp/src/render/ps2render/set_node_light_matrices.cpp
 0023D128	SetNodeLightMatrices	decomp/src/render/ps2render/set_node_light_matrices.cpp
 0023D2F0	SetNodeLights	decomp/src/render/ps2render/set_node_lights.cpp
 0023D2F0	SetNodeLights	decomp/src/render/ps2render/set_node_lights.cpp
+0023D2F0	SetNodeLights	decomp/src/render/ps2render/set_node_lights.cpp
+00242AD0	CullModelSegments	decomp/src/render/ps2render/cull_model_segments.cpp
+002457D0	UpdateNodeMatrices	decomp/src/render/ps2render/update_node_matrices.cpp
 002457D0	UpdateNodeMatrices	decomp/src/render/ps2render/update_node_matrices.cpp
 0024C238	RadiansToAngle	decomp/src/render/ps2render.cpp
 00260B40	GetAssetObject	decomp/src/setup/ps2setup.cpp
