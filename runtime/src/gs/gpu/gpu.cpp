@@ -118,6 +118,25 @@ std::FILE *g_profile_out = nullptr;
 std::uint64_t g_profile_from = 0, g_profile_to = 0;
 WGPUQuerySet g_profile_queries = nullptr;
 WGPUBuffer g_profile_resolve = nullptr, g_profile_read = nullptr;
+// PS2_GPU_PROFILE: every pass of a profiled submit, compute commands and native passes alike, in encoding order; the
+// span from the first pass's start to the last pass's end minus the passes is what runs between them (barriers, layout
+// transitions)
+struct ProfPass { const char *what; std::uint32_t command, a, b; };
+std::vector<ProfPass> g_prof_passes;
+bool g_prof_on = false;
+std::uint32_t g_prof_untimed = 0;  // passes past kProfPasses in one submit
+constexpr std::uint32_t kProfPasses = 2048;  // 4096 queries, the most a query set may hold
+WGPUPassTimestampWrites g_prof_writes = WGPU_PASS_TIMESTAMP_WRITES_INIT;
+const WGPUPassTimestampWrites *prof_slot(const char *what, std::uint32_t command, std::uint32_t a = 0, std::uint32_t b = 0) {
+    if (!g_prof_on) return nullptr;
+    if (g_prof_passes.size() >= kProfPasses) return ++g_prof_untimed, nullptr;
+    g_prof_writes = WGPU_PASS_TIMESTAMP_WRITES_INIT;
+    g_prof_writes.querySet = g_profile_queries;
+    g_prof_writes.beginningOfPassWriteIndex = static_cast<std::uint32_t>(g_prof_passes.size()) * 2;
+    g_prof_writes.endOfPassWriteIndex = g_prof_writes.beginningOfPassWriteIndex + 1;
+    g_prof_passes.push_back({what, command, a, b});
+    return &g_prof_writes;
+}
 
 std::vector<Command> g_commands;
 
@@ -1021,32 +1040,29 @@ void ensure_capacity(std::size_t arena_words = g_arena.size(), std::size_t param
 }
 
 void profile_submit() {
-    constexpr std::uint32_t kMax = 2048;
     if (!g_profile_queries) {
         WGPUQuerySetDescriptor qd = WGPU_QUERY_SET_DESCRIPTOR_INIT;
         qd.type = WGPUQueryType_Timestamp;
-        qd.count = kMax * 2;
+        qd.count = kProfPasses * 2;
         g_profile_queries = wgpuDeviceCreateQuerySet(g_device, &qd);
-        g_profile_resolve = make_buffer(kMax * 16, WGPUBufferUsage_QueryResolve | WGPUBufferUsage_CopySrc);
-        g_profile_read = make_buffer(kMax * 16, WGPUBufferUsage_MapRead | WGPUBufferUsage_CopyDst);
+        g_profile_resolve = make_buffer(kProfPasses * 16, WGPUBufferUsage_QueryResolve | WGPUBufferUsage_CopySrc);
+        g_profile_read = make_buffer(kProfPasses * 16, WGPUBufferUsage_MapRead | WGPUBufferUsage_CopyDst);
     }
     ensure_capacity();
     wgpuQueueWriteBuffer(g_queue, g_data, 0, g_arena.data(), g_arena.size() * 4);
     wgpuQueueWriteBuffer(g_queue, g_params, 0, g_param_records.data(), g_param_records.size() * kParamStride);
     WGPUCommandEncoder enc = wgpuDeviceCreateCommandEncoder(g_device, nullptr);
-    const std::uint32_t n = static_cast<std::uint32_t>(std::min<std::size_t>(g_commands.size(), kMax));
+    g_prof_passes.clear();
+    g_prof_untimed = 0;
+    g_prof_on = true;
     for (std::uint32_t i = 0; i < g_commands.size(); ++i) {
         const Command &c = g_commands[i];
         if (c.pipeline == kNativeDraws) {
             encode_native(enc, c, g_native_draws);
             continue;
         }
-        WGPUPassTimestampWrites writes = WGPU_PASS_TIMESTAMP_WRITES_INIT;
-        writes.querySet = g_profile_queries;
-        writes.beginningOfPassWriteIndex = i * 2;
-        writes.endOfPassWriteIndex = i * 2 + 1;
         WGPUComputePassDescriptor cd = WGPU_COMPUTE_PASS_DESCRIPTOR_INIT;
-        if (i < n) cd.timestampWrites = &writes;
+        cd.timestampWrites = prof_slot(kEntryPoints[c.pipeline], i, c.x, c.y);
         WGPUComputePassEncoder pass = wgpuCommandEncoderBeginComputePass(enc, &cd);
         wgpuComputePassEncoderSetPipeline(pass, g_pipelines[c.pipeline]);
         const std::uint32_t offset = c.param * kParamStride;
@@ -1055,6 +1071,8 @@ void profile_submit() {
         wgpuComputePassEncoderEnd(pass);
         wgpuComputePassEncoderRelease(pass);
     }
+    g_prof_on = false;
+    const std::uint32_t n = static_cast<std::uint32_t>(g_prof_passes.size());
     if (n) {
         wgpuCommandEncoderResolveQuerySet(enc, g_profile_queries, 0, n * 2, g_profile_resolve, 0);
         wgpuCommandEncoderCopyBufferToBuffer(enc, g_profile_resolve, 0, g_profile_read, 0, n * 16);
@@ -1073,15 +1091,23 @@ void profile_submit() {
         wait_until(done);
         const auto *t = static_cast<const std::uint64_t *>(wgpuBufferGetConstMappedRange(g_profile_read, 0, n * 16));
         std::size_t info = 0;
-        for (std::uint32_t i = 0; t && i < n; ++i) {
-            if (g_commands[i].pipeline == kNativeDraws) continue;
-            while (info < g_command_info.size() && g_command_info[info].index < i) ++info;
-            std::fprintf(g_profile_out, "%llu %u %s %llu %u %u", static_cast<unsigned long long>(frame_count()), i, kEntryPoints[g_commands[i].pipeline],
-                         static_cast<unsigned long long>(t[i * 2 + 1] > t[i * 2] ? t[i * 2 + 1] - t[i * 2] : 0), g_commands[i].x, g_commands[i].y);
-            if (info < g_command_info.size() && g_command_info[info].index == i)
-                for (std::uint32_t v : g_command_info[info].values) std::fprintf(g_profile_out, " %u", v);
+        std::uint64_t inside = 0;
+        for (std::uint32_t k = 0; t && k < n; ++k) {
+            const ProfPass &p = g_prof_passes[k];
+            const std::uint64_t ns = t[k * 2 + 1] > t[k * 2] ? t[k * 2 + 1] - t[k * 2] : 0;
+            inside += ns;
+            std::fprintf(g_profile_out, "%llu %u %s %llu %u %u", static_cast<unsigned long long>(frame_count()), p.command, p.what,
+                         static_cast<unsigned long long>(ns), p.a, p.b);
+            if (std::strncmp(p.what, "native", 6) != 0) {
+                while (info < g_command_info.size() && g_command_info[info].index < p.command) ++info;
+                if (info < g_command_info.size() && g_command_info[info].index == p.command)
+                    for (std::uint32_t v : g_command_info[info].values) std::fprintf(g_profile_out, " %u", v);
+            }
             std::fprintf(g_profile_out, "\n");
         }
+        if (t && n > 1 && t[n * 2 - 1] > t[0])  // between the passes: barriers and layout transitions
+            std::fprintf(g_profile_out, "%llu %u between-passes %llu %u %u\n", static_cast<unsigned long long>(frame_count()), n,
+                         static_cast<unsigned long long>(t[n * 2 - 1] - t[0] > inside ? t[n * 2 - 1] - t[0] - inside : 0), n, g_prof_untimed);
         wgpuBufferUnmap(g_profile_read);
     }
     g_commands.clear();
@@ -1707,6 +1733,7 @@ void encode_native(WGPUCommandEncoder enc, const Command &c, const std::vector<N
     for (std::uint32_t i = 0; i < count; ++i) checks = checks || d[i].check;
     if (checks) {
         WGPUComputePassDescriptor cd = WGPU_COMPUTE_PASS_DESCRIPTOR_INIT;
+        cd.timestampWrites = prof_slot("native-check", c.x);
         WGPUComputePassEncoder pass = wgpuCommandEncoderBeginComputePass(enc, &cd);
         wgpuComputePassEncoderSetPipeline(pass, g_native_check);
         for (std::uint32_t i = 0; i < count; ++i) {
@@ -1722,7 +1749,10 @@ void encode_native(WGPUCommandEncoder enc, const Command &c, const std::vector<N
     WGPURenderPassEncoder rp = nullptr;
     WGPUTextureView view = nullptr;
     WGPURenderPipeline current = nullptr;
+    const WGPURenderPipeline import = g_prof_on ? native_pipeline(kNativeImport) : nullptr;
+    ProfPass *prof_pass = nullptr;  // PS2_GPU_PROFILE: a = draws, b = instances (the import draws are instanced over tiles)
     const auto end = [&] {
+        prof_pass = nullptr;
         if (!rp) return;
         wgpuRenderPassEncoderEnd(rp);
         wgpuRenderPassEncoderRelease(rp);
@@ -1733,6 +1763,8 @@ void encode_native(WGPUCommandEncoder enc, const Command &c, const std::vector<N
         if (d[i].writeback[0]) {
             end();
             WGPUComputePassDescriptor cd = WGPU_COMPUTE_PASS_DESCRIPTOR_INIT;
+            cd.timestampWrites = prof_slot(d[i].compute ? "native-compute" : "native-writeback", c.x + i,
+                                           d[i].writeback[0] * d[i].writeback[1] * std::max(d[i].writeback[2], 1u), 0);
             WGPUComputePassEncoder pass = wgpuCommandEncoderBeginComputePass(enc, &cd);
             wgpuComputePassEncoderSetPipeline(pass, d[i].compute ? d[i].compute : g_nat.writeback);
             wgpuComputePassEncoderSetBindGroup(pass, 0, g_nat.writeback_group, 1, &offset);
@@ -1742,7 +1774,8 @@ void encode_native(WGPUCommandEncoder enc, const Command &c, const std::vector<N
             continue;
         }
         if (!d[i].pipeline) continue;
-        if (rp && d[i].color != view) end();
+        const bool split = import && d[i].pipeline == import;  // PS2_GPU_PROFILE: the tile imports get passes of their own
+        if (rp && (d[i].color != view || split)) end();
         if (!rp) {
             WGPURenderPassColorAttachment colors[2] = {WGPU_RENDER_PASS_COLOR_ATTACHMENT_INIT, WGPU_RENDER_PASS_COLOR_ATTACHMENT_INIT};
             colors[0].view = d[i].color;
@@ -1759,6 +1792,8 @@ void encode_native(WGPUCommandEncoder enc, const Command &c, const std::vector<N
             rd.colorAttachmentCount = 2;
             rd.colorAttachments = colors;
             rd.depthStencilAttachment = &depth;
+            rd.timestampWrites = prof_slot(split ? "native-import" : "native-render", c.x + i);
+            prof_pass = g_prof_on && rd.timestampWrites ? &g_prof_passes.back() : nullptr;
             rp = wgpuCommandEncoderBeginRenderPass(enc, &rd);
             view = d[i].color;
             current = nullptr;
@@ -1772,6 +1807,11 @@ void encode_native(WGPUCommandEncoder enc, const Command &c, const std::vector<N
         const WGPUColor constant{d[i].constant, d[i].constant, d[i].constant, d[i].constant};
         wgpuRenderPassEncoderSetBlendConstant(rp, &constant);
         wgpuRenderPassEncoderDraw(rp, d[i].vertices, d[i].instances, 0, 0);
+        if (prof_pass) {
+            ++prof_pass->a;
+            prof_pass->b += d[i].instances;
+        }
+        if (split) end();
     }
     end();
 }
