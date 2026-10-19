@@ -1,4 +1,10 @@
 #include "units.hpp"
+#include "ps2/decomp_hook.hpp"
+
+namespace decomp {
+extern ps2::DecompFn hook_0023CF90;
+extern ps2::DecompFn hook_0023DB48;
+}
 
 namespace gen {
 
@@ -1431,6 +1437,7 @@ L_0023CF4C:
     c.budget -= 16;
     { const std::uint32_t t = c.r[31].w[0];  c.pc = t; return; }
 L_0023CF90:
+    if (::decomp::hook_0023CF90.on) [[unlikely]] { if (decomp_enter(c, ::decomp::hook_0023CF90, depth)) return; }
     set32(c.r[29], c.r[29].w[0] - 144u);
     st128((c.r[29].w[0] + 32u) & ~15u, c.r[21]);
     st32((c.r[29].w[0] + 128u), c.f[20]);
@@ -2223,6 +2230,7 @@ L_0023DB18:
     c.budget -= 11;
     { const std::uint32_t t = c.r[31].w[0];  c.pc = t; return; }
 L_0023DB48:
+    if (::decomp::hook_0023DB48.on) [[unlikely]] { if (decomp_enter(c, ::decomp::hook_0023DB48, depth)) return; }
     set32(c.r[29], c.r[29].w[0] - 112u);
     c.vu0.vf[1] = c.r[6];
     st128((c.r[29].w[0] + 80u) & ~15u, c.r[16]);

@@ -17,6 +17,9 @@
 0022C630	FrustumBoxTest	decomp/src/render/frustum_cull.cpp
 0022C838	FrustumSphereTest	decomp/src/render/frustum_cull.cpp
 00236DB0	EmitTextureFilter	decomp/src/render/texture_filter.cpp
+0023CF90	PickPointLights	decomp/src/render/point_lights.cpp
+0023DB48	BuildHighlightMatrix	decomp/src/render/highlight_matrix.cpp
+00240438	ScrollSegmentUV	decomp/src/render/uv_scroll.cpp
 0024C238	RadiansToAngle	decomp/src/render/ps2render.cpp
 00260B40	GetAssetObject	decomp/src/setup/ps2setup.cpp
 002655C0	GuardBandOutcode	decomp/src/render/guard_band.cpp
