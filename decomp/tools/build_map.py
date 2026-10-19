@@ -5,7 +5,8 @@ usage: python3 -I decomp/tools/build_map.py [--elf games/mksm/disc/SLUS_210.87] 
                                             [--exports ../../analysis/exports] [--sce-db FILE]
 
 Writes <out>/functions.tsv, <out>/callgraph.tsv, <out>/boundaries.tsv (every start candidate and how it was
-resolved) and <out>/stats.json. Inputs it reads besides the ELF live in <out>/inputs/ (see README there).
+resolved), <out>/names.tsv and <out>/stats.json. Inputs it reads besides the ELF and mksm/entries.txt live in
+<out>/inputs/ (see decomp/map/README.md).
 """
 import argparse
 import bisect

@@ -214,6 +214,20 @@ def main():
     r = F[site_fn]
     w("## 1. The VU1 draw site 0x241c88\n")
     w(TEXT_DRAW.format(fn="%06x" % site_fn, name=r["name"], end=r["end"], size=r["size"], src=r["source_file"]))
+    for src in (0x1D73C8,):  # GameLoop (MKSMHook name, see inputs/notes-names.tsv)
+        prev, queue = {src: None}, collections.deque([src])
+        while queue:
+            x = queue.popleft()
+            for b, _, _ in calls[x]:
+                if b not in prev:
+                    prev[b] = x
+                    queue.append(b)
+        if site_fn in prev:
+            chain = [site_fn]
+            while prev[chain[-1]] is not None:
+                chain.append(prev[chain[-1]])
+            w("Shortest direct-call path from the game loop: " +
+              " → ".join("`%06x` %s" % (x, nm(x)) for x in reversed(chain)) + "\n")
     w("Callees of %s (%d distinct; kind, call count):\n" % (r["name"], len(calls[site_fn])))
     w("| callee | name | module | size | kind | calls |\n|---|---|---|---|---|---|")
     for b, kind, n in sorted(calls[site_fn]):

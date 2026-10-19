@@ -28,6 +28,8 @@ So this function is the per-frame "submit the VIF1 chain" step, not a per-object
 frame goes out through this one kick. It also flips the GS fields (`Gs_FlipFields`) and runs the post-FX pass
 (`anti_alias_or_blur`), and is reached from the front end, pause/save menus and the in-game frame code.
 
+Shortest direct-call path from the game loop: `1d73c8` GameLoop → `2f4200` fn_2f4200 → `241410` fn_241410
+
 Callees of fn_241410 (32 distinct; kind, call count):
 
 | callee | name | module | size | kind | calls |
