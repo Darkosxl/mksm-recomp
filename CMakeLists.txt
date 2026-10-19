@@ -109,8 +109,12 @@ if(PS2_GENERATED)
     # unit refers to it.
     set(PS2_DECOMP_DIR "${CMAKE_SOURCE_DIR}/decomp/src" CACHE PATH "Folder with the decompiled functions")
     file(GLOB_RECURSE PS2_DECOMP_SOURCES CONFIGURE_DEPENDS "${PS2_DECOMP_DIR}/*.cpp")
+    # headers the decompiled functions share (guest struct layouts); they count in the build id like the sources
+    set(PS2_DECOMP_INCLUDE "${CMAKE_SOURCE_DIR}/decomp/include")
+    file(GLOB_RECURSE PS2_DECOMP_HEADERS CONFIGURE_DEPENDS "${PS2_DECOMP_INCLUDE}/*")
     add_library(ps2decomp OBJECT ${PS2_DECOMP_SOURCES} runtime/src/decomp/none.cpp)
     target_link_libraries(ps2decomp PUBLIC ps2runtime)
+    target_include_directories(ps2decomp PRIVATE "${PS2_DECOMP_INCLUDE}")
     target_compile_options(ps2decomp PRIVATE -Wall -Wextra)
 
     # lockstep build id: a hash of the emulation sources (cmake/build_id.cmake), the same for ps2run and ps2web
@@ -118,8 +122,8 @@ if(PS2_GENERATED)
     file(GLOB PS2_ID_GENERATED CONFIGURE_DEPENDS "${PS2_GENERATED}/*")
     set(PS2_BUILD_ID "${CMAKE_BINARY_DIR}/lockstep_build_id.cpp")
     add_custom_command(OUTPUT "${PS2_BUILD_ID}"
-        COMMAND ${CMAKE_COMMAND} -DROOT=${CMAKE_SOURCE_DIR} -DGENERATED=${PS2_GENERATED} -DDECOMP=${PS2_DECOMP_DIR} -DOUT=${PS2_BUILD_ID} -P ${CMAKE_SOURCE_DIR}/cmake/build_id.cmake
-        DEPENDS ${PS2_ID_SOURCES} ${PS2_ID_GENERATED} ${PS2_DECOMP_SOURCES} cmake/build_id.cmake)
+        COMMAND ${CMAKE_COMMAND} -DROOT=${CMAKE_SOURCE_DIR} -DGENERATED=${PS2_GENERATED} -DDECOMP=${PS2_DECOMP_DIR} -DDECOMP_INCLUDE=${PS2_DECOMP_INCLUDE} -DOUT=${PS2_BUILD_ID} -P ${CMAKE_SOURCE_DIR}/cmake/build_id.cmake
+        DEPENDS ${PS2_ID_SOURCES} ${PS2_ID_GENERATED} ${PS2_DECOMP_SOURCES} ${PS2_DECOMP_HEADERS} cmake/build_id.cmake)
 
     if(EMSCRIPTEN)
         set(PS2_WEB_ELF "" CACHE FILEPATH "Game executable preloaded as /game/core.elf")
