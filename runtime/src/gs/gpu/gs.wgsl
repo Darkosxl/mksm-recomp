@@ -421,14 +421,11 @@ fn display(@builtin(global_invocation_id) gid: vec3<u32>) {
     scratch[prm(8u) + gid.y * w + gid.x] = c | 0xFF000000u;
 }
 
+// Primitive state (gpu.cpp make_setup). Frame and Z (words 1-3, 5, 6, 23) are the same for a whole batch and come from
+// the dispatch parameters instead (raster: fb_loc, z_loc, frame_psm, z_max).
 struct Setup {
     flags: u32,
-    fbp: u32,
-    fbw: u32,
-    fpsm: u32,
     fbmsk: u32,
-    zbp: u32,
-    zpsm: u32,
     modes: u32,
     aref: u32,
     fix: u32,
@@ -451,13 +448,10 @@ struct Setup {
     ta1: u32,
     fogcol: u32,
     clut: u32,
-    zmax: u32,
     dec: u32,
     mip: u32,
     mip_at: u32,
     tf: Fmt,
-    ff: Fmt,
-    zf: Fmt,
 }
 
 const F_IIP: u32 = 1u;
@@ -482,12 +476,7 @@ const F_RT_HIRES: u32 = 131072u;
 fn load_setup(at: u32) -> Setup {
     var s: Setup;
     s.flags = data[at];
-    s.fbp = data[at + 1u];
-    s.fbw = data[at + 2u];
-    s.fpsm = data[at + 3u];
     s.fbmsk = data[at + 4u];
-    s.zbp = data[at + 5u];
-    s.zpsm = data[at + 6u];
     s.modes = data[at + 7u];
     s.aref = data[at + 8u];
     s.fix = data[at + 9u];
@@ -510,13 +499,10 @@ fn load_setup(at: u32) -> Setup {
     s.ta1 = (data[at + 20u] >> 8u) & 0xFFu;
     s.fogcol = data[at + 21u];
     s.clut = data[at + 22u];
-    s.zmax = data[at + 23u];
     s.dec = data[at + 24u];
     s.mip = data[at + 25u];
     s.mip_at = at + 26u;
     s.tf = fmt_of(s.tpsm, s.tbp, s.tbw);
-    s.ff = fmt_of(s.fpsm, s.fbp, s.fbw);
-    s.zf = fmt_of(s.zpsm, s.zbp, s.fbw);
     return s;
 }
 
@@ -815,9 +801,22 @@ fn blend4(c00: u32, c10: u32, c01: u32, c11: u32, fx: f32, fy: f32) -> u32 {
     return out;
 }
 
+// Raster dispatch parameters (gpu.cpp flush_batch): the batch's frame format and its Z format's largest value.
+fn frame_psm() -> u32 {
+    return prm(9u);
+}
+
+fn z_max() -> u32 {
+    return prm(12u);
+}
+
+// This thread's frame and Z words (raster): every primitive of a batch draws to the same frame and Z buffer.
+var<private> fb_loc: Loc;
+var<private> z_loc: Loc;
+
 fn read_frame(s: Setup, l: Loc, k: u32) -> u32 {
     let raw = load_at(l, k);
-    switch s.fpsm {
+    switch frame_psm() {
         case 0x01u {
             return raw | 0x80000000u;
         }
@@ -843,7 +842,7 @@ fn pack16(v: u32) -> u32 {
 }
 
 fn write_frame(s: Setup, l: Loc, k: u32, c: u32, mask: u32) {
-    switch s.fpsm {
+    switch frame_psm() {
         case 0x02u, 0x0Au {
             let old = load_at(l, k);
             var m16 = pack16(mask);
@@ -892,11 +891,9 @@ fn plot(s: Setup, x: i32, y: i32, k: u32, at: Attr) {
     if (scanmsk == 3u && (y & 1) != 0) {
         return;
     }
-    let ux = u32(x);
-    let uy = u32(y);
-    let z = min(at.z, s.zmax);
-    let fl = addr(s.ff, ux, uy);
-    var zl = Loc(0u, 0u, 0u);
+    let z = min(at.z, z_max());
+    let fl = fb_loc;
+    let zl = z_loc;
 
     var dst = 0u;
     var have_dst = false;
@@ -916,9 +913,8 @@ fn plot(s: Setup, x: i32, y: i32, k: u32, at: Attr) {
         if (ztst == 0u) {
             return;
         }
-        zl = addr(s.zf, ux, uy);
         if (ztst != 1u) {
-            let old = load_at(zl, k) & s.zmax;
+            let old = load_at(zl, k) & z_max();
             if ((ztst == 2u && z < old) || (ztst == 3u && z <= old)) {
                 return;
             }
@@ -1332,6 +1328,8 @@ fn raster(@builtin(workgroup_id) wid: vec3<u32>, @builtin(local_invocation_id) l
     let setups = prm(2u);
     snapshot_lo = prm(5u);
     snapshot_hi = prm(6u);
+    fb_loc = addr(fmt_of(prm(9u), prm(7u), prm(8u)), u32(x), u32(y));
+    z_loc = addr(fmt_of(prm(11u), prm(10u), prm(8u)), u32(x), u32(y));
     var last_setup = 0xFFFFFFFFu;
     var s: Setup;
     for (var i = 0u; i < count; i = i + 1u) {

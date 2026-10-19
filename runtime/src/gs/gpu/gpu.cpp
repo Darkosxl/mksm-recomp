@@ -617,7 +617,7 @@ void flush_batch() {
     for (std::uint32_t t : g_touched) g_tile_count[t] = 0;
     std::uint32_t snapshot_lo, snapshot_hi;
     const std::uint32_t snapshot = snapshot_batch(prims, snapshot_lo, snapshot_hi);
-    const std::uint32_t param = push_params({tile_offset, prim_offset, setup_offset, tiles, list_offset, snapshot_lo, snapshot_hi});
+    const std::uint32_t param = push_params({tile_offset, prim_offset, setup_offset, tiles, list_offset, snapshot_lo, snapshot_hi, b.fbp, b.fbw, b.fpsm, b.zbp, b.zpsm, z_max(b.zpsm)});
     note_raster(prims, tiles, total, snapshot);
     bool hires = false;
     for (std::size_t i = 0; i < b.setups.size(); i += kSetupWords) hires = hires || (b.setups[i] & kRtHires);
