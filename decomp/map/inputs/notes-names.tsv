@@ -1,0 +1,294 @@
+addr	kind	name	confidence	source	evidence
+11c070	func	_start	role	mksm/notes/oracle-boot.md:8	- Game CRC **5C8A2D7F**, ELF entry **0x0011C070**, ELF `cdrom0:\SLUS_210.87;1` 4,934,152 bytes, load
+11c2b0	func	Crt0_InitCall	role	mksm/notes/ee-syscall-gaps.md:16	x00487B10, 0x00487B54 | BOOT PATH. crt0 0x11C2B0 -> 0x4865B8 -> 0x487950: GetMemorySize()==32MB -> 0
+121b28	func	Fatality_StartCheck	role	mksm/notes/endgame.md:162	slot+0x70 was 0x100 at that moment (the fatality-start check FUN_00121b28 wants 0). The window then 
+127208	func	Fatality_InputWindow	role	mksm/notes/finishers-options.md:39	- The stunner animation event 0x1ED opens a **200-frame input window** (`FUN_00127208`) and plays "F
+129180	func	FrontEnd_MainMenuUpdate	role	mksm/notes/debug-facilities.md:144	It runs in `FUN_00129180` while the top front-end screen is 0x5CA278 (main menu [web]). Hold **L2**,
+12fe18	func	FE_NewGameKoop	role	mksm/notes/debug-facilities.md:99	`FUN_0012fe18` (Ko-op: map 0x60, type 1) set `5E2FC4=6427B0=0x60, 4D8C08=1` [lines 99-100]
+131050	func	FE_NewGameSingle	role	mksm/notes/debug-facilities.md:99	- New game from the retail front end: `FUN_00131050` (single player: map 0x60, type 0) and `FUN_0012
+13b728	site	KoopSelect_PreloadGuard	role	mksm/tools/scripts/patch_koop.py:5	`jr $11` with $11 = 0, so picking Ko-op jumps to 0x0. The branch at 0x13b728 (`beqz $v0, 0x13b8b0`) 
+13e040	func	DevFE_CodeBegin	role	mksm/notes/debug-facilities.md:68	- Strings 0x573A30.. (TCRF's "unused text at file 0x474A30") belong to a dev front end at 0x13E040–0
+13fc18	site	CheatHook_EnableCode3	role	analysis/exports/web-cheats-mksm.txt:243	Enable Code #3 - Code Master - CB7+ (used by MK II codes) ... 9013FC18 00832021
+140390	func	DevFE_LevelSelect	role	mksm/notes/debug-facilities.md:72	Level Select (FUN_00140390) lists "Game Events" (boss list) plus the 8 level banks. Room Select list
+1417d8	func	DevFE_MenuCreate	role	mksm/notes/debug-facilities.md:77	- Entry `FUN_001417d8` (creates "FE Menu" 0x573B78) has **no code or data references** except .eh_fr
+143b18	func	CameraMgr	named	analysis/exports/web-cheats-mksm.txt:170	0x1D9A50, 0x1DC148); P1 object 0x5E6B40, P2 object 0x5E9F00 (commented); camera mgr 0x143B18;
+14cc58	site	Camera_WidescreenUseA	role	mksm/notes/remaster.md:154	also feeds two camera/gameplay sites (0x14cc58, 0x14e47c) → simulation changes → co-op peers must ma
+14e47c	site	Camera_WidescreenUseB	role	mksm/notes/remaster.md:154	also feeds two camera/gameplay sites (0x14cc58, 0x14e47c) → simulation changes → co-op peers must ma
+14f798	site	CheatHook_MustBeOnAlt	role	analysis/exports/web-cheats-mksm.txt:232	9014F798 0C053D8E -> hook 0x14F798, orig opcode jal 0x14F638
+160c3c	site	Cheat_OneHitDeathsEnemies	role	analysis/exports/web-cheats-mksm.txt:280	1-Hit Deaths (Enemies): 0x160C3C addiu at,zero,1 ; 0x160C48 sw at,0x398(a0)
+164980	func	Player_BuildGroundRay	role	mksm/notes/black-maps.md:53	yer+0x2CF0`, then calls vtable +0x44 = `FUN_00164980`, which
+165418	func	Player_GetGroundHeight	role	mksm/notes/black-maps.md:63	- The ground height is read by vtable +0x1C = `FUN_00165418`. No hit (count 0, or contact flag 0x100
+165870	func	Player_ProbeGround	role	mksm/notes/black-maps.md:53	`FUN_00165870(0x5CCD50, player)`. That function clears `player+0x2CF0`, then calls vtable +0x44 = `F
+165c70	func	Player_GroundProbeStep	role	mksm/notes/black-maps.md:52	Per-frame player loop `FUN_001eb378` -> (if not in a cutscene) `FUN_00165c70` -> `FUN_00165870`
+1663e0	func	SetGameType	named	analysis/exports/web-cheats-mksm.txt:166	SetGameType 0x1663E0 (0=single, 1=ko-op, 2=versus, 3=practice) + reset health 0x1EE858; tick counter
+16950c	site	Cheat_InfiniteEnergy_b	role	analysis/exports/web-cheats-mksm.txt:282	Infinite Energy: NOP at 0x169514 (Code Master) / 0x16950C (MadCatz)
+169514	site	Cheat_InfiniteEnergy_a	role	analysis/exports/web-cheats-mksm.txt:282	Infinite Energy: NOP at 0x169514 (Code Master) / 0x16950C (MadCatz)
+1744dc	site	Cheat_QuickExpGain	role	analysis/exports/web-cheats-mksm.txt:626	Quick Exp Gain: 201744DC 34112710
+174508	site	Cheat_MaxExpGain	role	analysis/exports/web-cheats-mksm.txt:493	Max Exp Gain: 20174508 3C1105F5
+17452c	site	Cheat_EnemiesKilledWorth	role	analysis/exports/web-cheats-mksm.txt:368	Enemies Killed Worth 10: 2017452C 2403000A
+174c1c	site	Cheat_MaxExpHook	role	analysis/exports/web-cheats-mksm.txt:283	Max Exp (MadCatz): cave 0xC2000 writes 99,999,999 (0x05F5E0FF) to [v0+0x4BA4]; hook 0x174C1C
+174c64	site	Cheat_ExpNeverDecrease	role	analysis/exports/web-cheats-mksm.txt:363	Buying Moves Does Not Decrease Exp: 20174C64 00000000
+175940	site	Cheat_KomboKount	role	analysis/exports/web-cheats-mksm.txt:319	10 Hits: 20175940 2442000A
+177640	site	Cheat_InfFatalityMeter	role	analysis/exports/web-cheats-mksm.txt:411	Infinite Fatality Meter: 20177640 C6010004
+189e7c	site	Cheat_BossesNoHealth	role	analysis/exports/web-cheats-mksm.txt:281	Bosses/Targeted No Health: 0x189E7C / 0x18A568 swc1 $f2,0x398(..)
+18a568	site	Cheat_TargetedNoHealth	role	analysis/exports/web-cheats-mksm.txt:281	Bosses/Targeted No Health: 0x189E7C / 0x18A568 swc1 $f2,0x398(..)
+19ea70	func	Gameplay_PauseInput	role	mksm/notes/debug-facilities.md:43	- The SELECT pause menu is built by `FUN_001a9698`, which `FUN_0019ea70` calls when pad bit 0x100 (S
+1a5320	func	SaveMenu_Run	role	mksm/notes/debug-facilities.md:54	| 1A0 | Save Menu | 1AA538 | `0x5D2490=1` → `FUN_001a5320` save UI |
+1a8788	func	Menu_OpenItem	role	analysis/exports/web-cheats-mksm.txt:163	#define MENU_ITEM_PTR 0x4C7078 ; open_debug_menu(): ((void(*)(int))0x1A8788)(MENU_ITEM_PTR);
+1a8788	func	DebugMenu_WarpPlayer	role	mksm/notes/debug-facilities.md:57	| 1A6 | Warp Player | 1A8788 | lists "Warp Position 1..15" (entrances that exist in the current map)
+1a88d8	func	DebugMenuUpdate	named	analysis/exports/web-cheats-mksm.txt:182	DebugMenuUpdate function 0x194028 0x1A88D8 392
+1a9698	func	PauseMenu_Build	role	mksm/notes/debug-facilities.md:43	- The SELECT pause menu is built by `FUN_001a9698`, which `FUN_0019ea70` calls when pad bit 0x100 (S
+1a9c88	func	MapSelect_BuildLevelList	role	mksm/notes/debug-facilities.md:53	` (0x5D248C)=1; after the menu closes, `FUN_001a9c88` builds the level list (8 banks, text 0x172+i) 
+1a9f50	func	MapSelect_Commit	role	mksm/notes/debug-facilities.md:53	, text 0x172+i) and the room list, and `FUN_001a9f50` calls `FUN_001e15a0(0x5E2FC0, mapId)` |
+1aa518	func	DebugMenu_MapSelect	role	mksm/notes/debug-facilities.md:53	| 19D | Map Select | 1AA518 | sets `gMenuSystem+0x6AC` (0x5D248C)=1; after the menu closes, `FUN_001
+1aa538	func	DebugMenu_SaveMenu	role	mksm/notes/debug-facilities.md:54	| 1A0 | Save Menu | 1AA538 | `0x5D2490=1` → `FUN_001a5320` save UI |
+1aa558	func	SelectFreeCam	named	analysis/exports/web-cheats-mksm.txt:177	SelectFreeCam function 0x195040 0x1AA558 96
+1aa5b8	func	SelectFreezeCam	named	analysis/exports/web-cheats-mksm.txt:178	SelectFreezeCam function 0x1950A0 0x1AA5B8 116
+1aa630	func	PauseMenu_Options	role	mksm/notes/debug-facilities.md:45	tinue `{1A4, 1AA6F0}`, **Options `{1A5, 1AA630}` @0x4C6FE0**,
+1aa678	func	DebugMenu_ReloadLevel	role	mksm/notes/debug-facilities.md:52	| 18B | Reload Level | 1AA678 | restore checkpoint snapshot, `4B0D90=1 4D8BFC=1 4B0D9C=1 4D8C08=1 4D
+1aa6f0	func	PauseMenu_Continue	role	mksm/notes/debug-facilities.md:45	the table `{int textId; void(*fn)()}` at **0x4C6FD8**: Continue `{1A4, 1AA6F0}`, **Options `{1A5, 1A
+1aa708	func	PauseMenu_ExitGame	role	mksm/notes/debug-facilities.md:46	Exit Game `{1A7, 1AA708}`, terminated by -1. "Message History" (1A3) is inserted only when history e
+1aaad8	func	GodModeToggle	named	analysis/exports/web-cheats-mksm.txt:179	GodModeToggle function 0x195478 0x1AAAD8 104
+1aaad8	func	DebugMenu_GodModeOnOff	role	mksm/notes/debug-facilities.md:55	| 666/667 | God Mode On/Off | 1AAAD8 | toggles 0x4C7778. ON → `FUN_001bae60`: every move unlocked fo
+1aacf0	func	DebugMenu_P1FatalityLevel	role	mksm/notes/debug-facilities.md:56	| 660/661 | P1/P2 Fatality Level | 1AACF0/1AAD80 | sub-menu 0x4C7568 → `FUN_001bb718(0..3)` |
+1aad80	func	DebugMenu_P2FatalityLevel	role	mksm/notes/debug-facilities.md:56	| 660/661 | P1/P2 Fatality Level | 1AACF0/1AAD80 | sub-menu 0x4C7568 → `FUN_001bb718(0..3)` |
+1aae10	func	SetGodModeText	named	analysis/exports/web-cheats-mksm.txt:180	SetGodModeText function 0x1957B0 0x1AAE10 108
+1aae80	func	DebugMenuSetup	named	analysis/exports/web-cheats-mksm.txt:181	DebugMenuSetup function 0x195820 0x1AAE80 292 <- the TCRF function pointer
+1b73b4	site	Cheat_FastExpGain	role	analysis/exports/web-cheats-mksm.txt:396	Have Fast Exp Gain: 201B73B4 24052710
+1bae60	func	GodMode_Enable	role	mksm/notes/debug-facilities.md:55	| 666/667 | God Mode On/Off | 1AAAD8 | toggles 0x4C7778. ON → `FUN_001bae60`: every move unlocked fo
+1bb438	site	Cheat_HaveAllMoves	role	analysis/exports/web-cheats-mksm.txt:392	Have All Moves (Minus Fatalities): 201BB438 00430821
+1bb718	func	SetFatalityLevel	role	mksm/notes/debug-facilities.md:56	| 660/661 | P1/P2 Fatality Level | 1AACF0/1AAD80 | sub-menu 0x4C7568 → `FUN_001bb718(0..3)` |
+1bb7a8	func	GodMode_Disable	role	mksm/notes/debug-facilities.md:55	or P1/P2, fatality meter filled. OFF → `FUN_001bb7a8` resets. **No invulnerability.** |
+1c13a8	func	Dev_UnlockEverything	role	mksm/notes/debug-facilities.md:82	- `0x1C13A8`: an unlock-everything routine with no references. Its effect is poke #6.
+1c15f0	func	Unlocks_SetDefaults	role	mksm/notes/debug-facilities.md:142	=30000000, 5D828C=C (the defaults from `FUN_001c15f0`).
+1c1a70	func	Unlock_Set5C	role	mksm/notes/debug-facilities.md:136	- 0x5C+i (i<8, `FUN_001c1a70`; game completion sets i=5), 0x65+i (i<0x40), 0xA6+i (i<0xB0, `FUN_001c
+1c1b20	func	Unlock_SetA6	role	mksm/notes/debug-facilities.md:136	i=5), 0x65+i (i<0x40), 0xA6+i (i<0xB0, `FUN_001c1b20`),
+1c1b78	func	Unlock_Set157	role	mksm/notes/debug-facilities.md:137	0x157+i (i<0x10, `FUN_001c1b78`), 0x168+i (i<0xF, Versus arenas; 0-5 unlocked by default). Script co
+1c1bd0	func	Cheat_UnlockMK2	role	mksm/notes/debug-facilities.md:151	| MK II | □ Up Down **Right Left** R2 □ (0x4D98D8) | 0x1C1BD0 | `5D82B0=1` |
+1c1dd4	site	Cheat_MoviesUnlock	role	analysis/exports/web-cheats-mksm.txt:705	View Movies To Unlock Them: 201C1DD4 00431025
+1c1e2c	site	Cheat_ArenaArtUnlock	role	analysis/exports/web-cheats-mksm.txt:697	View Arena Art To Unlock Them: 201C1E2C 00431025
+1c1e84	site	Cheat_ConceptArtUnlock	role	analysis/exports/web-cheats-mksm.txt:701	View Concept Art To Unlock Them: 201C1E84 00431025
+1c1edc	site	Cheat_PhotosUnlock	role	analysis/exports/web-cheats-mksm.txt:709	View Photos To Unlock Them: 201C1EDC 00431025
+1c3a78	func	Physics_ApplyGravity	role	mksm/notes/black-maps.md:66	- Gravity/integration: `FUN_001c3a78` (y += vy·0.5, vy += g).
+1d3430	func	Ending_FmvAndUnlocks	role	mksm/notes/endgame.md:97	`0x4D8B88 = 1`, `FUN_0037a868(0x5E0FC8, 3, 0)`) → top-level state 0x13 (FUN_001d3430: ending FMV + u
+1d4800	func	Gameplay_Enter	role	mksm/notes/debug-facilities.md:100	(Ko-op: map 0x60, type 1) set `5E2FC4=6427B0=0x60, 4D8C08=1`. State 9 entry `FUN_001d4800` then read
+1d4844	site	Gameplay_ClearMotorMask	role	mksm/notes/finishers-options.md:183	- Boot sets the mask to 3. Gameplay entry `FUN_001D4800` clears it (at `0x1D4844`). Its only setter,
+1d4f98	site	GameLoop_Call_a	role	analysis/exports/web-cheats-mksm.txt:169	player control fn 0x1EAF30 (hooked at jal 0x1EB988); game loop fn 0x1D73C8 (jal sites 0x1D4F98,
+1d6808	func	Gameplay_Update	role	mksm/notes/debug-facilities.md:102	- In gameplay, the per-frame `FUN_001d6808` runs `if (*0x4D8BFC==1) { FUN_001e15a0(0x5E2FC0, *0x4D8C
+1d73c8	func	GameLoop	named	analysis/exports/web-cheats-mksm.txt:169	player control fn 0x1EAF30 (hooked at jal 0x1EB988); game loop fn 0x1D73C8 (jal sites 0x1D4F98,
+1d7464	site	Cheat_AlwaysLowGameTime	role	analysis/exports/web-cheats-mksm.txt:351	Always Low Game Time: 201D7464 AC800000
+1d98d8	func	Cheat_UnlockScorpion	role	mksm/notes/debug-facilities.md:149	| Scorpion | □ Up L1 R1 Left Right □ (0x4D98B8) | 0x1D98D8 | unlock char 0x52 + `5D82B8=1` |
+1d9908	func	Cheat_UnlockSubZero	role	mksm/notes/debug-facilities.md:150	| Sub-Zero | □ Down Up L1 L1 Up □ (0x4D98C8) | 0x1D9908 | unlock char 0x58 + `5D82B4=1` |
+1d9a50	site	GameLoop_Call_b	role	analysis/exports/web-cheats-mksm.txt:170	game loop fn 0x1D73C8 (jal sites 0x1D4F98, 0x1D9A50, 0x1DC148) [lines 169-170]
+1dc148	site	GameLoop_Call_c	role	analysis/exports/web-cheats-mksm.txt:170	game loop fn 0x1D73C8 (jal sites 0x1D4F98, 0x1D9A50, 0x1DC148) [lines 169-170]
+1dd900	func	ScriptAction_FinalVictory	role	mksm/notes/endgame.md:96	(`fatalitystream` && `charactertype==0x40`) → script action `finalvictory` (Execute FUN_001dd900:
+1ddf90	func	ScriptCmd_UnlockMap	role	mksm/notes/debug-facilities.md:138	unlockmap/char/movie/artwork/photos map onto these setters (0x1DDF90/0x1DDFC8/0x1DE000/0x1DE038/0x1D
+1ddfc8	func	ScriptCmd_UnlockChar	role	mksm/notes/debug-facilities.md:138	unlockmap/char/movie/artwork/photos map onto these setters (0x1DDF90/0x1DDFC8/0x1DE000/0x1DE038/0x1D
+1de000	func	ScriptCmd_UnlockMovie	role	mksm/notes/debug-facilities.md:138	unlockmap/char/movie/artwork/photos map onto these setters (0x1DDF90/0x1DDFC8/0x1DE000/0x1DE038/0x1D
+1de038	func	ScriptCmd_UnlockArtwork	role	mksm/notes/debug-facilities.md:138	unlockmap/char/movie/artwork/photos map onto these setters (0x1DDF90/0x1DDFC8/0x1DE000/0x1DE038/0x1D
+1de070	func	ScriptCmd_UnlockPhotos	role	mksm/notes/debug-facilities.md:138	rs (0x1DDF90/0x1DDFC8/0x1DE000/0x1DE038/0x1DE070)
+1dee38	func	Map_StartLoad	role	mksm/notes/debug-facilities.md:101	and calls `FUN_001dee38(0x5E2FC0, map)`.
+1e1390	func	Fmv_PlayOnRoomMove	role	mksm/notes/endgame.md:104	ter**. END006/END011 are *not* endings: FUN_001e1390 plays
+1e15a0	func	Map_LoadInPlace	role	mksm/notes/debug-facilities.md:103	`FUN_001e15a0` is the full in-place map loader that the debug Map Select also uses, so poke #1 equal
+1e2878	func	Map_SpawnAtEntrance	role	mksm/notes/debug-facilities.md:96	(1 = map start; `FUN_001e2878(entrance,…)`), **0x4B0D9C** = 1 restores the checkpoint position inste
+1e6ef0	func	get_string	named	analysis/exports/web-cheats-mksm.txt:165	PxPad_GetRawButtons 0x2C7360; get_string 0x1E6EF0; printf 0x482610; sprintf 0x475918;
+1eaf30	func	PlayerControl	named	analysis/exports/web-cheats-mksm.txt:169	player control fn 0x1EAF30 (hooked at jal 0x1EB988); game loop fn 0x1D73C8 (jal sites 0x1D4F98,
+1eb0b0	site	Cheat_InfiniteHealth_a	role	analysis/exports/web-cheats-mksm.txt:278	Infinite Health (Code Master CB7): 0x1EB0B0 lw v0,0x3A0(a0); sw v0,0x398(a0) (health = max)
+1eb378	func	Player_Update	role	mksm/notes/black-maps.md:52	- Per-frame player loop `FUN_001eb378` → (if `DAT_00642820 == 0`, i.e. not in a cutscene) `FUN_00165
+1eb988	site	PlayerControl_HookCall	role	analysis/exports/web-cheats-mksm.txt:169	player control fn 0x1EAF30 (hooked at jal 0x1EB988); game loop fn 0x1D73C8 (jal sites 0x1D4F98,
+1ee858	func	ResetHealth	named	analysis/exports/web-cheats-mksm.txt:166	SetGameType 0x1663E0 (0=single, 1=ko-op, 2=versus, 3=practice) + reset health 0x1EE858; tick counter
+2069f8	site	CheatHook_EnableCode1	role	analysis/exports/web-cheats-mksm.txt:236	[RAW-CheatDevicePS2] 902069F8 00832021 -> hook 0x2069F8 (addu a0,a0,v1)
+20c5d8	func	Task_Kill	role	mksm/notes/JOURNAL.md:27	`[ee] no translated code at 0xCDCDCDCC (ra 0x0020C61C)`. Task-kill routine at 0x20c5d8 calls a clean
+20c61c	site	Task_Kill_CleanupCallRet	role	mksm/notes/JOURNAL.md:27	`[ee] no translated code at 0xCDCDCDCC (ra 0x0020C61C)`. Task-kill routine at 0x20c5d8 calls a clean
+20ecd0	func	Memory_Initialise	named	analysis/exports/web-cheats-mksm.txt:193	memory/file: Memory_Initialise 0x20ECD0, Memory_AllocBlock 0x20F058, StartAsyncLoadFile 0x2123A0,
+20f058	func	Memory_AllocBlock	named	analysis/exports/web-cheats-mksm.txt:193	memory/file: Memory_Initialise 0x20ECD0, Memory_AllocBlock 0x20F058, StartAsyncLoadFile 0x2123A0,
+211258	site	FmvTable_Read_a	role	mksm/notes/ipu-gaps.md:162	END011, ESRB, BLITZ, GAUNTLET); read at 0x211258, 0x2113e8, 0x211414, 0x2114a0, 0x2f7fa0 |
+2113e8	site	FmvTable_Read_b	role	mksm/notes/ipu-gaps.md:162	RB, BLITZ, GAUNTLET); read at 0x211258, 0x2113e8, 0x211414, 0x2114a0, 0x2f7fa0 |
+211414	site	FmvTable_Read_c	role	mksm/notes/ipu-gaps.md:162	 GAUNTLET); read at 0x211258, 0x2113e8, 0x211414, 0x2114a0, 0x2f7fa0 |
+2114a0	site	FmvTable_Read_d	role	mksm/notes/ipu-gaps.md:162	; read at 0x211258, 0x2113e8, 0x211414, 0x2114a0, 0x2f7fa0 |
+211878	func	GetAsyncFileSize	named	analysis/exports/web-cheats-mksm.txt:194	Async_DataLoad 0x378A30, GetAsyncFileSize 0x211878, alloc_blocks 0x64E998
+2123a0	func	StartAsyncLoadFile	named	analysis/exports/web-cheats-mksm.txt:193	memory/file: Memory_Initialise 0x20ECD0, Memory_AllocBlock 0x20F058, StartAsyncLoadFile 0x2123A0,
+2126d8	func	Pad_MotorTask	role	mksm/notes/finishers-options.md:182	- libpad `SetActDirect` is called from a per-frame motor task (`FUN_002126D8`). It is gated by the p
+212cc8	func	Pad_SetMotorMask	role	mksm/notes/finishers-options.md:183	s it (at `0x1D4844`). Its only setter, `FUN_00212CC8`, has no callers.
+212d90	site	CheatHook_GsMaster	role	analysis/exports/web-cheats-mksm.txt:248	[RAW-GH] 90212D90 0C084964 -> hook 0x212D90 (jal 0x212590)
+213968	site	Mk2_DebugBytePatch	role	analysis/exports/web-cheats-mksm.txt:216	char-select timer 0x51F558; MK2 debug byte 0x213968.
+236ae0	site	FrustumCull_AspectTest	role	mksm/notes/remaster.md:153	(0x249e38) and frustum culling (0x236ae0, width 640/aspect) already honour it (Hor+). `is_widescreen
+241c88	site	Vu1_DrawKick	role	mksm/notes/remaster.md:118	- Every VU1 draw comes from one EE call site (0x241c88); the VU1 microprogram tells the kinds apart.
+249e38	func	Render_Projection3D	role	mksm/notes/remaster.md:175	all follow it: the 3D projection (0x249E38, only while [0x66189C] == 0 and [0x67B758] == 0) and the 
+26f918	func	Movie_CreateAndStart	role	mksm/notes/ipu-gaps.md:158	| 0x26f918 create+start | mwPlyCalcWorkCprmSfd 0x43a7e0, **mwPlyCreateSofdec 0x43b670**, mwPlySetFrm
+26fbf0	func	Movie_UpdateFrame	role	mksm/notes/ipu-gaps.md:159	| 0x26fbf0 per frame | **mwPlyGetCurFrm 0x43bfc0**, **mwPlyRelCurFrm 0x43c6a8**, **mwPlyGetStat 0x43
+26fd8c	site	Movie_Loop	role	mksm/notes/ipu-gaps.md:160	| 0x26fd8c movie loop | mwPlyInitSfdFx 0x43cb40, 0x26f918, 0x26fbf0, stop 0x43a0f0 (-> 0x43a170), de
+2701e8	func	Movie_InitSfdFx	role	mksm/notes/ipu-gaps.md:161	| 0x2701e8 / 0x2702d8 / 0x2702f8 | InitSfdFx / FinishSfdFx / stop+destroy |
+2702d8	func	Movie_FinishSfdFx	role	mksm/notes/ipu-gaps.md:161	| 0x2701e8 / 0x2702d8 / 0x2702f8 | InitSfdFx / FinishSfdFx / stop+destroy |
+2702f8	func	Movie_StopDestroy	role	mksm/notes/ipu-gaps.md:161	| 0x2701e8 / 0x2702d8 / 0x2702f8 | InitSfdFx / FinishSfdFx / stop+destroy |
+272210	site	Fmv_HeightSetA	role	mksm/notes/remaster.md:155	differ on/off. Other writes are code: 0x322f2c (cinematic bar height 88 → 1), 0x272210/0x272498 (FMV
+272498	site	Fmv_HeightSetB	role	mksm/notes/remaster.md:155	differ on/off. Other writes are code: 0x322f2c (cinematic bar height 88 → 1), 0x272210/0x272498 (FMV
+272ccc	site	Movie_DrawSprite	role	mksm/notes/remaster.md:134	| movie | 1 | path 3 EE 0x272ccc CT32 sprite | unchanged (Cem: keep movies as they are), 4:3 in 16:9
+2743d8	func	Gs_FlipFields	role	mksm/notes/remaster.md:174	0x4F4D68, toggled by the flip function 0x2743D8), and the draw buffer, the display buffer and a +0.5
+27477c	site	Vsync_CsrPoll_a	role	mksm/notes/determinism.md:102	- **CSR reads** are the game's vsync wait loop, busy-polling CSR at 0x0027477C/0x00274790: about 350
+274790	site	Vsync_CsrPoll_b	role	mksm/notes/determinism.md:102	- **CSR reads** are the game's vsync wait loop, busy-polling CSR at 0x0027477C/0x00274790: about 350
+275194	site	Render_ClearScreen	role	mksm/notes/remaster.md:133	| clear | 11 | path 3 EE 0x275194 full-screen untextured sprite | — | — |
+284fe0	func	Actor_ApplyDamage	role	mksm/notes/debug-facilities.md:83	le player index" that the damage entry `FUN_00284fe0`
+286358	func	Actor_GetObject	named	analysis/exports/web-cheats-mksm.txt:171	GetPlayerActor 0x289730; Actor_GetObject 0x286358; PrintText 0x2F4EC0; PrintTextCentered 0x2F50D8.
+289730	func	GetPlayerActor	named	analysis/exports/web-cheats-mksm.txt:171	GetPlayerActor 0x289730; Actor_GetObject 0x286358; PrintText 0x2F4EC0; PrintTextCentered 0x2F50D8.
+2c0aa8	func	World_CastGroundRay	role	mksm/notes/black-maps.md:54	builds a vertical ray in `player+0x2D10` (start) / `+0x2D20` (end) and calls **`FUN_002c0aa8(idx, pl
+2c7360	func	PxPad_GetRawButtons	named	analysis/exports/web-cheats-mksm.txt:165	PxPad_GetRawButtons 0x2C7360; get_string 0x1E6EF0; printf 0x482610; sprintf 0x475918;
+2c74b8	func	PxPad_GetButtons	named	analysis/exports/web-cheats-mksm.txt:164	Other MKSMHook addresses: SELECT_SCREEN_PTR 0x5CC5F0; gPxPad 0x6B4330; PxPad_GetButtons 0x2C74B8;
+2f4ec0	func	PrintText	named	analysis/exports/web-cheats-mksm.txt:171	GetPlayerActor 0x289730; Actor_GetObject 0x286358; PrintText 0x2F4EC0; PrintTextCentered 0x2F50D8.
+2f50d8	func	PrintTextCentered	named	analysis/exports/web-cheats-mksm.txt:171	GetPlayerActor 0x289730; Actor_GetObject 0x286358; PrintText 0x2F4EC0; PrintTextCentered 0x2F50D8.
+2f7fa0	site	FmvTable_Read_e	role	mksm/notes/ipu-gaps.md:162	0x211258, 0x2113e8, 0x211414, 0x2114a0, 0x2f7fa0 |
+2f8438	func	MapTable_Lookup	role	mksm/notes/debug-facilities.md:94	Lookup is `FUN_002f8438(0x5E2FC0, id)`.
+2fee1c	site	Cheat_GodModeHook	role	analysis/exports/web-cheats-mksm.txt:276	GodMode (ColdFusion73, AR1/GS1 RAW): hook 0x2FEE1C -> j 0x487B84 code cave:
+308010	func	EnemySpawn	named	analysis/exports/web-cheats-mksm.txt:168	enemy spawner ids 0x515DE0/E4/E8/EC, amounts 0x515DF0/F4/F8/FC, spawn fn 0x308010;
+316f58	func	PxCheats_InitSystem	role	mksm/notes/debug-facilities.md:143	- **PxCheats** (`FUN_00316f58` InitSystem(0x6FA600, 3 cheats, 10-entry buffer, 60-frame timeout, hol
+322f2c	site	CinematicBars_HeightSet	role	mksm/notes/remaster.md:155	differ on/off. Other writes are code: 0x322f2c (cinematic bar height 88 → 1), 0x272210/0x272498 (FMV
+325d58	site	Cheat_InfiniteHealth_b	role	analysis/exports/web-cheats-mksm.txt:279	Infinite Health (MadCatz GS3): 0x325D58 lw at,0x3A0(v0); sw at,0x398(v0)
+326318	func	Ray_ScaleToHavok	role	mksm/notes/black-maps.md:57	- `FUN_002c0aa8` → `FUN_00326318` (scales by 0.002 into Havok units) → **`FUN_00338d18(0x71D1B0, fro
+338bc8	func	hkCollidable_castRay	role	mksm/notes/black-maps.md:58	the Havok world castRay → `0x3A1598` (broadphase walk) → `0x338BC8` (per collidable; calls `0x40A6B0
+338d18	func	hkWorld_castRay	role	mksm/notes/black-maps.md:57	- `FUN_002c0aa8` → `FUN_00326318` (scales by 0.002 into Havok units) → **`FUN_00338d18(0x71D1B0, fro
+36f848	func	IsWidescreen	role	mksm/notes/remaster.md:153	ady honour it (Hor+). `is_widescreen()` 0x36f848
+378a30	func	Async_DataLoad	named	analysis/exports/web-cheats-mksm.txt:194	Async_DataLoad 0x378A30, GetAsyncFileSize 0x211878, alloc_blocks 0x64E998
+37e578	site	Hud_GifPath3Draw	role	mksm/notes/remaster.md:130	| hud | 1,096 | path 3 EE 0x37e578, path-2 strips (health bars, pause menu, cinematic bars) | high-r
+3829e8	site	sceSdRemoteInit_SdrSid	role	mksm/notes/audio-gaps.md:60	- The EE links libsdr: `sceSdRemoteInit` builds SID 0x80000701 at EE 0x3829E8, and "SceSdrCallbackTh
+382f34	site	_GetGsDxDyOffset_Syscall	role	mksm/notes/ee-syscall-gaps.md:17	| 0x80 | _GetGsDxDyOffset | 0x00382F34 | 1 | 0x00382FC8 | BOOT PATH. sceGsResetGraph-side helper 0x3
+382f40	func	GsResetGraph_RomverHelper	role	mksm/notes/ee-syscall-gaps.md:17	 BOOT PATH. sceGsResetGraph-side helper 0x382F40 opens rom0:ROMVER, and if the ROM date > 20010608 (
+382fc8	site	Call_GetGsDxDyOffset	role	mksm/notes/ee-syscall-gaps.md:17	| 0x80 | _GetGsDxDyOffset | 0x00382F34 | 1 | 0x00382FC8 | BOOT PATH. sceGsResetGraph-side helper 0x3
+38dfa4	site	Cheat_NoClip	role	analysis/exports/web-cheats-mksm.txt:284	No Clip (Unicorngoulash): 0x38DFA4 bltz->beq zero,zero while joker D0652000==0x0200 (L3)
+3a1598	func	hkBroadphase_RayWalk	role	mksm/notes/black-maps.md:58	the Havok world castRay → `0x3A1598` (broadphase walk) → `0x338BC8` (per collidable; calls `0x40A6B0
+3a45f8	func	hkBoxShape_castRay	named	mksm/notes/black-maps.md:150	**Root cause.** `hkBoxShape::castRay` (0x3A45F8, unit_00A9) computes per-axis "which side of the box
+3a4880	site	Havok_BoxSideMaskF0	role	mksm/notes/black-maps.md:157	A second Havok function at 0x3A4880 does the same with `& 0xF0`. Our macro-mode ops in `runtime/incl
+3a8468	func	hkShape_castRay	role	mksm/notes/black-maps.md:59	the ray) → shape raycast `0x3A8468` → `0x3CA9D8` (MOPP long-ray query setup: 1/scale, ×2^-16 quantis
+3a9088	func	hkShape2_castRay	role	mksm/notes/black-maps.md:61	`0x3A9088`. The trace of one failing frame is in `logs/black/traces/probe_0c_f9230.txt` (frame 9230;
+3c9b80	func	hkMopp_RayVM	role	mksm/notes/black-maps.md:60	sub/mul bc) → **`0x3C9B80` MOPP ray virtual machine** (bytecode walker; recursive). A second shape t
+3ca9d8	func	hkMopp_LongRayQuerySetup	role	mksm/notes/black-maps.md:59	the ray) → shape raycast `0x3A8468` → `0x3CA9D8` (MOPP long-ray query setup: 1/scale, ×2^-16 quantis
+40a6b0	func	hkTransform_Ray	role	mksm/notes/black-maps.md:58	the Havok world castRay → `0x3A1598` (broadphase walk) → `0x338BC8` (per collidable; calls `0x40A6B0
+43a0f0	func	Mwply_Stop	role	mksm/notes/ipu-gaps.md:160	| 0x26fd8c movie loop | mwPlyInitSfdFx 0x43cb40, 0x26f918, 0x26fbf0, stop 0x43a0f0 (-> 0x43a170), de
+43a648	func	MwsfdCrePrm_CheckBuffmt	role	mksm/notes/ipu-gaps.md:164	cc20/0x45cd2c, MwsfdCrePrm buffmt check 0x43a648 (buffmt at cprm+0x24; the game leaves it 0 -> inter
+43a7e0	func	mwPlyCalcWorkCprmSfd	named	mksm/notes/ipu-gaps.md:158	| 0x26f918 create+start | mwPlyCalcWorkCprmSfd 0x43a7e0, **mwPlyCreateSofdec 0x43b670**, mwPlySetFrm
+43b670	func	mwPlyCreateSofdec	named	mksm/notes/ipu-gaps.md:158	| 0x26f918 create+start | mwPlyCalcWorkCprmSfd 0x43a7e0, **mwPlyCreateSofdec 0x43b670**, mwPlySetFrm
+43bbf0	func	Mwply_Destroy	role	mksm/notes/ipu-gaps.md:160	0, stop 0x43a0f0 (-> 0x43a170), destroy 0x43bbf0 (-> mwSfdStop 0x43d630), mwPlyFinishSfdFx? 0x43ce78
+43bf68	func	mwPlySetFrmSync	named	mksm/notes/ipu-gaps.md:158	reateSofdec 0x43b670**, mwPlySetFrmSync 0x43bf68, 0x43e910, 0x43a0d8, 0x43e980, mwPlySetAudioCh 0x43
+43bfc0	func	mwPlyGetCurFrm	named	mksm/notes/ipu-gaps.md:159	| 0x26fbf0 per frame | **mwPlyGetCurFrm 0x43bfc0**, **mwPlyRelCurFrm 0x43c6a8**, **mwPlyGetStat 0x43
+43c6a8	func	mwPlyRelCurFrm	named	mksm/notes/ipu-gaps.md:159	| 0x26fbf0 per frame | **mwPlyGetCurFrm 0x43bfc0**, **mwPlyRelCurFrm 0x43c6a8**, **mwPlyGetStat 0x43
+43cb40	func	mwPlyInitSfdFx	named	mksm/notes/ipu-gaps.md:160	| 0x26fd8c movie loop | mwPlyInitSfdFx 0x43cb40, 0x26f918, 0x26fbf0, stop 0x43a0f0 (-> 0x43a170), de
+43cb8c	site	Mwsfd_VersionStrXref	role	mksm/notes/ipu-gaps.md:164	use 0x43d758, MWSFD version string xref 0x43cb8c, SFD core version 0x443f48, M2V version 0x45cc20/0x
+43cd00	site	Mwsfsvr_ThreadSetup	role	mksm/notes/ipu-gaps.md:164	Other MWSFD anchors: mwPlySfdInit 0x43cfe8, mwPlyExecSvrHndl 0x43fbcc, MWSFSVR thread setup 0x43cd00
+43ce78	func	mwPlyFinishSfdFx	role	mksm/notes/ipu-gaps.md:160	 mwSfdStop 0x43d630), mwPlyFinishSfdFx? 0x43ce78 |
+43cfe8	func	mwPlySfdInit	named	mksm/notes/ipu-gaps.md:164	Other MWSFD anchors: mwPlySfdInit 0x43cfe8, mwPlyExecSvrHndl 0x43fbcc, MWSFSVR thread setup 0x43cd00
+43d4f8	func	mwPlyStartFname	named	mksm/notes/ipu-gaps.md:158	l 0x43e120, 0x43a080, **mwPlyStartFname 0x43d4f8 (-> 0x43d510)** |
+43d630	func	mwSfdStop	named	mksm/notes/ipu-gaps.md:160	43a170), destroy 0x43bbf0 (-> mwSfdStop 0x43d630), mwPlyFinishSfdFx? 0x43ce78 |
+43d758	func	mwPlyPause	named	mksm/notes/ipu-gaps.md:164	SFSVR thread setup 0x43cd00, mwPlyPause 0x43d758, MWSFD version string xref 0x43cb8c, SFD core versi
+43df10	func	mwPlySetAudioCh	named	mksm/notes/ipu-gaps.md:158	10, 0x43a0d8, 0x43e980, mwPlySetAudioCh 0x43df10, mwPlySetOutVol 0x43e120, 0x43a080, **mwPlyStartFna
+43e058	func	mwPlyGetStat	named	mksm/notes/ipu-gaps.md:159	PlyRelCurFrm 0x43c6a8**, **mwPlyGetStat 0x43e058** |
+43e120	func	mwPlySetOutVol	named	mksm/notes/ipu-gaps.md:158	wPlySetAudioCh 0x43df10, mwPlySetOutVol 0x43e120, 0x43a080, **mwPlyStartFname 0x43d4f8 (-> 0x43d510)
+43fbcc	site	mwPlyExecSvrHndl_Ref	role	mksm/notes/ipu-gaps.md:164	Other MWSFD anchors: mwPlySfdInit 0x43cfe8, mwPlyExecSvrHndl 0x43fbcc, MWSFSVR thread setup 0x43cd00
+443f48	site	Sfd_VersionStrXref	role	mksm/notes/ipu-gaps.md:164	 string xref 0x43cb8c, SFD core version 0x443f48, M2V version 0x45cc20/0x45cd2c, MwsfdCrePrm buffmt 
+44bd38	func	Sfd_BuildIpuDmaChain	role	mksm/notes/ipu-gaps.md:73	 0) tags, 0x80 QW (2 KB) each, built at 0x44bd38.
+44c0d8	func	Sfd_SupplyNodata	role	mksm/notes/ipu-gaps.md:40	CbNodata -> SFD supply 0x44c0d8.
+44c648	site	Sfd_Copy_BCLR	role	mksm/notes/ipu-gaps.md:48	** in RestartDMA 0x46f3bc (and SFD copy 0x44c648) | FB = saved IPU_BP.BP (0..127) |
+45cc20	site	M2v_VersionStrXref_a	role	mksm/notes/ipu-gaps.md:164	 SFD core version 0x443f48, M2V version 0x45cc20/0x45cd2c, MwsfdCrePrm buffmt check 0x43a648 (buffmt
+45cd2c	site	M2v_VersionStrXref_b	role	mksm/notes/ipu-gaps.md:164	 version 0x443f48, M2V version 0x45cc20/0x45cd2c, MwsfdCrePrm buffmt check 0x43a648 (buffmt at cprm+
+462780	site	Sndfi_BindSndf	role	mksm/notes/audio-gaps.md:265	| 0x534E4446 'SNDF' | SNDFI (IOP) | EE 0x462780 |
+4627f8	site	Sndfi_BindSfsv	role	mksm/notes/audio-gaps.md:266	| 0x53465356 'SFSV' | SNDFI (IOP) | EE 0x4627F8 |
+467c9c	site	Mpeg_SetMP1_Create	role	mksm/notes/ipu-gaps.md:60	- MP1 set at create/reset (0x467c9c, 0x4689c0), cleared by sequence_extension (0x46e744).
+467d48	func	sceMpegCreate	named	mksm/notes/ipu-gaps.md:32	libmpeg internals worth naming: sceMpegCreate 0x467d48, sceMpegReset 0x468950 (likely), core get-pic
+468038	site	Ipu_Reset_a	role	mksm/notes/ipu-gaps.md:62	- PCT per picture (0x46c084). RST = 0x40000000 at init/errors (0x468038, 0x469ac0 if ECD, 0x46a1f4, 
+468048	func	sceMpeg_GetPictureCore	role	mksm/notes/ipu-gaps.md:33	0x468048, sceMpegGetPicture (RGB32 via CSC) 0x4688b0, sceMpegGetPictureRAW8 0x4688f8, callback dispa
+4688b0	func	sceMpegGetPicture	named	mksm/notes/ipu-gaps.md:33	0x468048, sceMpegGetPicture (RGB32 via CSC) 0x4688b0, sceMpegGetPictureRAW8 0x4688f8, callback dispa
+4688f8	func	sceMpegGetPictureRAW8	named	mksm/notes/ipu-gaps.md:33	0x468048, sceMpegGetPicture (RGB32 via CSC) 0x4688b0, sceMpegGetPictureRAW8 0x4688f8, callback dispa
+468950	func	sceMpegReset	role	mksm/notes/ipu-gaps.md:32	libmpeg internals worth naming: sceMpegCreate 0x467d48, sceMpegReset 0x468950 (likely), core get-pic
+4689c0	site	Mpeg_SetMP1_Reset	role	mksm/notes/ipu-gaps.md:60	- MP1 set at create/reset (0x467c9c, 0x4689c0), cleared by sequence_extension (0x46e744).
+468a58	func	Mpeg_CallbackDispatch	role	mksm/notes/ipu-gaps.md:34	0x468a58 (type 2 CbStopDMA / 3 CbRestartDMA / 4 CbBackground), CbNodata 0x468ad0, CSC driver 0x469a5
+468ad0	func	Mpeg_CbNodata	role	mksm/notes/ipu-gaps.md:34	0x468a58 (type 2 CbStopDMA / 3 CbRestartDMA / 4 CbBackground), CbNodata 0x468ad0, CSC driver 0x469a5
+468d88	func	M2v_CbStopDMA	role	mksm/notes/ipu-gaps.md:39	M2V callbacks: CbStopDMA 0x468d88 -> sceIpuStopDMA, CbRestartDMA 0x468db0 -> sceIpuRestartDMA,
+468db0	func	M2v_CbRestartDMA	role	mksm/notes/ipu-gaps.md:39	M2V callbacks: CbStopDMA 0x468d88 -> sceIpuStopDMA, CbRestartDMA 0x468db0 -> sceIpuRestartDMA,
+469940	site	Ipu_DmacEnableOrClear_a	role	mksm/notes/ipu-gaps.md:76	078, plus EnableDmac, D_STAT CIS clear (0x469940, 0x469b80). The CSC driver busy-waits on a stack co
+4699b4	site	Ipu_CSC_Full_a	role	mksm/notes/ipu-gaps.md:54	| CSC | 0x469c90, 0x469e40 (MBC = n), 0x4699b4 / 0x469fdc (MBC 1023, from ch3 handler 0x469f30), 0x4
+4699d8	site	Csc_BusyWait	role	mksm/notes/ipu-gaps.md:76	unter that only the handler increments (0x4699d8).
+469a58	func	Mpeg_CscDriver	role	mksm/notes/ipu-gaps.md:34	kground), CbNodata 0x468ad0, CSC driver 0x469a58,
+469ac0	site	Ipu_Reset_b	role	mksm/notes/ipu-gaps.md:62	- PCT per picture (0x46c084). RST = 0x40000000 at init/errors (0x468038, 0x469ac0 if ECD, 0x46a1f4, 
+469afc	site	Ipu_BCLR_a	role	mksm/notes/ipu-gaps.md:48	| BCLR | 0x469afc, 0x46e358/0x46e458 (via 0x46ed18), 0x46f584, 0x46f73c; **BCLR FB=BP** in RestartDM
+469b80	site	Ipu_DmacEnableOrClear_b	role	mksm/notes/ipu-gaps.md:76	EnableDmac, D_STAT CIS clear (0x469940, 0x469b80). The CSC driver busy-waits on a stack counter that
+469c90	site	Ipu_CSC_a	role	mksm/notes/ipu-gaps.md:54	| CSC | 0x469c90, 0x469e40 (MBC = n), 0x4699b4 / 0x469fdc (MBC 1023, from ch3 handler 0x469f30), 0x4
+469e40	site	Ipu_CSC_b	role	mksm/notes/ipu-gaps.md:54	| CSC | 0x469c90, 0x469e40 (MBC = n), 0x4699b4 / 0x469fdc (MBC 1023, from ch3 handler 0x469f30), 0x4
+469f30	func	Ipu_Ch3DmacHandler	role	mksm/notes/ipu-gaps.md:54	| CSC | 0x469c90, 0x469e40 (MBC = n), 0x4699b4 / 0x469fdc (MBC 1023, from ch3 handler 0x469f30), 0x4
+469fdc	site	Ipu_CSC_FromCh3	role	mksm/notes/ipu-gaps.md:54	| CSC | 0x469c90, 0x469e40 (MBC = n), 0x4699b4 / 0x469fdc (MBC 1023, from ch3 handler 0x469f30), 0x4
+46a064	site	Ipu_CSC_Remainder	role	mksm/notes/ipu-gaps.md:54	 (MBC 1023, from ch3 handler 0x469f30), 0x46a064 (remainder) | **OFM=0 (RGB32), DTE=0** always. 640x
+46a078	func	Ipu_Ch4DmacHandler	role	mksm/notes/ipu-gaps.md:76	- AddDmacHandler(3) 0x469f30 and AddDmacHandler(4) 0x46a078, plus EnableDmac, D_STAT CIS clear (0x46
+46a1f4	site	Ipu_Reset_c	role	mksm/notes/ipu-gaps.md:62	- PCT per picture (0x46c084). RST = 0x40000000 at init/errors (0x468038, 0x469ac0 if ECD, 0x46a1f4, 
+46a200	func	Mpeg_BdecErrorHandler	role	mksm/notes/ipu-gaps.md:35	BDEC-error handler 0x46a200 ("Error code detected(BDEC)"), picture/slice loops 0x46b4e8 / 0x46b728,
+46a240	site	Ipu_Reset_d	role	mksm/notes/ipu-gaps.md:62	s (0x468038, 0x469ac0 if ECD, 0x46a1f4, 0x46a240, 0x46f550, 0x46f704).
+46b4e8	func	Mpeg_PictureLoop	role	mksm/notes/ipu-gaps.md:35	BDEC-error handler 0x46a200 ("Error code detected(BDEC)"), picture/slice loops 0x46b4e8 / 0x46b728,
+46b5e8	site	Mpeg_EcdWait	role	mksm/notes/ipu-gaps.md:123	- Today BDEC BadCode leaves ch3 waiting forever. libmpeg exits its D3 wait on ECD (0x46b5e8), so ECD
+46b728	func	Mpeg_SliceLoop	role	mksm/notes/ipu-gaps.md:35	BDEC-error handler 0x46a200 ("Error code detected(BDEC)"), picture/slice loops 0x46b4e8 / 0x46b728,
+46bab8	site	Ipu_VDEC_MV_a	role	mksm/notes/ipu-gaps.md:49	| VDEC | TBL0 MBAI 0x46c5c4; TBL1 MBType 0x46c0a8; TBL2 MV 0x46bab8/0x46bc7c; TBL3 DMV 0x46bbec/0x46
+46bb14	site	Ipu_VDEC_InvalidCheck_b	role	mksm/notes/ipu-gaps.md:49	DATA==0 means invalid code** (0x46c618, 0x46bb14). MBAI 0x22 = stuffing, 0x23 = escape(+33) |
+46bbec	site	Ipu_VDEC_DMV_a	role	mksm/notes/ipu-gaps.md:49	| VDEC | TBL0 MBAI 0x46c5c4; TBL1 MBType 0x46c0a8; TBL2 MV 0x46bab8/0x46bc7c; TBL3 DMV 0x46bbec/0x46
+46bc7c	site	Ipu_VDEC_MV_b	role	mksm/notes/ipu-gaps.md:49	| VDEC | TBL0 MBAI 0x46c5c4; TBL1 MBType 0x46c0a8; TBL2 MV 0x46bab8/0x46bc7c; TBL3 DMV 0x46bbec/0x46
+46bdd8	site	Ipu_VDEC_DMV_b	role	mksm/notes/ipu-gaps.md:49	MV 0x46bab8/0x46bc7c; TBL3 DMV 0x46bbec/0x46bdd8 | FB=0. Result read as 64-bit `ld IPU_CMD`; low 16 
+46c020	func	Mpeg_DecodeMacroblock	role	mksm/notes/ipu-gaps.md:36	macroblock decoder 0x46c020, MBAI loop 0x46c5a0, wait-not-busy 0x46cbe8 -> 0x46c6f0,
+46c084	site	Ipu_SetPCT	role	mksm/notes/ipu-gaps.md:62	- PCT per picture (0x46c084). RST = 0x40000000 at init/errors (0x468038, 0x469ac0 if ECD, 0x46a1f4, 
+46c0a8	site	Ipu_VDEC_MBType	role	mksm/notes/ipu-gaps.md:49	| VDEC | TBL0 MBAI 0x46c5c4; TBL1 MBType 0x46c0a8; TBL2 MV 0x46bab8/0x46bc7c; TBL3 DMV 0x46bbec/0x46
+46c434	site	Ipu_BDEC	role	mksm/notes/ipu-gaps.md:51	| BDEC | 0x46c434 | `0x20000000 | MBI<<27 | DCR<<26 | DT<<25 | QSC<<16`, FB=0; output RAW16 768 B ->
+46c5a0	site	Mpeg_MbaiLoop	role	mksm/notes/ipu-gaps.md:36	macroblock decoder 0x46c020, MBAI loop 0x46c5a0, wait-not-busy 0x46cbe8 -> 0x46c6f0,
+46c5c4	site	Ipu_VDEC_MBAI	role	mksm/notes/ipu-gaps.md:49	| VDEC | TBL0 MBAI 0x46c5c4; TBL1 MBType 0x46c0a8; TBL2 MV 0x46bab8/0x46bc7c; TBL3 DMV 0x46bbec/0x46
+46c618	site	Ipu_VDEC_InvalidCheck_a	role	mksm/notes/ipu-gaps.md:49	 **(int32)DATA==0 means invalid code** (0x46c618, 0x46bb14). MBAI 0x22 = stuffing, 0x23 = escape(+33
+46c6f0	func	Ipu_WaitNotBusyInner	role	mksm/notes/ipu-gaps.md:36	macroblock decoder 0x46c020, MBAI loop 0x46c5a0, wait-not-busy 0x46cbe8 -> 0x46c6f0,
+46c858	func	Ipu_WaitReadCmd	role	mksm/notes/ipu-gaps.md:37	wait-and-read-IPU_CMD 0x46c858, getbits 0x46c9d8, showbits 0x46cac0, skipbits 0x46cb50,
+46c9d8	func	Ipu_GetBits	role	mksm/notes/ipu-gaps.md:37	wait-and-read-IPU_CMD 0x46c858, getbits 0x46c9d8, showbits 0x46cac0, skipbits 0x46cb50,
+46ca1c	site	Ipu_FDEC_a	role	mksm/notes/ipu-gaps.md:50	| FDEC | 0x46ca1c, 0x46ca5c, 0x46cb08, 0x46cb7c | FB=0 (refill) and FB=n 1..32 (advance n, peek next
+46ca5c	site	Ipu_FDEC_b	role	mksm/notes/ipu-gaps.md:50	| FDEC | 0x46ca1c, 0x46ca5c, 0x46cb08, 0x46cb7c | FB=0 (refill) and FB=n 1..32 (advance n, peek next
+46cac0	func	Ipu_ShowBits	role	mksm/notes/ipu-gaps.md:37	wait-and-read-IPU_CMD 0x46c858, getbits 0x46c9d8, showbits 0x46cac0, skipbits 0x46cb50,
+46cb08	site	Ipu_FDEC_c	role	mksm/notes/ipu-gaps.md:50	| FDEC | 0x46ca1c, 0x46ca5c, 0x46cb08, 0x46cb7c | FB=0 (refill) and FB=n 1..32 (advance n, peek next
+46cb50	func	Ipu_SkipBits	role	mksm/notes/ipu-gaps.md:37	wait-and-read-IPU_CMD 0x46c858, getbits 0x46c9d8, showbits 0x46cac0, skipbits 0x46cb50,
+46cb7c	site	Ipu_FDEC_d	role	mksm/notes/ipu-gaps.md:50	| FDEC | 0x46ca1c, 0x46ca5c, 0x46cb08, 0x46cb7c | FB=0 (refill) and FB=n 1..32 (advance n, peek next
+46cbe8	func	Ipu_WaitNotBusy	role	mksm/notes/ipu-gaps.md:36	macroblock decoder 0x46c020, MBAI loop 0x46c5a0, wait-not-busy 0x46cbe8 -> 0x46c6f0,
+46dd08	func	Ipu_BdecOutputDma	role	mksm/notes/ipu-gaps.md:51	B=0; output RAW16 768 B -> ch3 (QWC 48, 0x46dd08) |
+46e304	site	Ipu_SETIQ_Bitstream_a	role	mksm/notes/ipu-gaps.md:52	| SETIQ | IQM=0/1 straight from bitstream (0x46e304, 0x46e404); from memory via ch4 4 QW (0x46e3ac, 
+46e358	site	Ipu_BCLR_b	role	mksm/notes/ipu-gaps.md:48	| BCLR | 0x469afc, 0x46e358/0x46e458 (via 0x46ed18), 0x46f584, 0x46f73c; **BCLR FB=BP** in RestartDM
+46e3ac	site	Ipu_SETIQ_Mem_a	role	mksm/notes/ipu-gaps.md:52	| SETIQ | IQM=0/1 straight from bitstream (0x46e304, 0x46e404); from memory via ch4 4 QW (0x46e3ac, 
+46e404	site	Ipu_SETIQ_Bitstream_b	role	mksm/notes/ipu-gaps.md:52	| SETIQ | IQM=0/1 straight from bitstream (0x46e304, 0x46e404); from memory via ch4 4 QW (0x46e3ac, 
+46e458	site	Ipu_BCLR_c	role	mksm/notes/ipu-gaps.md:48	| BCLR | 0x469afc, 0x46e358/0x46e458 (via 0x46ed18), 0x46f584, 0x46f73c; **BCLR FB=BP** in RestartDM
+46e4b8	site	Ipu_SETIQ_Mem_b	role	mksm/notes/ipu-gaps.md:52	4); from memory via ch4 4 QW (0x46e3ac, 0x46e4b8, default matrices 0x560b00/0x560b40, bracketed by C
+46e6f8	func	Mpeg_SequenceExtension	role	mksm/notes/ipu-gaps.md:38	sequence_extension 0x46e6f8, picture_coding_extension 0x46e940, sequence-header matrices ~0x46e2c0.
+46e744	site	Mpeg_ClearMP1_SeqExt	role	mksm/notes/ipu-gaps.md:60	- MP1 set at create/reset (0x467c9c, 0x4689c0), cleared by sequence_extension (0x46e744).
+46e940	func	Mpeg_PictureCodingExtension	role	mksm/notes/ipu-gaps.md:38	sequence_extension 0x46e6f8, picture_coding_extension 0x46e940, sequence-header matrices ~0x46e2c0.
+46e9c4	site	Ipu_SetIDP	role	mksm/notes/ipu-gaps.md:61	- IDP (0x46e9c4), QST (0x46ea44), IVF (0x46ea74), AS (0x46eaa4) copied straight from picture_coding_
+46ea44	site	Ipu_SetQST	role	mksm/notes/ipu-gaps.md:61	- IDP (0x46e9c4), QST (0x46ea44), IVF (0x46ea74), AS (0x46eaa4) copied straight from picture_coding_
+46ea74	site	Ipu_SetIVF	role	mksm/notes/ipu-gaps.md:61	- IDP (0x46e9c4), QST (0x46ea44), IVF (0x46ea74), AS (0x46eaa4) copied straight from picture_coding_
+46eaa4	site	Ipu_SetAS	role	mksm/notes/ipu-gaps.md:61	- IDP (0x46e9c4), QST (0x46ea44), IVF (0x46ea74), AS (0x46eaa4) copied straight from picture_coding_
+46ed18	func	Ipu_BCLR_Helper	role	mksm/notes/ipu-gaps.md:48	| BCLR | 0x469afc, 0x46e358/0x46e458 (via 0x46ed18), 0x46f584, 0x46f73c; **BCLR FB=BP** in RestartDM
+46f218	func	sceIpuStopDMA	named	mksm/notes/ipu-gaps.md:30	| 0x46f128-0x46f740 | Sony libipu (sceIpuStopDMA 0x46f218, sceIpuRestartDMA 0x46f300, sceIpuSync 0x4
+46f300	func	sceIpuRestartDMA	named	mksm/notes/ipu-gaps.md:30	| 0x46f128-0x46f740 | Sony libipu (sceIpuStopDMA 0x46f218, sceIpuRestartDMA 0x46f300, sceIpuSync 0x4
+46f3bc	site	Ipu_BCLR_RestartDMA	role	mksm/notes/ipu-gaps.md:48	 0x46f73c; **BCLR FB=BP** in RestartDMA 0x46f3bc (and SFD copy 0x44c648) | FB = saved IPU_BP.BP (0..
+46f450	func	sceIpuSync	named	mksm/notes/ipu-gaps.md:30	, sceIpuRestartDMA 0x46f300, sceIpuSync 0x46f450, sceIpuInit 0x46f530) |
+46f530	func	sceIpuInit	named	mksm/notes/ipu-gaps.md:30	46f300, sceIpuSync 0x46f450, sceIpuInit 0x46f530) |
+46f550	site	Ipu_Reset_e	role	mksm/notes/ipu-gaps.md:62	8, 0x469ac0 if ECD, 0x46a1f4, 0x46a240, 0x46f550, 0x46f704).
+46f584	site	Ipu_BCLR_d	role	mksm/notes/ipu-gaps.md:48	| BCLR | 0x469afc, 0x46e358/0x46e458 (via 0x46ed18), 0x46f584, 0x46f73c; **BCLR FB=BP** in RestartDM
+46f5c4	site	Ipu_Init_FifoMatrixWrite	role	mksm/notes/ipu-gaps.md:52	A); sceIpuInit via 8x `sq IPU_in_FIFO` (0x46f5c4..0x46f63c) | |
+46f698	site	Ipu_SETVQ_Init	role	mksm/notes/ipu-gaps.md:53	| SETVQ | sceIpuInit only (0x46f698) | |
+46f6cc	site	Ipu_SETTH_Init	role	mksm/notes/ipu-gaps.md:55	| SETTH | sceIpuInit (0x46f6cc) | TH0=TH1=0 |
+46f704	site	Ipu_Reset_f	role	mksm/notes/ipu-gaps.md:62	0 if ECD, 0x46a1f4, 0x46a240, 0x46f550, 0x46f704).
+46f73c	site	Ipu_BCLR_e	role	mksm/notes/ipu-gaps.md:48	| BCLR | 0x469afc, 0x46e358/0x46e458 (via 0x46ed18), 0x46f584, 0x46f73c; **BCLR FB=BP** in RestartDM
+475918	func	sprintf	named	analysis/exports/web-cheats-mksm.txt:165	PxPad_GetRawButtons 0x2C7360; get_string 0x1E6EF0; printf 0x482610; sprintf 0x475918;
+47ffc4	site	_SetTLBEntry_Syscall	role	mksm/notes/ee-syscall-gaps.md:16	| 0x56 | _SetTLBEntry | 0x0047FFC4, 0x00487944 | 4 | 0x00487A30, 0x00487A98, 0x00487B10, 0x00487B54 
+4801a8	site	Gs_PrivRegRead	role	mksm/notes/determinism.md:98	| IMR/BUSDIR/SIGLBLID reads | 1 (frame 0, pc 0x4801A8) | 0 | 0 | 0 | 0 (the 6,000 counted are the ha
+480228	site	Cdvd_RtcRead	role	mksm/notes/determinism.md:100	| Guest RTC reads (`cdvd.cpp:250`, `cdvdfsv.cpp:73`) | 1 (frame 139, EE pc 0x480228) | — | 0 | 0 | 0
+4802d4	site	_InitTLB_Syscall	role	mksm/notes/ee-syscall-gaps.md:18	| 0x82 | _InitTLB | 0x004802D4 | 1 | 0x0048797C | Only when GetMemorySize()!=32MB (0x487950 else-bra
+482610	func	printf	named	analysis/exports/web-cheats-mksm.txt:165	PxPad_GetRawButtons 0x2C7360; get_string 0x1E6EF0; printf 0x482610; sprintf 0x475918;
+482c48	site	CheatHook_Mastercode	role	analysis/exports/web-cheats-mksm.txt:253	90482C48 0C120ABA -> hook 0x482C48 (jal 0x482AE8)
+485af8	data	Str_CriAdxiBootArgs	role	mksm/notes/audio-gaps.md:62	**Boot arguments** (from EE strings at 0x485AF8): `CRI_ADXI sdinit=0 spucore=2`.
+4860c0	func	FindAddress	named	mksm/notes/ee-syscall-gaps.md:31	- 0x83 FindAddress: text@0x00564098->0x004860C0 -> **guest** — FindAddress. _InitSys installs SetSys
+486118	func	FindSyscallTableBase	role	mksm/notes/ee-syscall-gaps.md:31	nstalls SetSyscall(0x83, 0x4860C0) then 0x486118 loops until two FindAddress results agree on the sy
+486228	func	_InitSys	named	mksm/notes/ee-syscall-gaps.md:28	*guest** — Copy (kCopy). crt0 _InitSys (0x486228) installs SetSyscall(0x5A, guest memcpy) before use
+486350	func	InitSys_CopyKernelPatch	role	mksm/notes/ee-syscall-gaps.md:28	; calls then run recompiled guest code. 0x486350 copies a 1960-byte patch to 0x80074000.
+4865b8	func	Boot_MemSetup	role	mksm/notes/ee-syscall-gaps.md:16	x00487B54 | BOOT PATH. crt0 0x11C2B0 -> 0x4865B8 -> 0x487950: GetMemorySize()==32MB -> 0x487990 call
+487944	site	_SetTLBEntry_Syscall2	role	mksm/notes/ee-syscall-gaps.md:16	| 0x56 | _SetTLBEntry | 0x0047FFC4, 0x00487944 | 4 | 0x00487A30, 0x00487A98, 0x00487B10, 0x00487B54 
+487950	func	InitTLB_ByMemSize	role	mksm/notes/ee-syscall-gaps.md:16	BOOT PATH. crt0 0x11C2B0 -> 0x4865B8 -> 0x487950: GetMemorySize()==32MB -> 0x487990 calls _SetTLBEnt
+48797c	site	Call_InitTLB	role	mksm/notes/ee-syscall-gaps.md:18	| 0x82 | _InitTLB | 0x004802D4 | 1 | 0x0048797C | Only when GetMemorySize()!=32MB (0x487950 else-bra
+487990	func	SetTLBEntries32MB	role	mksm/notes/ee-syscall-gaps.md:16	8 -> 0x487950: GetMemorySize()==32MB -> 0x487990 calls _SetTLBEntry 4x. Flat memory needs no TLB: no
+487a30	site	Call_SetTLBEntry1	role	mksm/notes/ee-syscall-gaps.md:16	| 0x56 | _SetTLBEntry | 0x0047FFC4, 0x00487944 | 4 | 0x00487A30, 0x00487A98, 0x00487B10, 0x00487B54 
+487a98	site	Call_SetTLBEntry2	role	mksm/notes/ee-syscall-gaps.md:16	| 0x56 | _SetTLBEntry | 0x0047FFC4, 0x00487944 | 4 | 0x00487A30, 0x00487A98, 0x00487B10, 0x00487B54 
+487b10	site	Call_SetTLBEntry3	role	mksm/notes/ee-syscall-gaps.md:16	| 0x56 | _SetTLBEntry | 0x0047FFC4, 0x00487944 | 4 | 0x00487A30, 0x00487A98, 0x00487B10, 0x00487B54 
+487b54	site	Call_SetTLBEntry4	role	mksm/notes/ee-syscall-gaps.md:16	| 0x56 | _SetTLBEntry | 0x0047FFC4, 0x00487944 | 4 | 0x00487A30, 0x00487A98, 0x00487B10, 0x00487B54 
+487b84	site	Cheat_GodModeCodeCave	role	analysis/exports/web-cheats-mksm.txt:276	GodMode (ColdFusion73, AR1/GS1 RAW): hook 0x2FEE1C -> j 0x487B84 code cave:

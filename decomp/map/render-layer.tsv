@@ -1,0 +1,1046 @@
+order	level	addr	size	name	leaf	n_callers	callees_in_layer	callees_outside	source_file	vif_gif_dma	dmac_regs	sq	vu0	global_refs	scc
+0	0	211008	44	fn_211008	1	0			Utility/util_MemoryManager.cpp			0	0	1	
+1	0	211038	104	Memory_ValidatePointer	1	0			Utility/util_MemoryManager.cpp			0	0	1	
+2	0	2110a0	8	fn_2110a0	1	0			Utility/util_MemoryManager.cpp			0	0	0	
+3	0	2110a8	32	fn_2110a8	1	0			Utility/util_MemoryManager.cpp			0	0	1	
+4	0	2110c8	52	fn_2110c8	1	0			Utility/util_MemoryManager.cpp			0	0	1	
+5	0	211100	68	PxNewFunction	0	76		Memory_AllocBlock	Utility/util_New.cpp			0	0	2	
+6	0	211148	316	fn_211148	0	3		fn_474dc4	Ps2/FileIODrv/FileIODrv.cpp			0	0	4	
+7	0	211288	588	fn_211288	0	6		fn_4749a8,fn_474dc4	Ps2/FileIODrv/FileIODrv.cpp			3	0	12	
+8	0	211d08	44	fn_211d08	1	0			Ps2/FileIODrv/FileIODrv.cpp			0	0	0	
+9	0	211d38	164	fn_211d38	1	0			Ps2/FileIODrv/FileIODrv.cpp			0	0	0	
+10	0	211de0	60	CD_Initialise	0	1		sceCdInit,sceCdMmode	Ps2/FileIODrv/FileIODrv.cpp			0	0	1	
+11	0	211e20	272	fn_211e20	1	0			Ps2/FileIODrv/FileIODrv.cpp			0	0	3	
+12	0	212058	64	fn_212058	1	0			Ps2/FileIODrv/FileIODrv.cpp	STMASK=1		0	0	0	
+13	0	212098	48	fn_212098	1	0			Ps2/FileIODrv/FileIODrv.cpp			0	0	1	
+14	0	2120c8	32	fn_2120c8	1	0			Ps2/FileIODrv/FileIODrv.cpp			0	0	1	
+15	0	2120e8	28	fn_2120e8	1	0			Ps2/FileIODrv/FileIODrv.cpp			0	0	1	
+16	0	212108	8	fn_212108	1	0			Ps2/FileIODrv/FileIODrv.cpp			0	0	0	
+17	0	212110	232	AsyncProcessLoad	0	0		cPxFileInterface_StartFileLoading,cPxFileInterface_FileLoadStatus,cPxFileInterface_CloseFileHandle	Ps2/FileIODrv/FileIODrv.cpp			3	0	4	
+18	0	2121f8	72	AdjustHDLoadInfo	0	0		sceLseek	Ps2/FileIODrv/FileIODrv.cpp			1	0	2	
+19	0	212240	132	StartAsyncHDLoad	0	0		FastMemset,sceClose	Ps2/FileIODrv/FileIODrv.cpp			3	0	2	
+20	0	212350	44	GetAsyncFileOffset	1	2			Ps2/FileIODrv/FileIODrv.cpp			0	0	1	
+21	0	212380	32	AdjustLoadInfo	1	1			Ps2/FileIODrv/FileIODrv.cpp			0	0	1	
+22	0	2123a0	28	StartAsyncLoadFile	1	1			Ps2/FileIODrv/FileIODrv.cpp			0	0	1	
+23	0	2123c0	8	fn_2123c0	1	0			Ps2/FileIODrv/FileIODrv.cpp			0	0	0	
+24	0	2123c8	232	AsyncLoadStatus	0	1		cPxFileInterface_StartFileLoading,cPxFileInterface_FileLoadStatus,cPxFileInterface_CloseFileHandle	Ps2/FileIODrv/FileIODrv.cpp			3	0	4	
+25	0	2124b0	12	fn_2124b0	1	9			Ps2/FileIODrv/FileIODrv.cpp			0	0	0	
+26	0	2124c0	188	fn_2124c0	1	13			Ps2/FileIODrv/FileIODrv.cpp			0	0	0	
+27	0	212580	8	fn_212580	1	0			Ps2/FileIODrv/FileIODrv.cpp			0	0	0	
+28	0	212588	8	fn_212588	1	0			Ps2/FileIODrv/FileIODrv.cpp			0	0	0	
+29	0	212a00	32	fn_212a00	0	0		scePadEnd				0	0	0	
+30	0	212a20	8	fn_212a20	1	1						0	0	0	
+31	0	212a28	72	fn_212a28	1	0						0	0	0	
+32	0	212be0	228	fn_212be0	0	2		fn_2c7668				4	0	4	
+33	0	212cc8	80	Pad_SetMotorMask	1	0						0	0	2	
+34	0	212d18	24	fn_212d18	1	0						0	0	1	
+35	0	212d30	12	fn_212d30	1	0						0	0	0	
+36	0	2135a0	8	fn_2135a0	1	2			Ps2/Main/PS2Main.cpp			0	0	0	
+37	0	213648	692	fn_213648	0	0		fn_32cb68,fn_32cd08,fn_32d100				6	32	0	
+38	0	213900	128	fn_213900	1	1						0	20	0	
+39	0	213980	220	fn_213980	1	2						0	30	0	
+40	0	213a60	148	fn_213a60	1	1						0	25	0	
+41	0	213af8	124	fn_213af8	1	0						0	19	0	
+42	0	213b78	96	fn_213b78	1	3						0	17	0	
+43	0	213bd8	80	fn_213bd8	1	2						0	15	0	
+44	0	213c28	80	fn_213c28	1	7						0	15	0	
+45	0	213c78	32	fn_213c78	1	47						0	0	0	
+46	0	213c98	32	fn_213c98	1	26						0	0	0	
+47	0	213cb8	48	fn_213cb8	1	71						0	10	0	
+48	0	213ce8	120	fn_213ce8	1	73						0	28	0	
+49	0	213d60	136	fn_213d60	1	0						0	20	0	
+50	0	213de8	32	fn_213de8	1	28						0	6	0	
+51	0	213e08	36	sceVu0InnerProduct	1	22						0	5	0	
+52	0	213e30	48	fn_213e30	1	124						0	10	0	
+53	0	213e60	40	fn_213e60	1	0						0	8	0	
+54	0	213e88	72	sceVu0TransposeMatrix_213e88	1	9						4	0	0	
+55	0	213ed0	156	fn_213ed0	0	0		DIntr,fn_486008				2	21	0	
+56	0	213f70	232	fn_213f70	0	2		DIntr,fn_486008				2	40	0	
+57	0	214058	112	fn_214058	1	29						3	9	0	
+58	0	2140c8	24	fn_2140c8	1	116						0	4	0	
+59	0	2140e0	24	fn_2140e0	1	0						0	4	0	
+60	0	2140f8	24	fn_2140f8	1	178						0	4	0	
+61	0	214110	24	fn_214110	1	0						0	4	0	
+62	0	214128	24	fn_214128	1	11						0	4	0	
+63	0	214140	24	fn_214140	1	0						0	4	0	
+64	0	214158	24	fn_214158	1	0						0	4	0	
+65	0	214170	28	fn_214170	1	33						0	3	0	
+66	0	214190	24	fn_214190	1	1						0	4	0	
+67	0	2141a8	24	fn_2141a8	1	13						0	4	0	
+68	0	2141c0	68	fn_2141c0	1	0						0	10	0	
+69	0	214208	24	fn_214208	1	11						0	4	0	
+70	0	214220	24	fn_214220	1	33						0	4	0	
+71	0	214238	44	fn_214238	1	40						0	9	0	
+72	0	214268	24	fn_214268	1	0						0	4	0	
+73	0	214280	284	fn_214280	1	3						0	40	1	
+74	0	2143a0	284	fn_2143a0	1	6						0	40	1	
+75	0	2144c0	280	fn_2144c0	1	1						0	39	1	
+76	0	214638	28	fn_214638	1	112						0	3	0	
+77	0	214658	48	fn_214658	1	8						3	4	0	
+78	0	214688	16	fn_214688	1	285						1	0	0	
+79	0	214698	20	fn_214698	1	0						0	3	0	
+80	0	2146b0	20	fn_2146b0	1	0						0	3	0	
+81	0	2146c8	44	fn_2146c8	1	80						0	9	0	
+82	0	2146f8	124	fn_2146f8	1	0						0	23	1	
+83	0	214778	292	fn_214778	1	13						0	39	1	
+84	0	2148a0	296	fn_2148a0	1	15						0	40	1	
+85	0	2149c8	44	fn_2149c8	1	88						0	7	0	
+86	0	2149f8	296	fn_2149f8	1	38						0	40	1	
+87	0	214b20	352	fn_214b20	0	0		cosf,sinf				3	0	0	
+88	0	214c80	284	fn_214c80	1	0						0	0	0	
+89	0	214da0	212	fn_214da0	1	11						0	39	0	
+90	0	214eb0	884	fn_214eb0	1	21						0	119	3	
+91	0	215228	208	fn_215228	0	0		FastMemcpy				8	0	0	
+92	0	2152f8	76	fn_2152f8	1	2						0	15	0	
+93	0	215348	980	fn_215348	1	0						0	138	3	
+94	0	215720	96	fn_215720	0	3		FastMemset				2	0	0	
+95	0	215780	192	fn_215780	0	2		cosf,sinf				1	0	0	
+96	0	215840	180	fn_215840	0	1		fn_32cb68,fn_32cd08,fn_32d100				1	8	0	
+97	0	2158f8	268	fn_2158f8	0	2		fn_32ccc8,fn_32cd08,fn_32d128				3	19	0	
+98	0	215a08	392	fn_215a08	0	9		fn_32ccc8,fn_32cd08,fn_32d128				6	19	0	
+99	0	215b90	24	fn_215b90	1	0						1	0	1	
+100	0	215ba8	24	fn_215ba8	1	0						1	0	1	
+101	0	215bc0	24	fn_215bc0	1	0						1	0	1	
+102	0	215cf8	48	fn_215cf8	1	0						3	4	0	
+103	0	215d60	16	fn_215d60	1	0						0	0	1	
+104	0	215da0	80	fn_215da0	0	2		sqrtf				0	0	0	
+105	0	215df0	104	fn_215df0	0	5		cosf				0	0	0	
+106	0	215e58	104	fn_215e58	0	6		sinf				0	0	0	
+107	0	215ec0	88	fn_215ec0	0	13		cosf,sinf				2	0	0	
+108	0	215f18	168	fn_215f18	0	34		cosf,sinf				2	0	0	
+109	0	215fc0	228	fn_215fc0	0	4		cosf,sinf				2	0	0	
+110	0	2160a8	236	fn_2160a8	0	1		cosf,sinf				2	0	0	
+111	0	216198	320	fn_216198	0	0		fn_2f9530,fn_4753a0	Ps2/MemoryCard/SyncMemCard.cpp			9	0	8	
+112	0	2162d8	444	fn_2162d8	0	4		fn_2f9530,fn_4753a0,sprintf	Ps2/MemoryCard/SyncMemCard.cpp			9	0	9	
+113	0	216498	320	fn_216498	0	7		fn_2f9530,fn_4753a0	Ps2/MemoryCard/SyncMemCard.cpp			9	0	8	
+114	0	2165d8	380	fn_2165d8	0	5		fn_2f9530,fn_4753a0,sprintf	Ps2/MemoryCard/SyncMemCard.cpp			9	0	8	
+115	0	216758	388	fn_216758	0	4		fn_2f9530,fn_4753a0,sprintf	Ps2/MemoryCard/SyncMemCard.cpp			9	0	8	
+116	0	2168e0	480	fn_2168e0	0	4		fn_2f8cc0,fn_378258,fn_4753a0,sprintf	Ps2/MemoryCard/SyncMemCard.cpp			9	0	11	
+117	0	216ac0	396	fn_216ac0	0	4		fn_2f9530,fn_4753a0,sprintf	Ps2/MemoryCard/SyncMemCard.cpp			9	0	9	
+118	0	216c50	388	fn_216c50	0	1		fn_2f9530,fn_4753a0,sprintf	Ps2/MemoryCard/SyncMemCard.cpp			9	0	8	
+119	0	216dd8	376	fn_216dd8	0	1		fn_2f9530,fn_4753a0,sprintf	Ps2/MemoryCard/SyncMemCard.cpp			9	0	8	
+120	0	216f50	412	fn_216f50	0	2		fn_2f8cc0,fn_378258,fn_4753a0,sprintf	Ps2/MemoryCard/SyncMemCard.cpp			9	0	10	
+121	0	2170f0	388	fn_2170f0	0	1		fn_2f9530,fn_4753a0,sprintf	Ps2/MemoryCard/SyncMemCard.cpp			9	0	8	
+122	0	217278	412	fn_217278	0	6		fn_2f8cc0,fn_378258,fn_4753a0,sprintf	Ps2/MemoryCard/SyncMemCard.cpp			9	0	10	
+123	0	217418	376	fn_217418	0	0		fn_2f9530,fn_4753a0,sprintf	Ps2/MemoryCard/SyncMemCard.cpp			9	0	8	
+124	0	217590	388	fn_217590	0	2		fn_2f9530,fn_4753a0,sprintf	Ps2/MemoryCard/SyncMemCard.cpp			9	0	8	
+125	0	217718	396	fn_217718	0	1		fn_2f9530,fn_4753a0,sprintf	Ps2/MemoryCard/SyncMemCard.cpp			9	0	8	
+126	0	2178a8	376	fn_2178a8	0	1		fn_2f9530,fn_4753a0,sprintf	Ps2/MemoryCard/SyncMemCard.cpp			9	0	8	
+127	0	217a20	376	fn_217a20	0	1		fn_2f9530,fn_4753a0,sprintf	Ps2/MemoryCard/SyncMemCard.cpp			9	0	8	
+128	0	217b98	320	fn_217b98	0	2		fn_2f9530,fn_4753a0	Ps2/MemoryCard/SyncMemCard.cpp			9	0	8	
+129	0	217cd8	320	fn_217cd8	0	0		fn_2f9530,fn_4753a0	Ps2/MemoryCard/SyncMemCard.cpp			9	0	8	
+130	0	217e18	376	fn_217e18	0	2		fn_2f9530,fn_4753a0,sprintf	Ps2/MemoryCard/SyncMemCard.cpp			9	0	8	
+131	0	217f90	384	fn_217f90	0	5		fn_2f9530,fn_4753a0,sprintf	Ps2/MemoryCard/SyncMemCard.cpp			9	0	8	
+132	0	218110	340	fn_218110	0	5		fn_2f9530,fn_4753a0	Ps2/MemoryCard/SyncMemCard.cpp			9	0	10	
+133	0	21a930	432	fn_21a930	0	1		fn_2f9530,fn_4753a0,sprintf	Ps2/MemoryCard/SyncMemCard.cpp			9	0	8	
+134	0	21aae0	408	fn_21aae0	0	3		fn_2f9530,fn_4753a0,sprintf	Ps2/MemoryCard/SyncMemCard.cpp			9	0	8	
+135	0	21b1c0	11824	fn_21b1c0	0	1		fn_474814	Ps2/MemoryCard/SyncMemCard.cpp			9	0	138	
+136	0	21dff0	376	fn_21dff0	0	0		fn_2f9530,fn_4753a0,sprintf	Ps2/MemoryCard/SyncMemCard.cpp			9	0	8	
+137	0	21e168	408	fn_21e168	0	0		fn_2f9530,fn_4753a0,sprintf	Ps2/MemoryCard/SyncMemCard.cpp			9	0	8	
+138	0	21e300	384	fn_21e300	0	0		fn_2f9530,fn_4753a0,sprintf	Ps2/MemoryCard/SyncMemCard.cpp			9	0	8	
+139	0	21e480	32	fn_21e480	1	0			Ps2/MemoryCard/SyncMemCard.cpp			0	0	1	
+140	0	21e4a0	56	fn_21e4a0	0	0		sceMcSync	Ps2/MemoryCard/SyncMemCard.cpp			0	0	2	
+141	0	21e4d8	12	fn_21e4d8	1	0			Ps2/MemoryCard/SyncMemCard.cpp			0	0	0	
+142	0	21e4e8	144	fn_21e4e8	0	0		fn_4751d8	Ps2/MemoryCard/SyncMemCard.cpp			4	0	0	
+143	0	21e578	32	fn_21e578	1	0			Ps2/MemoryCard/SyncMemCard.cpp			0	0	0	
+144	0	21e600	20	fn_21e600	1	0			Ps2/MemoryCard/SyncMemCard.cpp			0	0	1	
+145	0	21e618	160	fn_21e618	0	4		sceMcSync,sceMcGetInfo	Ps2/MemoryCard/SyncMemCard.cpp			1	0	1	
+146	0	21e700	280	fn_21e700	0	0		sceMcSync,sceMcGetDir,fn_4749a8,fn_4751d8,fn_4753a0	Ps2/MemoryCard/SyncMemCard.cpp			3	0	1	
+147	0	21ea98	188	fn_21ea98	0	1		fn_1d1638,fn_378fa8,fn_379078,fn_379188,fn_3791d8	Ps2/MemoryCard/SyncMemCard.cpp			4	0	2	
+148	0	21ecc0	68	fn_21ecc0	0	0			Ps2/MemoryCard/SyncMemCard.cpp			0	0	0	
+149	0	21ed08	12	fn_21ed08	1	0			Ps2/MemoryCard/SyncMemCard.cpp			0	0	0	
+150	0	21ed18	12	fn_21ed18	1	0			Ps2/MemoryCard/SyncMemCard.cpp			0	0	0	
+151	0	21ed28	300	fn_21ed28	0	1		sceMcSync,sceMcGetDir,fn_4749a8,fn_4751d8,fn_4753a0	Ps2/MemoryCard/SyncMemCard.cpp			3	0	1	
+152	0	21ee58	68	fn_21ee58	0	0		sceMcSync,sceMcUnformat	Ps2/MemoryCard/SyncMemCard.cpp			0	0	0	
+153	0	21f618	20	fn_21f618	1	2			Ps2/MemoryCard/SyncMemCard.cpp			0	0	0	
+154	0	21fc30	32	fn_21fc30	1	0			Ps2/MemoryCard/SyncMemCard.cpp			0	0	0	
+155	0	21fc78	856	fn_21fc78	0	1		Memory_AllocBlock,FastMemset,fn_283bd8,fn_340bb0,fn_340bf8,fn_341de8,fn_474dc4	Ps2/Renderer/BoneDetach.cpp			9	0	8	
+156	0	21ffd0	532	fn_21ffd0	0	1		fn_20ca08	Ps2/Renderer/BoneDetach.cpp			1	0	1	
+157	0	221160	556	fn_221160	0	3		fn_283b80,fn_32cc08	Ps2/Renderer/BoneDetach.cpp			9	0	1	
+158	0	221390	416	fn_221390	0	1		fn_283b80	Ps2/Renderer/BoneDetach.cpp			0	0	1	
+159	0	2223e0	300	fn_2223e0	0	2		fn_283b80	Ps2/Renderer/BoneDetach.cpp			1	0	1	
+160	0	222d40	8	fn_222d40	1	1			Ps2/Renderer/BoneDetach.cpp			0	0	0	
+161	0	222df0	12	fn_222df0	1	0			Ps2/Renderer/BoneDetach.cpp			0	0	0	
+162	0	222e00	196	fn_222e00	0	0		fn_20ca08	Ps2/Renderer/BoneDetach.cpp			1	0	1	
+163	0	222ec8	204	fn_222ec8	0	0		fn_20ca08	Ps2/Renderer/BoneDetach.cpp			1	0	1	
+164	0	222f98	364	fn_222f98	0	1		FastMemcpy,fn_340bb0,fn_340bf8,fn_341de8	Ps2/Renderer/BoneDetach.cpp			9	0	1	
+165	0	223108	80	fn_223108	1	0			Ps2/Renderer/BoneDetach.cpp			0	0	0	
+166	0	223260	44	fn_223260	0	0		fn_283b80	Ps2/Renderer/BoneDetach.cpp			0	0	1	
+167	0	223290	92	fn_223290	0	0		fn_283b80	Ps2/Renderer/BoneDetach.cpp			0	0	1	
+168	0	2232f0	136	fn_2232f0	0	0		fn_283b80	Ps2/Renderer/BoneDetach.cpp			1	0	1	
+169	0	223378	272	fn_223378	0	0		fn_283b80	Ps2/Renderer/BoneDetach.cpp			1	0	1	
+170	0	223488	120	fn_223488	0	0		fn_283b80	Ps2/Renderer/BoneDetach.cpp			1	0	1	
+171	0	223500	168	fn_223500	0	0		fn_283b80	Ps2/Renderer/BoneDetach.cpp			1	0	1	
+172	0	2238f8	280	fn_2238f8	1	1			Ps2/Renderer/BoneDetach.cpp			4	0	1	
+173	0	223a10	180	fn_223a10	0	1		fn_283b80	Ps2/Renderer/BoneDetach.cpp			2	0	1	
+174	0	223ac8	244	fn_223ac8	0	1		fn_1667a8,fn_283b80	Ps2/Renderer/BoneDetach.cpp			3	0	2	
+175	0	223bc0	268	fn_223bc0	1	0			Ps2/Renderer/BoneDetach.cpp			0	0	0	
+176	0	223cd0	412	fn_223cd0	0	0		fn_474dc4,sprintf	Ps2/Renderer/BoneDetach.cpp			9	0	5	
+177	0	223e70	68	fn_223e70	0	12		fn_283b80	Ps2/Renderer/BoneDetach.cpp			0	0	1	
+178	0	223fa8	8	fn_223fa8	1	3						0	0	0	
+179	0	223fb0	8	fn_223fb0	1	0						0	0	0	
+180	0	223fb8	68	fn_223fb8	1	1						0	0	3	
+181	0	224000	200	fn_224000	1	1						0	0	3	
+182	0	2240c8	16	fn_2240c8	1	9						0	0	0	
+183	0	2240d8	20	fn_2240d8	1	2						0	0	0	
+184	0	2240f0	768	fn_2240f0	0	3		FastMemcpy,fn_2ae560,fn_32cc08,sceVu0RotMatrix				7	0	2	
+185	0	224b28	412	fn_224b28	0	11		fn_2ae560				4	0	2	
+186	0	224e28	108	fn_224e28	1	1						0	0	1	
+187	0	224ed8	20	fn_224ed8	1	0						0	0	1	
+188	0	224ef0	24	fn_224ef0	1	1						0	0	1	
+189	0	224f08	36	fn_224f08	0	0		fn_2ae560				0	0	0	
+190	0	224f30	64	fn_224f30	0	0		fn_2ae560				0	0	1	
+191	0	224f70	64	fn_224f70	0	2		fn_2ae560				1	0	0	
+192	0	224fb0	76	fn_224fb0	0	2		fn_2ae560				1	0	0	
+193	0	225000	48	fn_225000	0	0		fn_2ae560				0	0	0	
+194	0	225030	36	fn_225030	0	0		fn_2ae560				0	0	0	
+195	0	225058	148	fn_225058	0	1		fn_2ae560				2	0	0	
+196	0	225160	64	fn_225160	0	0		fn_2ae560				1	0	0	
+197	0	2251a0	104	fn_2251a0	0	37		fn_2ae560				1	0	0	
+198	0	225fc0	16	fn_225fc0	1	5						0	0	1	
+199	0	225fd0	48	fn_225fd0	0	2		fn_2ae560				1	0	0	
+200	0	226000	80	fn_226000	0	3		fn_2ae560				1	0	0	
+201	0	226050	8	fn_226050	1	0						0	0	0	
+202	0	226058	48	fn_226058	0	4		fn_2ae560				1	0	0	
+203	0	226540	24	fn_226540	1	11						0	0	1	
+204	0	226558	16	fn_226558	1	17						0	0	0	
+205	0	226568	16	fn_226568	1	8						0	0	1	
+206	0	226578	16	fn_226578	1	3						0	0	1	
+207	0	226610	16	fn_226610	1	1						0	0	1	
+208	0	226620	32	fn_226620	1	0						0	0	1	
+209	0	226640	88	fn_226640	0	0		fn_2ae560				2	0	0	
+210	0	2267f0	64	fn_2267f0	0	1		FastMemset				0	0	1	
+211	0	226830	40	fn_226830	0	2		fn_2ae560				0	0	0	
+212	0	226858	36	fn_226858	0	3		fn_2ae560				0	0	0	
+213	0	226880	328	fn_226880	0	10		fn_2ae560				3	0	2	
+214	0	2269c8	212	fn_2269c8	0	4		fn_2ae560				3	0	1	
+215	0	226aa0	88	fn_226aa0	0	5		fn_2ae560				1	0	0	
+216	0	226af8	16	fn_226af8	1	1						0	0	1	
+217	0	226b08	36	fn_226b08	0	1		fn_2ae560				0	0	0	
+218	0	226b30	8	fn_226b30	1	0						0	0	0	
+219	0	226b38	36	fn_226b38	1	1						0	0	1	
+220	0	226b60	8	fn_226b60	1	1						0	0	0	
+221	0	226b68	8	fn_226b68	1	0						0	0	0	
+222	0	226b70	44	fn_226b70	1	4						0	0	1	
+223	0	226ba0	84	fn_226ba0	0	2		fn_2ae560				1	0	0	
+224	0	226cc0	84	fn_226cc0	1	2						0	0	2	
+225	0	226d18	16	fn_226d18	1	3						0	0	1	
+226	0	226d28	164	fn_226d28	1	0						0	0	3	
+227	0	226dd0	16	fn_226dd0	1	0						0	0	1	
+228	0	226de0	16	fn_226de0	1	0						0	0	1	
+229	0	226df0	16	fn_226df0	1	3						0	0	1	
+230	0	226e00	24	fn_226e00	1	0						0	0	1	
+231	0	226ef0	24	fn_226ef0	1	3						0	0	1	
+232	0	226f08	36	fn_226f08	1	0						0	0	2	
+233	0	227018	8	fn_227018	1	1						0	0	0	
+234	0	227020	8	fn_227020	1	0						0	0	0	
+235	0	227028	96	fn_227028	0	1		fn_2ae560				1	0	0	
+236	0	227088	76	fn_227088	0	1		fn_2ae560				1	0	0	
+237	0	2270d8	16	fn_2270d8	1	3						0	0	1	
+238	0	2270e8	200	fn_2270e8	0	1		sceScfGetLanguage				0	0	2	
+239	0	2271b0	124	fn_2271b0	0	0		fn_2ae560				1	0	0	
+240	0	227230	132	fn_227230	0	0		fn_2ae560				1	0	0	
+241	0	2272b8	160	fn_2272b8	0	7		fn_20ca08,fn_2ae560				2	0	0	
+242	0	227358	168	fn_227358	0	2		fn_20ca08,fn_2ae560				2	0	0	
+243	0	227498	200	fn_227498	1	0						0	0	6	
+244	0	227560	1904	fn_227560	0	1		fn_278050,fn_278520,fn_278ec8,fn_279f08,fn_27a7b8,fn_27af88,fn_27c9b8,fn_27caa0,fn_27cf38,fn_27d1f8,fn_27d2e0,fn_27d3f0				9	0	34	
+245	0	2282f8	184	fn_2282f8	0	1		fn_278050,fn_278520,fn_27af88				2	0	5	
+246	0	2285c8	476	fn_2285c8	1	0				DIRECT=1,FLUSH=2		0	0	2	
+247	0	229190	32	fn_229190	1	1						0	0	0	
+248	0	2291b0	60	fn_2291b0	1	1						0	0	0	
+249	0	2291f0	340	fn_2291f0	0	1		fn_382938,sceGsSetDefLoadImage,sceGsExecLoadImage,FlushCache				1	0	2	
+250	0	229348	332	fn_229348	0	1		fn_382938,sceGsSetDefLoadImage,sceGsExecLoadImage,FlushCache				1	0	2	
+251	0	229970	364	fn_229970	0	2		fn_382938,sceDmaGetChan,sceDmaSendN		dmatag:end=13		0	0	0	
+252	0	22b560	784	fn_22b560	1	1						1	0	1	
+253	0	22bd30	228	fn_22bd30	0	0		fn_206258				3	0	0	
+254	0	22be18	224	fn_22be18	0	2		FlushCache		dmatag:end=1	D2(GIF)	1	0	0	
+255	0	22bef8	32	fn_22bef8	1	0						0	0	0	
+256	0	22c308	680	fn_22c308	1	1						0	30	0	
+257	0	22c5b0	108	fn_22c5b0	1	0						0	4	0	
+258	0	22c620	12	fn_22c620	1	1						0	0	0	
+259	0	22c630	248	fn_22c630	1	3						0	35	0	
+260	0	22c728	32	fn_22c728	1	1						1	0	1	
+261	0	22c920	600	fn_22c920	1	2			Ps2/Renderer/Character/ps2BasicPrimitives.cpp	DIRECT=1		1	0	3	
+262	0	22cb78	316	fn_22cb78	0	1		FastMemcpy	Ps2/Renderer/Character/ps2BasicPrimitives.cpp			2	0	3	
+263	0	22d1a0	324	fn_22d1a0	1	12			Ps2/Renderer/Character/ps2BasicPrimitives.cpp			0	0	2	
+264	0	22d2e8	284	fn_22d2e8	1	7			Ps2/Renderer/Character/ps2BasicPrimitives.cpp			0	0	2	
+265	0	22e020	236	fn_22e020	1	0			Ps2/Renderer/Character/ps2BasicPrimitives.cpp			0	4	1	
+266	0	22e428	720	fn_22e428	0	1		fn_27d418,fn_382938,sceDmaGetChan,sceDmaSend,fn_384988,fn_384998,fn_3849a8,fn_384aa8,fn_384bb8,fn_384c48,sceGifPkCloseGifTag,fn_384d08,FlushCache	Ps2/Renderer/Character/ps2BasicPrimitives.cpp			9	0	4	
+267	0	22e6f8	388	fn_22e6f8	1	4			Ps2/Renderer/Character/ps2BasicPrimitives.cpp	DIRECT=1,FLUSH=1		0	0	1	
+268	0	22e880	308	fn_22e880	1	3			Ps2/Renderer/Character/ps2BasicPrimitives.cpp			0	0	1	
+269	0	230488	56	fn_230488	1	1			Ps2/Renderer/Character/ps2BasicPrimitives.cpp			0	0	1	
+270	0	230528	20	fn_230528	1	3			Ps2/Renderer/Character/ps2BasicPrimitives.cpp			0	0	1	
+271	0	230540	200	fn_230540	1	0			Ps2/Renderer/Character/ps2BasicPrimitives.cpp			0	0	2	
+272	0	230608	260	fn_230608	1	0			Ps2/Renderer/Character/ps2BasicPrimitives.cpp			1	0	2	
+273	0	230ac0	8	fn_230ac0	1	0			Ps2/Renderer/Character/ps2BasicPrimitives.cpp			0	0	0	
+274	0	230ac8	8	fn_230ac8	1	0			Ps2/Renderer/Character/ps2BasicPrimitives.cpp			0	0	0	
+275	0	230ad0	48	fn_230ad0	0	1		FastMemcpy	Ps2/Renderer/Character/ps2BasicPrimitives.cpp			0	0	1	
+276	0	230b00	204	fn_230b00	0	1		FastMemcpy	Ps2/Renderer/Character/ps2BasicPrimitives.cpp			4	0	1	
+277	0	230bd0	48	fn_230bd0	1	1			Ps2/Renderer/Character/ps2BasicPrimitives.cpp			0	0	1	
+278	0	230c00	48	fn_230c00	0	1		FastMemcpy	Ps2/Renderer/Character/ps2BasicPrimitives.cpp			0	0	1	
+279	0	230c30	56	fn_230c30	1	0			Ps2/Renderer/Character/ps2BasicPrimitives.cpp			0	0	1	
+280	0	230f78	196	fn_230f78	1	0			Ps2/Renderer/Character/ps2BasicPrimitives.cpp			1	0	2	
+281	0	231040	212	fn_231040	1	0			Ps2/Renderer/Character/ps2BasicPrimitives.cpp			1	0	2	
+282	0	231118	176	fn_231118	1	0			Ps2/Renderer/Character/ps2BasicPrimitives.cpp			0	0	1	
+283	0	2311f0	96	fn_2311f0	1	1						0	0	0	
+284	0	231818	160	fn_231818	1	1			Ps2/Renderer/Character/ps2render.cpp			0	0	6	
+285	0	2318b8	532	fn_2318b8	1	3			Ps2/Renderer/Character/ps2render.cpp	DIRECT=1,FLUSH=1,MSCAL=1,vif:BASE=1,vif:OFFSET=1		10	0	2	
+286	0	2322b0	184	fn_2322b0	1	1			Ps2/Renderer/Character/ps2render.cpp	UNPACK=1,vif:STCYCL=1		0	0	1	
+287	0	232368	184	fn_232368	1	1			Ps2/Renderer/Character/ps2render.cpp	UNPACK=1,vif:STCYCL=1		0	0	1	
+288	0	232420	184	fn_232420	1	1			Ps2/Renderer/Character/ps2render.cpp	UNPACK=1,vif:STCYCL=1		0	0	1	
+289	0	2324d8	332	fn_2324d8	1	1			Ps2/Renderer/Character/ps2render.cpp			0	27	0	
+290	0	235c40	488	fn_235c40	0	1		sqrtf	Ps2/Renderer/Character/ps2render.cpp			2	4	4	
+291	0	2367b8	188	fn_2367b8	1	14			Ps2/Renderer/Character/ps2render.cpp			0	0	3	
+292	0	236ba0	220	fn_236ba0	1	3			Ps2/Renderer/Character/ps2render.cpp	STROW=1,dmatag:ref=1		0	0	10	
+293	0	236c80	304	fn_236c80	1	2			Ps2/Renderer/Character/ps2render.cpp	dmatag:end=1		0	0	3	
+294	0	236db0	384	fn_236db0	1	2			Ps2/Renderer/Character/ps2render.cpp			0	0	9	
+295	0	238130	956	fn_238130	1	1			Ps2/Renderer/Character/ps2render.cpp			50	0	8	
+296	0	2384f0	956	fn_2384f0	1	1			Ps2/Renderer/Character/ps2render.cpp			50	0	8	
+297	0	239268	780	fn_239268	1	0			Ps2/Renderer/Character/ps2render.cpp	FLUSH=1		10	4	4	
+298	0	239578	460	fn_239578	1	0			Ps2/Renderer/Character/ps2render.cpp	FLUSH=1		13	1	4	
+299	0	239748	716	fn_239748	1	0			Ps2/Renderer/Character/ps2render.cpp	FLUSH=1		10	4	4	
+300	0	239a18	556	fn_239a18	1	0			Ps2/Renderer/Character/ps2render.cpp	FLUSH=1		5	4	3	
+301	0	23a158	296	fn_23a158	1	0			Ps2/Renderer/Character/ps2render.cpp	DIRECT=1,FLUSH=1		0	0	1	
+302	0	23c540	592	fn_23c540	0	1		fn_382938,sceDmaGetChan,sceDmaSendN,fn_384988,fn_384998,fn_3849a8,fn_384a00,fn_384d08,FlushCache	Ps2/Renderer/Character/ps2render.cpp	dmatag:refs=1		5	0	1	
+303	0	23cc00	908	fn_23cc00	1	4			Ps2/Renderer/Character/ps2render.cpp			0	33	5	
+304	0	23cf90	404	fn_23cf90	0	2		sqrtf	Ps2/Renderer/Character/ps2render.cpp			7	6	3	
+305	0	23de10	352	fn_23de10	0	42		fn_384eb0	Ps2/Renderer/Character/ps2render.cpp	FLUSH=1,MPG=1		9	0	2	
+306	0	240438	436	fn_240438	1	1			Ps2/Renderer/Character/ps2render.cpp			0	0	0	
+307	0	2478f0	740	fn_2478f0	1	1			Ps2/Renderer/Character/ps2render.cpp	UNPACK=8,vif:STCYCL=2		2	0	2	
+308	0	247bd8	1152	fn_247bd8	1	3			Ps2/Renderer/Character/ps2render.cpp	UNPACK=8,vif:STCYCL=2		0	0	1	
+309	0	248058	1536	fn_248058	1	2			Ps2/Renderer/Character/ps2render.cpp	MPG=1,UNPACK=8,vif:STCYCL=2		3	13	7	
+310	0	24a700	300	fn_24a700	1	2			Ps2/Renderer/Character/ps2render.cpp			0	7	0	
+311	0	24a830	140	fn_24a830	1	0			Ps2/Renderer/Character/ps2render.cpp			0	0	0	
+312	0	24be98	8	fn_24be98	1	1			Ps2/Renderer/Character/ps2render.cpp			0	0	0	
+313	0	24bea0	60	fn_24bea0	1	0			Ps2/Renderer/Character/ps2render.cpp			0	0	1	
+314	0	24bee0	60	fn_24bee0	1	0			Ps2/Renderer/Character/ps2render.cpp			0	0	2	
+315	0	24c008	224	fn_24c008	1	0			Ps2/Renderer/Character/ps2render.cpp			0	0	3	
+316	0	24c1f8	64	fn_24c1f8	0	2		fn_309d10,sceDmaGetChan	Ps2/Renderer/Character/ps2render.cpp			0	0	1	
+317	0	24c238	72	fn_24c238	1	23			Ps2/Renderer/Character/ps2render.cpp			0	0	0	
+318	0	24c2c0	152	fn_24c2c0	1	0			Ps2/Renderer/Character/ps2render.cpp	DIRECT=1		0	0	1	
+319	0	24c3c0	296	fn_24c3c0	1	0			Ps2/Renderer/Character/ps2render.cpp			0	0	3	
+320	0	24c4e8	28	fn_24c4e8	1	0			Ps2/Renderer/Character/ps2render.cpp			0	0	2	
+321	0	24c578	248	fn_24c578	0	2		fn_2ae588,fn_32cb68	Ps2/Renderer/Character/ps2render.cpp			4	0	1	
+322	0	24c670	316	fn_24c670	0	1		fn_283b80,fn_32cb68	Ps2/Renderer/Character/ps2render.cpp			7	0	2	
+323	0	24c7b0	72	fn_24c7b0	1	0			Ps2/Renderer/Character/ps2render.cpp			0	0	0	
+324	0	24c7f8	112	fn_24c7f8	0	2		fn_382938,sceDmaSend	Ps2/Renderer/Character/ps2render.cpp			1	0	1	
+325	0	24c868	112	fn_24c868	0	6		sceDmaSend,sceDmaSync	Ps2/Renderer/Character/ps2render.cpp			2	0	1	
+326	0	24c8d8	24	fn_24c8d8	1	1			Ps2/Renderer/Character/ps2render.cpp			0	0	1	
+327	0	24c8f0	144	fn_24c8f0	1	0			Ps2/Renderer/Character/ps2render.cpp		D1(VIF1),D_CTRL/STAT/PCR	0	0	3	
+328	0	24c980	172	fn_24c980	0	0		FlushCache	Ps2/Renderer/Character/ps2render.cpp		D1(VIF1),D_CTRL/STAT/PCR	0	0	3	
+329	0	24ccb8	216	fn_24ccb8	1	0			Ps2/Renderer/Character/ps2render.cpp			0	0	3	
+330	0	24cdc0	36	fn_24cdc0	0	24		sceGsSyncV	Ps2/Renderer/Character/ps2render.cpp			0	0	0	
+331	0	24cde8	244	fn_24cde8	0	0		Memory_ResetBlock,Memory_AllocBlock	Ps2/Renderer/Character/ps2render.cpp			6	0	6	
+332	0	24cee0	40	fn_24cee0	0	0		fn_4807d0	Ps2/Renderer/Character/ps2render.cpp			0	0	0	
+333	0	24cff8	68	fn_24cff8	0	1		fn_476e00	Ps2/Renderer/Character/ps2render.cpp			0	0	0	
+334	0	24d128	76	fn_24d128	0	4		fn_382898,sceDmaReset,fn_384768,fn_384848,sceDevVif0Reset,sceDevVif1Reset	Ps2/Renderer/Character/ps2render.cpp			0	0	0	
+335	0	24d178	416	fn_24d178	1	0			Ps2/Renderer/Character/ps2render.cpp			0	74	0	
+336	0	24d318	180	fn_24d318	1	0			Ps2/Renderer/Character/ps2render.cpp			0	0	0	
+337	0	24d3d0	152	fn_24d3d0	1	1			Ps2/Renderer/Character/ps2render.cpp			0	9	0	
+338	0	24d468	156	fn_24d468	1	0			Ps2/Renderer/Character/ps2render.cpp			0	0	0	
+339	0	24d508	8	fn_24d508	1	3			Ps2/Renderer/Character/ps2render.cpp			0	0	0	
+340	0	24d510	60	fn_24d510	0	0		fn_370770	Ps2/Renderer/Character/ps2render.cpp			0	0	3	
+341	0	24d550	76	fn_24d550	0	0		exit,AddIntcHandler_47fb40,fn_4808e0	Ps2/Renderer/Character/ps2render.cpp			0	0	0	
+342	0	24d5a0	124	fn_24d5a0	0	0		exit,fn_383e50,fn_384070,AddIntcHandler_47fb40,fn_4808e0	Ps2/Renderer/Character/ps2render.cpp			0	0	1	
+343	0	24d620	28	fn_24d620	1	0			Ps2/Renderer/Character/ps2render.cpp			0	3	0	
+344	0	24d758	100	fn_24d758	0	1		fn_2ebce8,DIntr,fn_486008	Ps2/Renderer/Character/ps2render.cpp			0	0	2	
+345	0	24d7c0	16	fn_24d7c0	1	0			Ps2/Renderer/Character/ps2render.cpp			0	0	0	
+346	0	24d7d0	16	fn_24d7d0	1	0			Ps2/Renderer/Character/ps2render.cpp			0	0	0	
+347	0	24d7e0	92	fn_24d7e0	1	1			Ps2/Renderer/Character/ps2render.cpp			0	0	1	
+348	0	24d840	20	fn_24d840	1	0			Ps2/Renderer/Character/ps2render.cpp			0	0	0	
+349	0	24e680	312	fn_24e680	1	19			Ps2/Renderer/Character/ps2Setup.cpp		D1(VIF1),D2(GIF),D_CTRL/STAT/PCR,GIF regs,VIF1 regs	0	0	1	
+350	0	250e38	408	fn_250e38	1	8			Ps2/Renderer/Character/ps2Setup.cpp			0	0	4	
+351	0	251e60	740	fn_251e60	0	2		FastMemcpy,fn_341d30,fn_3852e8	Ps2/Renderer/Character/ps2Setup.cpp	UNPACK=1,vif:STCYCL=1		10	0	15	
+352	0	2526d0	568	fn_2526d0	0	2		FastMemcpy,fn_384ff8,fn_385088,fn_3852e8	Ps2/Renderer/Character/ps2Setup.cpp			10	0	7	
+353	0	252908	524	fn_252908	0	2		FastMemcpy,fn_384ff8,fn_385088,fn_3852e8	Ps2/Renderer/Character/ps2Setup.cpp			9	0	7	
+354	0	252b18	552	fn_252b18	0	2		FastMemcpy,fn_384ff8,fn_385088,fn_3852e8	Ps2/Renderer/Character/ps2Setup.cpp			8	0	7	
+355	0	2551a0	704	fn_2551a0	0	4		fn_20c148,Memory_AllocBlock,FastMemset,fn_283bd8	Ps2/Renderer/Character/ps2Setup.cpp			9	0	13	
+356	0	256c90	480	fn_256c90	0	1		FastMemcpy,fn_283b80,fn_2a6188,fn_2af6b8	Ps2/Renderer/Character/ps2Setup.cpp			9	0	2	
+357	0	257358	12	fn_257358	1	0			Ps2/Renderer/Character/ps2Setup.cpp			0	0	0	
+358	0	257368	548	fn_257368	0	1		fn_474718	Ps2/Renderer/Character/ps2Setup.cpp			9	0	0	
+359	0	257a00	528	fn_257a00	0	1		FastMemset	Ps2/Renderer/Character/ps2Setup.cpp			2	0	4	
+360	0	257c10	1072	fn_257c10	0	2		fn_341988	Ps2/Renderer/Character/ps2Setup.cpp			6	0	2	
+361	0	258998	468	fn_258998	0	2		fn_341170,fn_341180,fn_3431b8,fn_343210,fn_384ff8,fn_385088,fn_3852a0,fn_3852b8,fn_3852d0	Ps2/Renderer/Character/ps2Setup.cpp	STMASK=1,dmatag:next=1		9	0	4	
+362	0	25bb50	380	fn_25bb50	1	5			Ps2/Renderer/Character/ps2Setup.cpp			0	0	0	
+363	0	25bcd0	484	fn_25bcd0	1	1			Ps2/Renderer/Character/ps2Setup.cpp	STMASK=1,dmatag:next=1,dmatag:refs=1		0	0	0	
+364	0	25beb8	1044	fn_25beb8	1	1			Ps2/Renderer/Character/ps2Setup.cpp	STMASK=2,dmatag:next=2,dmatag:refs=1,vif:ITOP=2,vif:OFFSET=2,vif:STCYCL=2		0	0	0	
+365	0	25c2d0	324	fn_25c2d0	1	1			Ps2/Renderer/Character/ps2Setup.cpp			0	0	1	
+366	0	25c418	1084	fn_25c418	0	1		dptofp,fn_340bb0,fn_341628,fn_3418c8,fn_4768e0,atoi	Ps2/Renderer/Character/ps2Setup.cpp			9	0	10	
+367	0	25cfa8	16	fn_25cfa8	1	0			Ps2/Renderer/Character/ps2Setup.cpp			0	0	0	
+368	0	25cfb8	224	fn_25cfb8	1	1			Ps2/Renderer/Character/ps2Setup.cpp			0	0	0	
+369	0	25ea28	144	fn_25ea28	0	2		fn_340a00,fn_340a20	Ps2/Renderer/Character/ps2Setup.cpp			0	0	3	
+370	0	25ee98	60	fn_25ee98	0	1			Ps2/Renderer/Character/ps2Setup.cpp			0	0	1	
+371	0	25eed8	64	fn_25eed8	0	0			Ps2/Renderer/Character/ps2Setup.cpp			0	0	1	
+372	0	25ef18	64	fn_25ef18	0	1			Ps2/Renderer/Character/ps2Setup.cpp			0	0	1	
+373	0	25ef58	12	fn_25ef58	1	0			Ps2/Renderer/Character/ps2Setup.cpp			0	0	0	
+374	0	25ef68	84	fn_25ef68	0	2		fn_2ae290	Ps2/Renderer/Character/ps2Setup.cpp			1	0	3	
+375	0	25efc0	12	fn_25efc0	1	0			Ps2/Renderer/Character/ps2Setup.cpp			0	0	0	
+376	0	25efd0	100	fn_25efd0	1	1			Ps2/Renderer/Character/ps2Setup.cpp		D1(VIF1),D_CTRL/STAT/PCR	0	0	1	
+377	0	25f038	56	fn_25f038	1	0			Ps2/Renderer/Character/ps2Setup.cpp			0	0	0	
+378	0	25f070	68	fn_25f070	1	0			Ps2/Renderer/Character/ps2Setup.cpp			0	0	0	
+379	0	25f288	100	fn_25f288	0	0		FastMemcpy	Ps2/Renderer/Character/ps2Setup.cpp			2	0	1	
+380	0	25f2f0	60	fn_25f2f0	1	0			Ps2/Renderer/Character/ps2Setup.cpp			0	0	0	
+381	0	25f330	60	fn_25f330	1	0			Ps2/Renderer/Character/ps2Setup.cpp			0	0	0	
+382	0	25f370	56	fn_25f370	1	0			Ps2/Renderer/Character/ps2Setup.cpp			0	0	0	
+383	0	25f3a8	32	fn_25f3a8	1	0			Ps2/Renderer/Character/ps2Setup.cpp			0	0	0	
+384	0	25f3c8	292	fn_25f3c8	1	0			Ps2/Renderer/Character/ps2Setup.cpp			0	0	5	
+385	0	25f4f0	324	fn_25f4f0	1	0			Ps2/Renderer/Character/ps2Setup.cpp			6	0	5	
+386	0	25f708	488	fn_25f708	0	2		fn_3852d0	Ps2/Renderer/Character/ps2Setup.cpp			2	0	0	
+387	0	25f8f0	360	fn_25f8f0	0	4		fn_341170,fn_341180,fn_343210	Ps2/Renderer/Character/ps2Setup.cpp			6	0	1	
+388	0	25fa58	164	fn_25fa58	1	0			Ps2/Renderer/Character/ps2Setup.cpp	vif:STCYCL=1		0	0	0	
+389	0	25fb00	84	fn_25fb00	1	0			Ps2/Renderer/Character/ps2Setup.cpp			0	0	0	
+390	0	25fb58	160	fn_25fb58	0	0		fn_3852d0	Ps2/Renderer/Character/ps2Setup.cpp	UNPACK=1		2	0	1	
+391	0	25fbf8	192	fn_25fbf8	0	0		fn_3852d0	Ps2/Renderer/Character/ps2Setup.cpp	UNPACK=1		2	0	1	
+392	0	25fea8	268	fn_25fea8	0	0		FastMemset	Ps2/Renderer/Character/ps2Setup.cpp			5	0	1	
+393	0	25ffb8	112	fn_25ffb8	0	0		fn_20beb0,fn_283bd8	Ps2/Renderer/Character/ps2Setup.cpp			2	0	2	
+394	0	260028	52	fn_260028	0	1		fn_20c4d0	Ps2/Renderer/Character/ps2Setup.cpp			0	0	1	
+395	0	260060	72	fn_260060	1	0			Ps2/Renderer/Character/ps2Setup.cpp			0	0	2	
+396	0	2600a8	144	fn_2600a8	0	9		Task_Kill,fn_283b68,fn_283b80	Ps2/Renderer/Character/ps2Setup.cpp			3	0	1	
+397	0	260138	40	fn_260138	1	1			Ps2/Renderer/Character/ps2Setup.cpp			0	0	1	
+398	0	260160	32	fn_260160	1	0			Ps2/Renderer/Character/ps2Setup.cpp			0	0	1	
+399	0	2604e0	16	fn_2604e0	1	0			Ps2/Renderer/Character/ps2Setup.cpp			0	0	1	
+400	0	2604f0	44	fn_2604f0	1	0			Ps2/Renderer/Character/ps2Setup.cpp			0	0	1	
+401	0	260520	92	fn_260520	1	1			Ps2/Renderer/Character/ps2Setup.cpp			0	0	0	
+402	0	260580	160	fn_260580	1	0			Ps2/Renderer/Character/ps2Setup.cpp			0	0	0	
+403	0	260620	128	fn_260620	0	1		fn_2ae560	Ps2/Renderer/Character/ps2Setup.cpp			1	0	1	
+404	0	2606a0	100	fn_2606a0	1	0			Ps2/Renderer/Character/ps2Setup.cpp			0	0	0	
+405	0	2608f0	116	fn_2608f0	0	4		FastMemset,fn_2afa08	Ps2/Renderer/Character/ps2Setup.cpp			1	0	6	
+406	0	260968	160	fn_260968	0	3		fn_20c728,FastMemset	Ps2/Renderer/Character/ps2Setup.cpp			0	0	12	
+407	0	260b40	36	fn_260b40	1	4			Ps2/Renderer/Character/ps2Setup.cpp			0	0	1	
+408	0	260b68	32	fn_260b68	1	1			Ps2/Renderer/Character/ps2Setup.cpp			0	0	1	
+409	0	260b88	168	fn_260b88	1	0			Ps2/Renderer/Character/ps2Setup.cpp			0	0	0	
+410	0	260c30	216	fn_260c30	1	3			Ps2/Renderer/Character/ps2Setup.cpp			0	0	0	
+411	0	260d08	116	fn_260d08	1	1			Ps2/Renderer/Character/ps2Setup.cpp			0	0	0	
+412	0	260d80	104	fn_260d80	1	0			Ps2/Renderer/Character/ps2Setup.cpp			0	0	1	
+413	0	261030	28	fn_261030	1	0			Ps2/Renderer/Character/ps2Setup.cpp			0	0	1	
+414	0	261050	28	fn_261050	1	0			Ps2/Renderer/Character/ps2Setup.cpp			0	0	1	
+415	0	261070	28	fn_261070	1	0			Ps2/Renderer/Character/ps2Setup.cpp			0	0	1	
+416	0	261090	12	fn_261090	1	0			Ps2/Renderer/Character/ps2Setup.cpp			0	0	0	
+417	0	262be8	2108	fn_262be8	0	3		ceilf,fn_20c148,Memory_AllocBlock,FastMemset,FastMemcpy,Memory_CurrentBlock,fn_33f1c8,fn_33fc20,fn_33fdf0,fn_340bb0	Ps2/Renderer/Effects/meshdraw.cpp	DIRECT=2		9	0	20	
+418	0	2636a8	88	fn_2636a8	0	2		fn_340a00,fn_340a20	Ps2/Renderer/Effects/meshdraw.cpp			0	0	2	
+419	0	263700	120	fn_263700	0	1		Memory_AllocBlock,FastMemset	Ps2/Renderer/Effects/meshdraw.cpp			1	0	4	
+420	0	2637d8	240	fn_2637d8	1	1			Ps2/Renderer/Effects/meshdraw.cpp			0	0	0	
+421	0	2638c8	32	fn_2638c8	1	1			Ps2/Renderer/Effects/meshdraw.cpp			0	0	1	
+422	0	2638e8	24	fn_2638e8	1	1			Ps2/Renderer/Effects/meshdraw.cpp			0	0	1	
+423	0	263cf8	1432	fn_263cf8	1	2				dmatag:end=17	D9(toSPR)	52	22	4	
+424	0	2655c0	60	fn_2655c0	1	3						0	0	0	
+425	0	265738	16	fn_265738	1	0						1	0	0	
+426	0	265a00	8	fn_265a00	1	1						0	0	0	
+427	0	265a08	20	fn_265a08	1	0						0	0	1	
+428	0	265a20	632	fn_265a20	1	2						0	0	0	
+429	0	267cc0	60	fn_267cc0	1	0						0	0	0	
+430	0	267d20	164	fn_267d20	0	0		FastMemcpy				3	0	0	
+431	0	267dc8	24	fn_267dc8	1	1						0	0	0	
+432	0	267de0	184	fn_267de0	0	3		FastMemcpy				4	0	0	
+433	0	267e98	72	fn_267e98	0	2		FastMemset				1	0	1	
+434	0	268580	124	fn_268580	1	1						0	0	1	
+435	0	268600	32	fn_268600	1	1						0	0	2	
+436	0	268ae0	536	fn_268ae0	0	4		fn_384de8,fn_384eb0,sceVif1PkOpenDirectCode,fn_385130,fn_385160,sceVif1PkCloseGifTag,fn_385220,fn_3852a0,fn_385338,sceVif1PkAddGsAD	Ps2/Renderer/Texture/TextureManager.cpp	DIRECT=2		6	0	2	
+437	0	268ec0	688	fn_268ec0	0	4		fn_384de8,fn_384eb0,sceVif1PkOpenDirectCode,fn_385130,fn_385160,sceVif1PkCloseGifTag,fn_385220,fn_3852a0,fn_385338,sceVif1PkAddGsAD,sprintf	Ps2/Renderer/Texture/TextureManager.cpp	DIRECT=2		9	0	4	
+438	0	269170	1284	fn_269170	0	1		fn_384de8,fn_384eb0,sceVif1PkOpenDirectCode,fn_385130,fn_385160,sceVif1PkCloseGifTag,fn_385220,fn_3852a0,fn_385338,sceVif1PkAddGsAD	Ps2/Renderer/Texture/TextureManager.cpp	DIRECT=4		9	0	4	
+439	0	269bd8	336	fn_269bd8	0	5		sceGsSetDefLoadImage	Ps2/Renderer/Texture/TextureManager.cpp			1	0	0	
+440	0	269d28	688	fn_269d28	0	1		Memory_AllocBlock,FastMemcpy	Ps2/Renderer/Texture/TextureManager.cpp			9	0	7	
+441	0	269fd8	728	fn_269fd8	0	1		fptoui,Memory_AllocBlock,FastMemcpy	Ps2/Renderer/Texture/TextureManager.cpp			9	0	5	
+442	0	26a2b0	688	fn_26a2b0	0	2		Memory_AllocBlock,fn_20f330,FastMemcpy	Ps2/Renderer/Texture/TextureManager.cpp			9	0	6	
+443	0	26a560	968	fn_26a560	0	1		Memory_AllocBlock,FastMemcpy	Ps2/Renderer/Texture/TextureManager.cpp			9	0	7	
+444	0	26a928	1104	fn_26a928	0	1		Memory_AllocBlock,FastMemcpy	Ps2/Renderer/Texture/TextureManager.cpp			7	0	7	
+445	0	26ad78	984	fn_26ad78	0	2		floorf,Memory_AllocBlock,FastMemcpy,fn_474c78	Ps2/Renderer/Texture/TextureManager.cpp			8	0	10	
+446	0	26b150	1012	fn_26b150	0	5		fn_384988,fn_384998,fn_3849a8,fn_384aa8,fn_384bb8,fn_384c48,sceGifPkCloseGifTag,sceGifPkAddGsAD,logf	Ps2/Renderer/Texture/TextureManager.cpp			7	0	1	
+447	0	26b9f0	268	fn_26b9f0	1	3			Ps2/Renderer/Texture/TextureManager.cpp			0	0	2	
+448	0	26c140	1064	fn_26c140	0	3		ceilf,Memory_AllocBlock,Memory_CurrentBlock	Ps2/Renderer/Texture/TextureManager.cpp			9	0	5	
+449	0	26c568	112	fn_26c568	0	1		logf	Ps2/Renderer/Texture/TextureManager.cpp	dmatag:refs=1		1	0	5	
+450	0	26c5d8	8	fn_26c5d8	1	0			Ps2/Renderer/Texture/TextureManager.cpp			0	0	0	
+451	0	26c5e0	8	fn_26c5e0	1	0			Ps2/Renderer/Texture/TextureManager.cpp			0	0	0	
+452	0	26c5e8	8	fn_26c5e8	1	0			Ps2/Renderer/Texture/TextureManager.cpp			0	0	0	
+453	0	26c5f0	52	fn_26c5f0	1	0			Ps2/Renderer/Texture/TextureManager.cpp			0	0	0	
+454	0	26c628	20	fn_26c628	1	1			Ps2/Renderer/Texture/TextureManager.cpp			0	0	0	
+455	0	26c640	448	fn_26c640	0	0		fn_384aa8,fn_384b20,fn_384d08	Ps2/Renderer/Texture/TextureManager.cpp			9	0	0	
+456	0	26c800	68	fn_26c800	0	0		fn_382938,sceDmaSend	Ps2/Renderer/Texture/TextureManager.cpp			0	0	1	
+457	0	26c848	64	fn_26c848	0	2		fn_384d58,fn_384d68	Ps2/Renderer/Texture/TextureManager.cpp			1	0	1	
+458	0	26c888	476	fn_26c888	0	0		fn_384de8,fn_384eb0,sceVif1PkOpenDirectCode,fn_385130,fn_385160,sceVif1PkCloseGifTag,fn_385220,fn_3852a0,fn_385338,sceVif1PkAddGsAD	Ps2/Renderer/Texture/TextureManager.cpp	DIRECT=2		8	0	2	
+459	0	26cad8	40	fn_26cad8	1	0			Ps2/Renderer/Texture/TextureManager.cpp			0	0	0	
+460	0	26cb00	28	fn_26cb00	1	1			Ps2/Renderer/Texture/TextureManager.cpp			0	0	0	
+461	0	26cb20	32	fn_26cb20	1	1			Ps2/Renderer/Texture/TextureManager.cpp			0	0	0	
+462	0	26cb40	28	fn_26cb40	1	1			Ps2/Renderer/Texture/TextureManager.cpp			0	0	0	
+463	0	26cb60	28	fn_26cb60	1	1			Ps2/Renderer/Texture/TextureManager.cpp			0	0	0	
+464	0	26cb80	36	fn_26cb80	1	0			Ps2/Renderer/Texture/TextureManager.cpp			0	0	1	
+465	0	26cc68	68	fn_26cc68	0	2		fn_384d78,sceVif1PkRet	Ps2/Renderer/Texture/TextureManager.cpp			1	0	1	
+466	0	26ccb0	156	fn_26ccb0	0	2		fn_384de8,sceVif1PkOpenDirectCode,fn_385130,fn_385160,sceVif1PkCloseGifTag,sceVif1PkAddGsAD	Ps2/Renderer/Texture/TextureManager.cpp			1	0	2	
+467	0	26cd50	168	fn_26cd50	1	2			Ps2/Renderer/Texture/TextureManager.cpp			0	0	0	
+468	0	26cdf8	196	fn_26cdf8	0	1		Memory_AllocBlock,FastMemset,sceDmaGetChan	Ps2/Renderer/Texture/TextureManager.cpp			1	0	5	
+469	0	26cec0	60	fn_26cec0	0	3		Memory_CurrentBlock	Ps2/Renderer/Texture/TextureManager.cpp			1	0	0	
+470	0	26cf00	12	fn_26cf00	1	5			Ps2/Renderer/Texture/TextureManager.cpp			0	0	0	
+471	0	26cf10	96	fn_26cf10	0	2		fn_20f330	Ps2/Renderer/Texture/TextureManager.cpp			2	0	2	
+472	0	26cf70	56	fn_26cf70	0	4		Memory_CurrentBlock	Ps2/Renderer/Texture/TextureManager.cpp			1	0	0	
+473	0	26d030	100	fn_26d030	1	1			Ps2/Renderer/Texture/TextureManager.cpp		D2(GIF)	0	0	0	
+474	0	26d0e8	116	fn_26d0e8	1	0			Ps2/Renderer/Texture/TextureManager.cpp		D2(GIF)	0	0	0	
+475	0	26d278	32	fn_26d278	1	1			Ps2/Renderer/Texture/TextureManager.cpp			0	0	0	
+476	0	26d2e8	28	fn_26d2e8	1	7			Ps2/Renderer/Texture/TextureManager.cpp			0	0	0	
+477	0	26d308	28	fn_26d308	1	2			Ps2/Renderer/Texture/TextureManager.cpp			0	0	0	
+478	0	26d328	184	fn_26d328	0	1		ceilf	Ps2/Renderer/Texture/TextureManager.cpp			0	0	0	
+479	0	26d3e0	220	fn_26d3e0	0	1		ceilf	Ps2/Renderer/Texture/TextureManager.cpp			0	0	0	
+480	0	26d4c0	208	fn_26d4c0	0	1		ceilf	Ps2/Renderer/Texture/TextureManager.cpp			1	0	0	
+481	0	26d590	48	fn_26d590	1	23			Ps2/Renderer/Texture/TextureManager.cpp			0	0	0	
+482	0	26d5c0	76	fn_26d5c0	1	1			Ps2/Renderer/Texture/TextureManager.cpp			0	0	0	
+483	0	26d610	96	fn_26d610	1	0			Ps2/Renderer/Texture/TextureManager.cpp			0	0	0	
+484	0	26d670	128	fn_26d670	0	0			Ps2/Renderer/Texture/TextureManager.cpp			1	0	2	
+485	0	26d6f0	12	fn_26d6f0	1	0			Ps2/Renderer/Texture/TextureManager.cpp			0	0	0	
+486	0	26d700	112	fn_26d700	1	0			Ps2/Renderer/Texture/TextureManager.cpp			0	0	0	
+487	0	26d770	80	fn_26d770	1	0			Ps2/Renderer/Texture/TextureManager.cpp			0	0	0	
+488	0	26d7c0	204	fn_26d7c0	0	0			Ps2/Renderer/Texture/TextureManager.cpp			5	0	0	
+489	0	26d890	168	fn_26d890	0	0		fn_2ae560	Ps2/Renderer/Texture/TextureManager.cpp			2	0	0	
+490	0	26d938	96	fn_26d938	1	0			Ps2/Renderer/Texture/TextureManager.cpp			0	0	0	
+491	0	26d998	152	fn_26d998	0	0			Ps2/Renderer/Texture/TextureManager.cpp			3	0	0	
+492	0	26da30	180	fn_26da30	0	0			Ps2/Renderer/Texture/TextureManager.cpp			4	0	0	
+493	0	26dae8	92	fn_26dae8	1	1			Ps2/Renderer/Texture/TextureManager.cpp			0	0	0	
+494	0	26db48	84	fn_26db48	1	0			Ps2/Renderer/Texture/TextureManager.cpp			0	0	0	
+495	0	26dce0	156	fn_26dce0	1	0			Ps2/Renderer/Texture/TextureManager.cpp		D2(GIF)	0	0	0	
+496	0	26dd80	12	fn_26dd80	1	0			Ps2/Renderer/Texture/TextureManager.cpp			0	0	0	
+497	0	26dd90	64	fn_26dd90	1	3			Ps2/Renderer/Texture/TextureManager.cpp			0	0	0	
+498	0	26ddd0	60	fn_26ddd0	1	3			Ps2/Renderer/Texture/TextureManager.cpp			0	0	0	
+499	0	26de10	64	fn_26de10	1	3			Ps2/Renderer/Texture/TextureManager.cpp			0	0	0	
+500	0	26de50	56	fn_26de50	1	3			Ps2/Renderer/Texture/TextureManager.cpp			0	0	0	
+501	0	26de88	56	fn_26de88	1	2			Ps2/Renderer/Texture/TextureManager.cpp			0	0	0	
+502	0	26dec0	56	fn_26dec0	1	2			Ps2/Renderer/Texture/TextureManager.cpp			0	0	0	
+503	0	26def8	36	fn_26def8	1	1			Ps2/Renderer/Texture/TextureManager.cpp			0	0	0	
+504	0	26df20	36	fn_26df20	1	1			Ps2/Renderer/Texture/TextureManager.cpp			0	0	0	
+505	0	26df48	56	fn_26df48	1	1			Ps2/Renderer/Texture/TextureManager.cpp			0	0	0	
+506	0	26df80	40	fn_26df80	1	3			Ps2/Renderer/Texture/TextureManager.cpp			0	0	0	
+507	0	26dfa8	12	fn_26dfa8	1	1			Ps2/Renderer/Texture/TextureManager.cpp			0	0	0	
+508	0	26dfb8	176	fn_26dfb8	0	0		FastMemcpy	Ps2/Renderer/Texture/TextureManager.cpp			2	0	1	
+509	0	26e068	260	fn_26e068	1	0			Ps2/Renderer/Texture/TextureManager.cpp			0	0	1	
+510	0	26e170	12	fn_26e170	1	0			Ps2/Renderer/Texture/TextureManager.cpp			0	0	0	
+511	0	26e180	12	fn_26e180	1	0			Ps2/Renderer/Texture/TextureManager.cpp			0	0	0	
+512	0	26e1b8	52	fn_26e1b8	1	0						0	0	0	
+513	0	26e2e8	8	fn_26e2e8	1	0						0	0	0	
+514	0	26e640	492	fn_26e640	0	1		fn_27ebf0,fn_280810				5	0	1	
+515	0	26ed70	36	fn_26ed70	0	0		fn_280b88				0	0	0	
+516	0	26ed98	60	fn_26ed98	1	0						0	0	0	
+517	0	26edd8	24	fn_26edd8	1	0						0	0	0	
+518	0	26edf0	36	fn_26edf0	0	0		fn_280878				0	0	0	
+519	0	26ee18	36	fn_26ee18	0	0		fn_2808d0				0	0	0	
+520	0	26ee40	312	fn_26ee40	0	0		atan2f				2	0	0	
+521	0	26ef78	36	fn_26ef78	0	0		fn_27d6a0				0	0	0	
+522	0	26efa0	8	fn_26efa0	1	0						0	0	0	
+523	0	26efa8	8	fn_26efa8	1	0						0	0	0	
+524	0	26efb0	8	fn_26efb0	1	0						0	0	0	
+525	0	26efb8	8	fn_26efb8	1	0						0	0	0	
+526	0	26efe8	128	fn_26efe8	0	0		fn_4154c8,DIntr	Ps2/Cri/File.cpp			0	0	4	
+527	0	26f068	16	fn_26f068	1	2			Ps2/Cri/File.cpp			0	0	1	
+528	0	26f078	32	fn_26f078	0	0		fn_415628	Ps2/Cri/File.cpp			0	0	0	
+529	0	26f098	252	fn_26f098	0	1		Memory_AllocBlock,FastMemset,sceGsSyncVCallback,fn_414048,fn_414d40,fn_415728,fn_415850,fn_418670,fn_418840	Ps2/Cri/File.cpp			4	0	7	
+530	0	26f198	8	fn_26f198	1	1			Ps2/Cri/File.cpp			0	0	0	
+531	0	26f1a0	156	fn_26f1a0	0	1		Memory_AllocBlock,FastMemset,fn_418770	Ps2/Cri/File.cpp			2	0	5	
+532	0	26f240	40	fn_26f240	0	2		sceGsSyncVCallback	Ps2/Cri/File.cpp			0	0	0	
+533	0	26f268	32	fn_26f268	0	1		fn_4154e0	Ps2/Cri/File.cpp			0	0	0	
+534	0	26f288	64	fn_26f288	0	1		sceGsSyncVCallback,fn_4141c0,fn_414f20,fn_418770	Ps2/Cri/File.cpp			0	0	0	
+535	0	26f2c8	112	fn_26f2c8	0	1		Memory_AllocBlock,fn_4188a8	Ps2/Cri/File.cpp			0	0	5	
+536	0	26f338	8	fn_26f338	1	1			Ps2/Cri/File.cpp			0	0	0	
+537	0	26f340	40	fn_26f340	0	1		fn_41adc0	Ps2/Cri/File.cpp			0	0	1	
+538	0	26f368	84	fn_26f368	0	1		fn_4193f8	Ps2/Cri/File.cpp			1	0	1	
+539	0	26f3c0	44	fn_26f3c0	0	1		fn_41a3b8	Ps2/Cri/File.cpp			0	0	1	
+540	0	26f3f0	44	fn_26f3f0	0	1		fn_41a3b8	Ps2/Cri/File.cpp			0	0	1	
+541	0	26f420	40	fn_26f420	0	1		fn_419308	Ps2/Cri/File.cpp			0	0	1	
+542	0	26f448	208	fn_26f448	0	1		logf,fn_419d60	Ps2/Cri/File.cpp			0	0	1	
+543	0	26f518	84	fn_26f518	0	1		fn_20f330,fn_418d30	Ps2/Cri/File.cpp			0	0	4	
+544	0	26f5d0	36	fn_26f5d0	0	1		fn_413f28	Ps2/Cri/File.cpp			0	0	0	
+545	0	26f5f8	68	fn_26f5f8	0	1		fn_4138d8	Ps2/Cri/File.cpp			0	0	1	
+546	0	26f640	156	fn_26f640	0	1		fn_4135f8,fn_4138d8	Ps2/Cri/File.cpp			3	0	3	
+547	0	26f6e0	156	fn_26f6e0	0	1		fn_413b48,fn_413bb0	Ps2/Cri/File.cpp			1	0	4	
+548	0	26f780	16	fn_26f780	1	1			Ps2/Cri/File.cpp			0	0	1	
+549	0	26f790	48	fn_26f790	0	2		fn_4130f8	Ps2/Cri/File.cpp			0	0	2	
+550	0	26f7c0	244	fn_26f7c0	0	1		Memory_AllocBlock,FastMemset,fn_4122c0	Ps2/Cri/File.cpp			6	0	3	
+551	0	26f8b8	92	fn_26f8b8	0	1		fn_4126d0	Ps2/Cri/File.cpp			1	0	0	
+552	0	2701b8	48	fn_2701b8	0	0		sprintf				0	0	1	
+553	0	2701e8	240	Movie_InitSfdFx	0	0		FastMemset,fn_414d28,mwPlyInitSfdFx,fn_474dc4				3	0	1	
+554	0	2702d8	32	Movie_FinishSfdFx	0	0		mwPlyFinishSfdFx				0	0	0	
+555	0	2702f8	288	Movie_StopDestroy	0	0		fn_20f330,fn_37b600,fn_4158a8,Mwply_Stop,Mwply_Destroy				4	0	4	
+556	0	270418	68	fn_270418	0	1		fn_41aae0	Ps2/Cri/Music.cpp			0	0	0	
+557	0	270460	152	fn_270460	0	1		logf	Ps2/Cri/Music.cpp			0	0	0	
+558	0	2704f8	32	fn_2704f8	0	1		fn_41c230	Ps2/Cri/Music.cpp			0	0	0	
+559	0	270518	32	fn_270518	0	1		fn_41c258	Ps2/Cri/Music.cpp			0	0	0	
+560	0	270638	92	fn_270638	0	1		fn_20c7e0,fn_20c818,fn_41c488	Ps2/Cri/Music.cpp			1	0	0	
+561	0	270698	84	fn_270698	0	1		fn_41caa0,fn_41cb08,fn_41cb70	Ps2/Cri/Music.cpp			2	0	0	
+562	0	2706f0	32	fn_2706f0	0	1		fn_41ca00	Ps2/Cri/Music.cpp			0	0	0	
+563	0	270710	32	fn_270710	0	1		fn_41ca50	Ps2/Cri/Music.cpp			0	0	0	
+564	0	270998	84	fn_270998	0	1		fn_20c7b8,fn_41c300,fn_41c900	Ps2/Cri/Music.cpp			1	0	0	
+565	0	2709f0	168	fn_2709f0	0	2		fn_41c6c8,fn_41c720,fn_41c778,fn_41c7e8,fn_41c848	Ps2/Cri/Music.cpp			5	0	0	
+566	0	270a98	56	fn_270a98	0	1		fn_20c148	Ps2/Cri/Music.cpp			0	0	2	
+567	0	270ad0	164	fn_270ad0	0	1		fn_4158d8,fn_41c3a8,fn_41c4d0,fn_41c670	Ps2/Cri/Music.cpp			3	0	0	
+568	0	270b78	180	fn_270b78	0	1		fn_4158d8,fn_41c400,fn_41c4d0,fn_41c670	Ps2/Cri/Music.cpp			4	0	0	
+569	0	270c30	164	fn_270c30	0	1		fn_4158d8,fn_41c3a8,fn_41c4d0,fn_41c670	Ps2/Cri/Music.cpp			3	0	0	
+570	0	270cd8	180	fn_270cd8	0	1		fn_4158d8,fn_41c400,fn_41c4d0,fn_41c670	Ps2/Cri/Music.cpp			4	0	0	
+571	0	270d90	44	fn_270d90	0	1		fn_41c530	Ps2/Cri/Music.cpp			0	0	0	
+572	0	270dc0	44	fn_270dc0	0	1		fn_41c530	Ps2/Cri/Music.cpp			0	0	0	
+573	0	270df0	40	fn_270df0	0	1		fn_41c4d0	Ps2/Cri/Music.cpp			0	0	0	
+574	0	270e18	64	fn_270e18	0	1		fn_41c488,fn_41c4d0	Ps2/Cri/Music.cpp			1	0	0	
+575	0	270e58	40	fn_270e58	0	1		fn_41c670	Ps2/Cri/Music.cpp			0	0	0	
+576	0	270e80	40	fn_270e80	0	1		fn_41c720	Ps2/Cri/Music.cpp			0	0	0	
+577	0	270ea8	40	fn_270ea8	0	1		fn_41c6c8	Ps2/Cri/Music.cpp			0	0	0	
+578	0	270ed0	12	fn_270ed0	1	1			Ps2/Cri/Music.cpp			0	0	0	
+579	0	270ee0	12	fn_270ee0	1	3			Ps2/Cri/Music.cpp			0	0	0	
+580	0	270ef0	212	fn_270ef0	0	2		logf,fn_41c5a0	Ps2/Cri/Music.cpp			2	0	0	
+581	0	270fc8	184	fn_270fc8	0	2		logf,fn_41c5a0	Ps2/Cri/Music.cpp			1	0	0	
+582	0	271080	184	fn_271080	0	1		logf,fn_41c600	Ps2/Cri/Music.cpp			2	0	0	
+583	0	271138	60	fn_271138	0	1		fn_419ab0	Ps2/Cri/Music.cpp			0	0	0	
+584	0	271178	40	fn_271178	0	1		fn_41c778	Ps2/Cri/Music.cpp			0	0	0	
+585	0	2711a0	40	fn_2711a0	0	1		fn_41c7e8	Ps2/Cri/Music.cpp			0	0	0	
+586	0	2711c8	40	fn_2711c8	0	1		fn_41c848	Ps2/Cri/Music.cpp			0	0	0	
+587	0	2711f0	80	fn_2711f0	0	1		fn_422518	Ps2/Cri/Music.cpp			0	0	0	
+588	0	271240	108	fn_271240	0	1		fn_20c7e0,fn_20c818,fn_41c4d0	Ps2/Cri/Music.cpp			2	0	0	
+589	0	2712b0	156	fn_2712b0	0	1		fn_4631b8,fn_4655c0	Ps2/Cri/Sound.cpp			3	0	2	
+590	0	271478	256	fn_271478	0	1		fn_20beb0,fn_20c7b8,fn_20c7c8,FastMemset,fn_462740,fn_462918	Ps2/Cri/Sound.cpp			4	0	4	
+591	0	271578	56	fn_271578	0	1		fn_20c4d0,fn_4628f0,fn_462bb0	Ps2/Cri/Sound.cpp			0	0	1	
+592	0	2715f8	48	fn_2715f8	1	1			Ps2/Cri/Sound.cpp			0	0	2	
+593	0	271628	144	fn_271628	0	1		fn_464ef8	Ps2/Cri/Sound.cpp			0	0	0	
+594	0	2716b8	12	fn_2716b8	1	1			Ps2/Cri/Sound.cpp			0	0	0	
+595	0	2716c8	88	fn_2716c8	0	1		fn_462c10	Ps2/Cri/Sound.cpp			0	0	1	
+596	0	271720	36	fn_271720	0	1		fn_4637f8	Ps2/Cri/Sound.cpp			0	0	0	
+597	0	271928	76	fn_271928	0	1		fn_463038	Ps2/Cri/Sound.cpp			1	0	1	
+598	0	271978	16	fn_271978	1	1			Ps2/Cri/Sound.cpp			0	0	0	
+599	0	271ef0	64	fn_271ef0	0	1		fn_463518,fn_465520	Ps2/Cri/Sound.cpp			0	0	0	
+600	0	271f30	72	fn_271f30	0	1		fn_464ef8,fn_465790	Ps2/Cri/Sound.cpp			0	0	0	
+601	0	271f78	128	fn_271f78	0	1		fn_20c7e0,fn_20c818	Ps2/Cri/Sound.cpp			4	0	1	
+602	0	271ff8	160	fn_271ff8	0	2		sceSdRemote,fn_4650e0	Ps2/Cri/Sound.cpp			0	0	0	
+603	0	272098	20	fn_272098	1	1			Ps2/Cri/Sound.cpp			0	0	0	
+604	0	2720b0	20	fn_2720b0	1	4			Ps2/Cri/Sound.cpp			0	0	0	
+605	0	2720c8	8	fn_2720c8	1	1			Ps2/Cri/Sound.cpp			0	0	0	
+606	0	2720d0	12	fn_2720d0	1	1			Ps2/Cri/Sound.cpp			0	0	0	
+607	0	2721f8	656	fn_2721f8	0	1		fn_384988,fn_384998,fn_3849a8,sceGifPkRefe,fn_384aa8,fn_384b20,fn_384c30,fn_384c48,sceGifPkCloseGifTag,sceGifPkAddGsAD		STROW=1,dmatag:ref=1		9	0	3	
+608	0	272488	804	fn_272488	0	1		fn_384988,fn_384998,fn_3849a8,fn_384bb8,fn_384c48,sceGifPkCloseGifTag,sceGifPkAddGsAD		STROW=1,dmatag:ref=1		2	0	5	
+609	0	2727b0	684	fn_2727b0	0	2		fn_382938,sceGsSetDefDrawEnv,sceGsPutDrawEnv,sceDmaGetChan,sceDmaSend,fn_384988,fn_384998,fn_3849a8,fn_384bb8,fn_384c48,sceGifPkCloseGifTag,sceGifPkAddGsAD,fn_476928,fn_4769d8,FlushCache		dmatag:refs=1		10	0	2	
+610	0	272a60	64	fn_272a60	1	1						0	0	7	
+611	0	272ae8	32	fn_272ae8	0	1		fn_43de48				0	0	0	
+612	0	272b08	28	fn_272b08	1	1						0	0	2	
+613	0	272b48	8	fn_272b48	1	1						0	0	0	
+614	0	272b50	76	fn_272b50	0	0		sceGsSwapDBuff				0	0	3	
+615	0	272ba0	8	fn_272ba0	1	1						0	0	0	
+616	0	272d10	8	fn_272d10	1	1						0	0	0	
+617	0	272d50	500	fn_272d50	0	1		scePadPortOpen,printf	Ps2/Sony/Shell/Core/shellPad.c			8	0	9	
+618	0	272f48	1676	fn_272f48	0	1		scePadRead,scePadGetState,scePadGetReqState,scePadInfoAct,scePadInfoMode,scePadSetMainMode,scePadSetActAlign,scePadInfoPressMode,scePadEnterPressMode,printf	Ps2/Sony/Shell/Core/shellPad.c			7	0	14	
+619	0	2735e0	80	fn_2735e0	0	3		scePadSetActDirect				0	0	0	
+620	0	273c38	52	fn_273c38	1	2						0	0	1	
+621	0	273cc0	60	fn_273cc0	1	1						0	0	1	
+622	0	273d00	76	fn_273d00	1	0						0	0	0	
+623	0	274808	1088	fn_274808	0	2		sceGsSetDefDrawEnv,sceGsSetDefClear,sceGsSetDefDrawEnv2				11	0	7	
+624	0	274d68	336	fn_274d68	1	2						0	0	7	
+625	0	274fb8	492	fn_274fb8	0	4		sceGsPutDrawEnv				0	0	4	
+626	0	275210	36	fn_275210	1	2						0	0	1	
+627	0	275238	40	fn_275238	1	1						0	0	1	
+628	0	275260	76	fn_275260	1	22						0	0	1	
+629	0	2752b0	76	fn_2752b0	1	7						0	0	1	
+630	0	275300	16	fn_275300	1	41						0	0	1	
+631	0	275310	24	fn_275310	1	1						0	0	0	
+632	0	275328	12	fn_275328	1	44						0	0	0	
+633	0	275338	12	fn_275338	1	7						0	0	0	
+634	0	275348	24	fn_275348	1	1						0	0	0	
+635	0	275360	12	fn_275360	1	50						0	0	0	
+636	0	275370	12	fn_275370	1	7						0	0	0	
+637	0	275380	16	fn_275380	1	13						0	0	1	
+638	0	275390	16	fn_275390	1	2						0	0	1	
+639	0	2753a0	16	fn_2753a0	1	25						0	0	1	
+640	0	2753b0	12	fn_2753b0	1	1						0	0	0	
+641	0	2754a0	8	fn_2754a0	1	0						0	0	0	
+642	0	2754a8	12	fn_2754a8	1	1						0	0	0	
+643	0	2754b8	84	fn_2754b8	1	1						0	0	0	
+644	0	275510	16	fn_275510	1	1						0	0	0	
+645	0	275520	12	fn_275520	1	2						0	0	0	
+646	0	275530	12	fn_275530	1	2						0	0	0	
+647	0	275540	84	fn_275540	1	1						0	0	0	
+648	0	275598	12	fn_275598	1	1						0	0	0	
+649	0	2755a8	12	fn_2755a8	1	1						0	0	0	
+650	0	2755b8	92	fn_2755b8	0	4		sceGsPutDispEnv				0	0	2	
+651	0	275618	128	fn_275618	1	2						0	0	2	
+652	1	2115a0	372	fn_2115a0	0	0	211288	fn_385fe0	Ps2/FileIODrv/FileIODrv.cpp			3	0	7	
+653	1	211718	348	fn_211718	0	0	211288	sceOpen,sceLseek	Ps2/FileIODrv/FileIODrv.cpp			2	0	6	
+654	1	211878	700	GetAsyncFileSize	0	4	211148	fn_3709f8,fn_370a20,__udivdi3,__umoddi3	Ps2/FileIODrv/FileIODrv.cpp			6	0	9	
+655	1	211f30	292	fn_211f30	0	2	211148		Ps2/FileIODrv/FileIODrv.cpp			0	0	3	
+656	1	212590	324	fn_212590	0	2	272f48					3	0	1	
+657	1	2126d8	392	Pad_MotorTask	0	1	2735e0	fn_2c7658,fn_2c7668				9	0	6	
+658	1	212860	300	fn_212860	0	3	2735e0	fn_2c7658,fn_2c7668				8	0	4	
+659	1	212990	108	fn_212990	0	1	272d50	scePadInit				2	0	1	
+660	1	212b40	156	fn_212b40	0	0	2735e0					0	0	4	
+661	1	213400	148	fn_213400	0	0	211288	fn_482740,sceSifInitRpc,fn_485cb8	Ps2/Main/PS2Main.cpp			2	0	1	
+662	1	213498	116	fn_213498	0	0	211288	fn_485cb8	Ps2/Main/PS2Main.cpp			2	0	1	
+663	1	213510	140	fn_213510	0	3	211288	sceSifStopModule,sceSifUnloadModule	Ps2/Main/PS2Main.cpp			3	0	1	
+664	1	2135a8	156	fn_2135a8	0	1	211100	__throw,fn_27d688	Ps2/Main/PS2Main.cpp			3	0	4	
+665	1	2145d8	96	fn_2145d8	0	0	214688					3	0	0	
+666	1	214e78	56	fn_214e78	0	3	24c868					0	0	2	
+667	1	215d28	52	fn_215d28	0	0	24c868					0	0	2	
+668	1	215d70	44	fn_215d70	0	53	24c238	atan2f				0	0	0	
+669	1	218b00	272	fn_218b00	0	1	217278	fn_3199e0,sceMcSync,sceMcGetInfo	Ps2/MemoryCard/SyncMemCard.cpp			4	0	1	
+670	1	219438	520	fn_219438	0	2	2168e0	sceMcOpen,sceMcClose,sceMcWrite,sceMcSync,sceMcFlush	Ps2/MemoryCard/SyncMemCard.cpp			6	0	4	
+671	1	219970	888	fn_219970	0	2	2168e0,216f50,217278	sceMcOpen,sceMcClose,sceMcRead,sceMcSync	Ps2/MemoryCard/SyncMemCard.cpp			9	0	2	
+672	1	21ac78	500	fn_21ac78	0	3	216498	fn_2f9530,fn_4753a0,sprintf	Ps2/MemoryCard/SyncMemCard.cpp			9	0	9	
+673	1	21ae70	396	fn_21ae70	0	1	2162d8,216498,2165d8,216758,218110	sceMcFormat	Ps2/MemoryCard/SyncMemCard.cpp			6	0	1	
+674	1	21e598	104	fn_21e598	0	0	217278	fn_3199e0	Ps2/MemoryCard/SyncMemCard.cpp			1	0	1	
+675	1	21e6b8	68	fn_21e6b8	0	0	24cdc0		Ps2/MemoryCard/SyncMemCard.cpp			1	0	0	
+676	1	21e9f8	160	fn_21e9f8	0	1	21ea98		Ps2/MemoryCard/SyncMemCard.cpp			2	0	0	
+677	1	21eb58	132	fn_21eb58	0	0	2165d8,218110	sceMcFormat	Ps2/MemoryCard/SyncMemCard.cpp			2	0	1	
+678	1	21ef38	88	fn_21ef38	0	1	216ac0		Ps2/MemoryCard/SyncMemCard.cpp			0	0	0	
+679	1	21f078	88	fn_21f078	0	1	217590		Ps2/MemoryCard/SyncMemCard.cpp			0	0	0	
+680	1	21f0d0	144	fn_21f0d0	0	1	217f90		Ps2/MemoryCard/SyncMemCard.cpp			1	0	0	
+681	1	21f160	168	fn_21f160	0	1	216498,217f90		Ps2/MemoryCard/SyncMemCard.cpp			1	0	0	
+682	1	21f208	272	fn_21f208	0	2	2162d8,216498		Ps2/MemoryCard/SyncMemCard.cpp			2	0	0	
+683	1	21f4e0	204	fn_21f4e0	0	1	2165d8,216758,218110	sceMcFormat	Ps2/MemoryCard/SyncMemCard.cpp			2	0	1	
+684	1	21f5b0	104	fn_21f5b0	0	4	216498,216dd8		Ps2/MemoryCard/SyncMemCard.cpp			1	0	0	
+685	1	21f630	160	fn_21f630	0	3	217f90		Ps2/MemoryCard/SyncMemCard.cpp			1	0	0	
+686	1	21f6d0	204	fn_21f6d0	0	1	216498,217f90		Ps2/MemoryCard/SyncMemCard.cpp			1	0	0	
+687	1	21f970	88	fn_21f970	0	2	217590		Ps2/MemoryCard/SyncMemCard.cpp			0	0	0	
+688	1	21f9c8	64	fn_21f9c8	0	1	217718		Ps2/MemoryCard/SyncMemCard.cpp			0	0	0	
+689	1	21fbd8	84	fn_21fbd8	0	1	217b98		Ps2/MemoryCard/SyncMemCard.cpp			0	0	0	
+690	1	21fc50	40	fn_21fc50	0	0	21b1c0		Ps2/MemoryCard/SyncMemCard.cpp			0	0	0	
+691	1	221530	1744	fn_221530	0	1	213c98	__throw,fn_202e40,cosf,fn_20ca08,fn_32d938,fn_32dbf0,fn_32dc00,fn_32e3f8,fn_32e4b8	Ps2/Renderer/BoneDetach.cpp			9	0	2	
+692	1	222058	440	fn_222058	0	1	213c78,213c98,213ce8,214058,214eb0	fn_2b39c8,fn_2b3a20,fn_32c9c8,fn_32cc08	Ps2/Renderer/BoneDetach.cpp			7	0	1	
+693	1	222210	464	fn_222210	0	1	213c78,213c98,213ce8,214058,214eb0	fn_2b39c8,fn_2b3a20,fn_32c9c8,fn_32cc08	Ps2/Renderer/BoneDetach.cpp			6	0	1	
+694	1	222510	716	fn_222510	0	2	214688		Ps2/Renderer/BoneDetach.cpp			6	0	2	
+695	1	2227e0	444	fn_2227e0	0	1	2311f0	FastMemset	Ps2/Renderer/BoneDetach.cpp			10	0	0	
+696	1	222d48	164	fn_222d48	0	0	2272b8	fn_2ae560	Ps2/Renderer/BoneDetach.cpp			2	0	2	
+697	1	223158	260	fn_223158	0	0	2146c8		Ps2/Renderer/BoneDetach.cpp			6	0	0	
+698	1	223eb8	196	fn_223eb8	0	0	213cb8,213e30,214170,214220,2146c8,214eb0		Ps2/Renderer/BoneDetach.cpp			5	0	0	
+699	1	223f80	40	fn_223f80	0	0	222d40		Ps2/Renderer/BoneDetach.cpp			0	0	0	
+700	1	2243f0	500	fn_2243f0	0	2	213ce8,214688	fn_2ae560,fn_32cc08				6	0	2	
+701	1	2245e8	884	fn_2245e8	0	0	214eb0	fn_2ae560,fn_32cc08				2	0	2	
+702	1	224960	452	fn_224960	0	0	213cb8,214688,226540,226558	fn_32cb68,fn_32d100,fn_32d128				0	0	3	
+703	1	225340	400	fn_225340	0	2	213e30,214eb0	fn_32cb68,fn_32d100				4	0	1	
+704	1	2254d0	232	fn_2254d0	0	3	213c98	fn_2ae560,fn_32cc08				4	0	1	
+705	1	225928	204	fn_225928	0	2	213c78,213c98,213ce8					3	0	0	
+706	1	2259f8	184	fn_2259f8	0	8	213c78,214688	fn_2ae560				4	0	0	
+707	1	225ab0	200	fn_225ab0	0	2	2152f8					1	0	1	
+708	1	225e48	376	fn_225e48	0	6	213cb8	fn_2ae560,fn_32cb68,fn_32d100				7	0	0	
+709	1	226128	272	fn_226128	0	2	213cb8,214688	fn_32d100,fn_32d128				3	0	3	
+710	1	226238	320	fn_226238	0	0	213cb8,214688	fn_32d100,fn_32d128				3	0	3	
+711	1	226378	456	fn_226378	0	2	213cb8,213ce8,214058,214638,214688	fn_32d100,fn_32d128				6	0	3	
+712	1	226698	76	fn_226698	0	3	26d590					1	0	1	
+713	1	2266e8	112	fn_2266e8	0	0	26d590					3	0	1	
+714	1	226758	148	fn_226758	0	0	26d590					1	0	1	
+715	1	226e18	40	fn_226e18	0	0	26cf70					0	0	1	
+716	1	226e40	96	fn_226e40	0	7	267dc8					1	0	2	
+717	1	226ea0	40	fn_226ea0	0	2	267e98					0	0	1	
+718	1	226ec8	40	fn_226ec8	0	2	2638e8					0	0	1	
+719	1	226f30	68	fn_226f30	0	3	26d5c0					0	0	1	
+720	1	226f78	40	fn_226f78	0	1	26c628					0	0	1	
+721	1	226fa0	120	fn_226fa0	0	2	26d590					0	0	1	
+722	1	227400	100	fn_227400	0	1	22c630	fn_2ae560				1	0	1	
+723	1	227468	44	fn_227468	0	1	223e70					0	0	1	
+724	1	227cd0	644	packet_anti_alias_or_blur	0	1	227560,275328,275360	fn_278050,fn_278520,fn_278ec8,fn_27a7b8,fn_27c9b8,fn_27cf38,fn_27d2e0				4	0	11	
+725	1	2287a8	2536	fn_2287a8	0	1	229190,2291b0,275300			DIRECT=1,FLUSH=1,STROW=1,dmatag:end=1,dmatag:ref=1,dmatag:ret=1,vif:OFFSET=2,vif:STCYCL=1		9	0	3	
+726	1	229ae0	664	fn_229ae0	0	0	275300,2753a0			DIRECT=1		5	0	3	
+727	1	229d78	664	fn_229d78	0	0	2753a0			DIRECT=1,FLUSH=1		3	0	4	
+728	1	22a010	672	fn_22a010	0	0	275300,2753a0			DIRECT=1,FLUSH=1		5	0	3	
+729	1	22a2b0	868	fn_22a2b0	0	1	2752b0,275328,275338,275360,275370,275390	FlushCache				10	0	6	
+730	1	22a618	1784	fn_22a618	0	1	213cb8,214eb0,2752b0,275328,275338,275360,275370,275380	fn_32cb68,FlushCache,__fixunssfdi				10	0	14	
+731	1	22ad10	824	fn_22ad10	0	1	275260,275328,275360,275380	FlushCache				8	0	4	
+732	1	22b048	1304	fn_22b048	0	0	23de10,275300,2753a0			DIRECT=1,FLUSH=1,MSCAL=1,STROW=1,dmatag:ref=1		5	0	7	
+733	1	22b870	1216	fn_22b870	0	1	22b560	FlushCache		UNPACK=1,vif:STCYCL=1		10	0	4	
+734	1	22bfc8	832	fn_22bfc8	0	1	214058	cosf,sinf,atan2f				2	29	4	
+735	1	22c838	232	fn_22c838	0	12	22c308					0	26	1	
+736	1	22ccb8	1256	fn_22ccb8	0	12	26d2e8	fn_283b80	Ps2/Renderer/Character/ps2BasicPrimitives.cpp	DIRECT=1		7	0	6	
+737	1	22e9b8	2244	fn_22e9b8	0	0	22e6f8,22e880,26d590		Ps2/Renderer/Character/ps2BasicPrimitives.cpp			11	0	12	
+738	1	22f280	2620	fn_22f280	0	1	22e6f8,22e880,26d590		Ps2/Renderer/Character/ps2BasicPrimitives.cpp			13	0	12	
+739	1	22fcc0	1468	fn_22fcc0	0	1	22e6f8,22e880		Ps2/Renderer/Character/ps2BasicPrimitives.cpp			6	0	7	
+740	1	230280	516	fn_230280	0	2	22e6f8		Ps2/Renderer/Character/ps2BasicPrimitives.cpp			5	0	3	
+741	1	2311c8	40	fn_2311c8	0	0	230488		Ps2/Renderer/Character/ps2BasicPrimitives.cpp			0	0	0	
+742	1	2314d8	256	fn_2314d8	0	2	26d030		Ps2/Renderer/Character/ps2render.cpp			2	0	1	
+743	1	231ad0	2012	fn_231ad0	0	2	2318b8	fn_326140	Ps2/Renderer/Character/ps2render.cpp	FLUSH=1,UNPACK=1,vif:STCYCL=1		11	22	14	
+744	1	236f30	1840	fn_236f30	0	1	236db0,275300,2753a0	sceVif1PkAddGsAD	Ps2/Renderer/Character/ps2render.cpp	STMASK=2,dmatag:next=2,dmatag:refs=1,dmatag:ret=1,vif:ITOP=2		6	0	14	
+745	1	2379f0	1852	fn_2379f0	0	1	213ce8		Ps2/Renderer/Character/ps2render.cpp	UNPACK=1,vif:STCYCL=1		31	43	4	
+746	1	2388b0	1860	fn_2388b0	0	1	213ce8,2148a0,2149f8		Ps2/Renderer/Character/ps2render.cpp	FLUSH=1		25	23	16	
+747	1	238ff8	620	fn_238ff8	0	2	213ce8		Ps2/Renderer/Character/ps2render.cpp			0	30	4	
+748	1	239c48	1292	fn_239c48	0	1	26d2e8,26de50		Ps2/Renderer/Character/ps2render.cpp	FLUSH=1,UNPACK=11,vif:STCYCL=3		6	0	3	
+749	1	23c790	376	fn_23c790	0	4	213c78,213c98,213ce8	fn_2ae560	Ps2/Renderer/Character/ps2render.cpp			5	0	3	
+750	1	23c908	480	fn_23c908	0	6	213c78,213c98,213ce8	fn_2ae560	Ps2/Renderer/Character/ps2render.cpp			5	4	4	
+751	1	23cae8	280	fn_23cae8	0	2	213ce8,2148a0,2149f8		Ps2/Renderer/Character/ps2render.cpp			3	17	2	
+752	1	23d128	452	fn_23d128	0	1	213ce8,213e88,214058		Ps2/Renderer/Character/ps2render.cpp			10	4	7	
+753	1	23d660	988	fn_23d660	0	2	23cf90	fn_32cb68	Ps2/Renderer/Character/ps2render.cpp	DIRECT=3		16	23	8	
+754	1	23db48	708	fn_23db48	0	2	213e88		Ps2/Renderer/Character/ps2render.cpp			1	63	2	
+755	1	2405f0	1652	fn_2405f0	0	0	275260,275328,275360,2753a0		Ps2/Renderer/Character/ps2render.cpp	DIRECT=1,FLUSH=1		11	0	5	
+756	1	240c68	1956	fn_240c68	0	0	236ba0,24e680,26d590,275260,275328,275360,2753a0	FlushCache	Ps2/Renderer/Character/ps2render.cpp	DIRECT=1,FLUSH=1,dmatag:end=1	D1(VIF1),D_CTRL/STAT/PCR	9	0	5	
+757	1	241da0	1168	fn_241da0	0	1	213ce8,24a700	FastMemset,fn_32cb68	Ps2/Renderer/Character/ps2render.cpp			6	68	7	
+758	1	242230	368	fn_242230	0	1	213ce8,24a700	fn_32cb68	Ps2/Renderer/Character/ps2render.cpp			3	7	5	
+759	1	2423a0	1836	fn_2423a0	0	0	2152f8	sceDmaGetChan,sceDmaSend	Ps2/Renderer/Character/ps2render.cpp	DIRECT=1,dmatag:end=7		8	0	3	
+760	1	245168	1640	fn_245168	0	3	213c78,2457d0	Memory_ResetBlock,Memory_AllocBlock,FastMemset	Ps2/Renderer/Character/ps2render.cpp			9	106	13	2
+761	1	2457d0	552	fn_2457d0	0	11	213c78,213c98,213ce8,245168		Ps2/Renderer/Character/ps2render.cpp			8	0	4	2
+762	1	248658	680	fn_248658	0	0	26d2e8		Ps2/Renderer/Character/ps2render.cpp	UNPACK=4,vif:STCYCL=1		4	0	2	
+763	1	248900	1884	fn_248900	0	3	26d2e8		Ps2/Renderer/Character/ps2render.cpp	UNPACK=10,vif:STCYCL=4		7	1	8	
+764	1	249e38	2248	Render_Projection3D	0	3	213ce8,24d3d0	atan2f	Ps2/Renderer/Character/ps2render.cpp	MPG=1		7	108	16	
+765	1	24ac88	788	fn_24ac88	0	4	275260,275360,275380		Ps2/Renderer/Character/ps2render.cpp	DIRECT=1,FLUSH=1		6	0	3	
+766	1	24afa0	804	fn_24afa0	0	5	275260,275300,275360,275380,2753a0		Ps2/Renderer/Character/ps2render.cpp	DIRECT=1,FLUSH=1		6	0	3	
+767	1	24b2c8	716	fn_24b2c8	0	0	275260,275360,275380		Ps2/Renderer/Character/ps2render.cpp	DIRECT=1,FLUSH=1		6	0	3	
+768	1	24b780	592	fn_24b780	0	2	22e428,274fb8		Ps2/Renderer/Character/ps2render.cpp			11	0	8	
+769	1	24bcd0	452	fn_24bcd0	0	2	24e680	FlushCache	Ps2/Renderer/Character/ps2render.cpp	dmatag:end=1	D1(VIF1),D_CTRL/STAT/PCR	5	0	4	
+770	1	24bf20	232	fn_24bf20	0	0	223fa8		Ps2/Renderer/Character/ps2render.cpp			3	0	2	
+771	1	24c0e8	268	fn_24c0e8	0	0	213e88,213f70		Ps2/Renderer/Character/ps2render.cpp			6	13	3	
+772	1	24cf58	156	fn_24cf58	0	0	26de50		Ps2/Renderer/Character/ps2render.cpp			3	0	1	
+773	1	24d040	228	fn_24d040	0	0	213ce8		Ps2/Renderer/Character/ps2render.cpp			0	18	0	
+774	1	24d858	100	fn_24d858	0	2	24e680		Ps2/Renderer/Character/ps2render.cpp			4	0	3	
+775	1	24d8c0	40	fn_24d8c0	0	0	24be98		Ps2/Renderer/Character/ps2render.cpp			0	0	0	
+776	1	24e7b8	2776	fn_24e7b8	0	1	2140c8,2140f8,2141a8,214638,2149c8,250e38,25f8f0,26d590	FastMemcpy,fn_32cb68,fn_341ca0,fn_341d30,fn_3431b8,fn_343210,fn_384d58,fn_384d68,fn_384d78,fn_384dd0,sceVif1PkRet,fn_384fa0,fn_384ff8,fn_385088,fn_385220,fn_3852a0,fn_3852d0,fn_3852e8	Ps2/Renderer/Character/ps2Setup.cpp	MSCNT=1		10	0	30	
+777	1	24f290	1788	fn_24f290	0	1	2140c8,2140f8,2141a8,214638,2149c8,250e38,25f708,25f8f0,26d590	FastMemcpy,fn_32cb68,fn_341ca0,fn_341d30,fn_3431b8,fn_343210,fn_384d58,fn_384d68,fn_384d78,fn_384dd0,sceVif1PkRet,fn_384fa0,fn_384ff8,fn_385088,fn_3852a0,fn_3852e8	Ps2/Renderer/Character/ps2Setup.cpp	MSCNT=1		10	0	28	
+778	1	24f990	2752	fn_24f990	0	0	213cb8,214058,2140c8,2140f8,2141a8,214638,2149c8,250e38,25f8f0,26d590	FastMemcpy,fn_32cb68,fn_341d30,fn_3431b8,fn_343210,fn_384de8,fn_384ff8,fn_385088,fn_3852a0,fn_3852d0,fn_3852e8	Ps2/Renderer/Character/ps2Setup.cpp	MSCNT=1		10	0	26	
+779	1	250450	2536	fn_250450	0	1	213cb8,214058,2140c8,2140f8,2141a8,214638,2149c8,250e38,25f708,25f8f0,26d590	FastMemcpy,fn_32cb68,fn_341ca0,fn_341d30,fn_3431b8,fn_343210,fn_384de8,fn_384ff8,fn_385088,fn_3852a0,fn_3852e8	Ps2/Renderer/Character/ps2Setup.cpp	MSCNT=1		10	0	29	
+780	1	250fd0	3724	fn_250fd0	0	2	2140c8,2140f8,2141a8,214638,2149c8,250e38,26d590	FastMemcpy,fn_32cb68,fn_341170,fn_341180,fn_341ca0,fn_341d30,fn_3431b8,fn_343210,fn_384d78,fn_384dd0,fn_384fa0,fn_384ff8,fn_385088,fn_3852a0,fn_3852d0,fn_3852e8	Ps2/Renderer/Character/ps2Setup.cpp	MSCNT=1,dmatag:ret=1		21	0	73	
+781	1	252148	1416	fn_252148	0	1	2140c8,2140f8,2141a8,214638,2149c8	FastMemcpy,fn_32cb68,fn_33fc20,fn_33fdf0,fn_384d58,fn_384d68,fn_384d78,fn_384dd0,sceVif1PkRet,fn_384fa0,fn_384ff8,fn_385088,fn_3852a0,fn_3852d0,fn_3852e8	Ps2/Renderer/Character/ps2Setup.cpp	MSCNT=1		10	0	14	
+782	1	252d40	964	fn_252d40	0	2	2526d0,252b18	cosf,sinf,fn_384d58,fn_384d68,fn_384d78,fn_384dd0,sceVif1PkRet,fn_384ff8,fn_385088,fn_3852a0,fn_3852b8,fn_3852d0	Ps2/Renderer/Character/ps2Setup.cpp	MSCNT=1,STMASK=1,UNPACK=1,dmatag:next=1		9	0	6	
+783	1	253108	1184	fn_253108	0	1	2526d0,252b18	cosf,sinf,fn_384d58,fn_384d68,fn_384d78,fn_384dd0,sceVif1PkRet,fn_384ff8,fn_385088,fn_3852a0,fn_3852b8,fn_3852d0	Ps2/Renderer/Character/ps2Setup.cpp	MSCNT=1,STMASK=1,UNPACK=1,dmatag:next=1		9	0	9	
+784	1	2535a8	1832	fn_2535a8	0	0	213de8,213e30,2140f8,252908	cosf,sinf,fn_32cb68,fn_384d58,fn_384d68,fn_384d78,fn_384dd0,sceVif1PkRet,fn_384ff8,fn_385088,fn_3852a0,fn_3852d0	Ps2/Renderer/Character/ps2Setup.cpp	MSCNT=1,UNPACK=1		9	0	9	
+785	1	253cd0	3984	fn_253cd0	0	1	213de8,213e30,2140f8,252908	cosf,sinf,fn_32cb68,fn_384d58,fn_384d68,fn_384d78,fn_384dd0,sceVif1PkRet,fn_384ff8,fn_385088,fn_3852a0,fn_3852d0	Ps2/Renderer/Character/ps2Setup.cpp	MSCNT=1,UNPACK=6		9	0	18	
+786	1	254fd0	460	fn_254fd0	0	5	2140f8,214688,2146c8		Ps2/Renderer/Character/ps2Setup.cpp			9	0	0	
+787	1	257590	1132	fn_257590	0	1	257368	fn_476e00	Ps2/Renderer/Character/ps2Setup.cpp			5	0	9	
+788	1	258040	2388	fn_258040	0	0	2140c8,2140f8,2141a8,214638,2149c8,250e38,251e60	fn_32cb68,fn_341170,fn_341180,fn_341d30,fn_3431b8,fn_343210,fn_384d58,fn_384d68,fn_384d78,fn_384dd0,sceVif1PkRet,fn_384ff8,fn_385088,fn_3852a0,fn_3852b8,fn_3852d0	Ps2/Renderer/Character/ps2Setup.cpp	MSCNT=1,STMASK=1,UNPACK=1,dmatag:next=1		9	0	14	
+789	1	258b70	1616	fn_258b70	0	2	2140c8,2140f8,2141a8,214638,2149c8,251e60	fn_32cb68,fn_341170,fn_341180,fn_343210,fn_384ff8,fn_385088,fn_3852d0	Ps2/Renderer/Character/ps2Setup.cpp	UNPACK=1		9	0	18	
+790	1	25adb8	640	fn_25adb8	0	1	262be8,267de0	Memory_CurrentBlock,fn_283c48	Ps2/Renderer/Character/ps2Setup.cpp			6	0	7	
+791	1	25d098	1076	fn_25d098	0	2	214688,2146c8,214778,2148a0,2149f8,214eb0,24c238	fn_340bb0,fn_340bf8	Ps2/Renderer/Character/ps2Setup.cpp			9	0	3	
+792	1	25eab8	44	fn_25eab8	0	13	26cec0		Ps2/Renderer/Character/ps2Setup.cpp			0	0	1	
+793	1	25eae8	40	fn_25eae8	0	0	26dfa8		Ps2/Renderer/Character/ps2Setup.cpp			0	0	1	
+794	1	25eb10	68	fn_25eb10	0	17	26cec0	Memory_ResetBlock	Ps2/Renderer/Character/ps2Setup.cpp			1	0	1	
+795	1	25f0b8	460	fn_25f0b8	0	0	2140c8,2140f8,2141a8,214638,2149c8	fn_32cb68	Ps2/Renderer/Character/ps2Setup.cpp			4	0	0	
+796	1	25f638	208	fn_25f638	0	0	26d590		Ps2/Renderer/Character/ps2Setup.cpp			1	0	3	
+797	1	25fcb8	340	fn_25fcb8	0	0	213de8,213e30,2140f8	fn_3852d0	Ps2/Renderer/Character/ps2Setup.cpp			4	0	1	
+798	1	260180	320	fn_260180	0	0	26dd90	fn_341a50	Ps2/Renderer/Character/ps2Setup.cpp			9	0	3	
+799	1	2602c0	248	fn_2602c0	0	0	26de10	fn_341a50	Ps2/Renderer/Character/ps2Setup.cpp			8	0	3	
+800	1	2603b8	292	fn_2603b8	0	0	26ddd0,26df80	fn_341a50	Ps2/Renderer/Character/ps2Setup.cpp			9	0	3	
+801	1	260de8	268	fn_260de8	0	1	26d328,26d3e0,26d4c0		Ps2/Renderer/Character/ps2Setup.cpp			3	0	2	
+802	1	260ef8	308	fn_260ef8	0	1	26d278,26def8,26df20		Ps2/Renderer/Character/ps2Setup.cpp			6	0	1	
+803	1	2610a0	40	fn_2610a0	0	0	25ea28		Ps2/Renderer/Character/ps2Setup.cpp			0	0	0	
+804	1	2610c8	40	fn_2610c8	0	0	25ea28		Ps2/Renderer/Character/ps2Setup.cpp			0	0	0	
+805	1	2637a8	48	fn_2637a8	0	1	262be8		Ps2/Renderer/Effects/meshdraw.cpp			0	0	2	
+806	1	263900	40	fn_263900	0	0	2636a8		Ps2/Renderer/Effects/meshdraw.cpp			0	0	0	
+807	1	263928	40	fn_263928	0	0	2636a8		Ps2/Renderer/Effects/meshdraw.cpp			0	0	0	
+808	1	263950	616	fn_263950	0	2	213de8,213e30,2140c8,2140f8,214638,214688					5	0	2	
+809	1	265600	312	fn_265600	0	1	215780					8	0	2	
+810	1	265c98	3008	fn_265c98	0	2	215ec0,265a20,26d590,275328,275360			dmatag:end=29		12	0	15	
+811	1	2673c8	2292	fn_2673c8	0	1	213b78,213c78,213cb8,213ce8,214058,2140c8,214638,214658,214688,2146c8,214778,2655c0,265a20,26d590	fn_32cc08				15	0	14	
+812	1	267d00	32	fn_267d00	0	1	267e98					0	0	0	
+813	1	268218	868	fn_268218	0	1	213980,213bd8,275328,275360	fn_32cb68				9	35	11	
+814	1	268620	40	fn_268620	0	0	268580					0	0	0	
+815	1	268648	1172	fn_268648	0	6	26cd50	fn_384988,fn_384998,fn_3849a8,fn_384aa8,fn_384b20,fn_384bb8,fn_384d08,FlushCache	Ps2/Renderer/Texture/TextureManager.cpp			9	0	0	
+816	1	268cf8	456	fn_268cf8	0	1	26cd50	fn_384988,fn_384998,fn_3849a8,fn_384aa8,fn_384b20,fn_384bb8,fn_384d08,sceGifPkAddGsAD,FlushCache	Ps2/Renderer/Texture/TextureManager.cpp			3	0	1	
+817	1	269678	648	fn_269678	0	0	269d28,26a2b0,26a560,26ad78,26b9f0	FastMemset	Ps2/Renderer/Texture/TextureManager.cpp			6	0	1	
+818	1	269900	728	fn_269900	0	8	269fd8,26a2b0,26a928,26ad78,26b9f0	FastMemset	Ps2/Renderer/Texture/TextureManager.cpp			8	0	1	
+819	1	26bb00	500	fn_26bb00	0	0	268ae0,268ec0	FastMemcpy,fn_384d78,fn_384de8,sceVif1PkOpenDirectCode,fn_385130,fn_385160,sceVif1PkCloseGifTag,fn_385220,fn_3852a0,sceVif1PkAddGsAD	Ps2/Renderer/Texture/TextureManager.cpp	FLUSH=2		9	0	3	
+820	1	26bcf8	1096	fn_26bcf8	0	2	268ae0,268ec0	FastMemcpy	Ps2/Renderer/Texture/TextureManager.cpp	DIRECT=1,FLUSH=2		6	0	3	
+821	1	26ca68	44	fn_26ca68	0	0	26d590,26dae8		Ps2/Renderer/Texture/TextureManager.cpp			0	0	0	
+822	1	26ca98	64	fn_26ca98	0	2	26c140		Ps2/Renderer/Texture/TextureManager.cpp			1	0	0	
+823	1	26cfa8	136	fn_26cfa8	0	1	26b9f0		Ps2/Renderer/Texture/TextureManager.cpp			4	0	0	
+824	1	26d298	76	fn_26d298	0	3	26b150		Ps2/Renderer/Texture/TextureManager.cpp			1	0	0	
+825	1	26e190	40	fn_26e190	0	0	26c568		Ps2/Renderer/Texture/TextureManager.cpp			0	0	0	
+826	1	26e1f0	136	fn_26e1f0	0	5	213cb8,2146c8,2149f8					2	0	0	
+827	1	26e278	112	fn_26e278	0	0	213cb8,2146c8,2149f8					2	0	0	
+828	1	26e2f0	848	fn_26e2f0	0	1	211100,26e640	__throw,fn_27e710,fn_27f510,fn_280080,fn_2803b0,fn_280668,fn_280698,fn_280810,fn_280878,fn_2808d0,fn_280988				8	0	1	
+829	1	26e830	556	fn_26e830	0	1	213c78	fn_280388,fn_280810,fn_2808d0,fn_32aac8,fn_32cc08				8	0	1	
+830	1	26efc0	40	fn_26efc0	0	0	22c728					0	0	0	
+831	1	26f570	92	fn_26f570	0	1	26f790	fn_412ce8	Ps2/Cri/File.cpp			2	0	1	
+832	1	26f918	728	Movie_CreateAndStart	0	1	270460	Memory_AllocBlock,fn_20f330,FastMemset,fn_37b600,fn_415890,fn_43a080,fn_43a0d8,mwPlyCalcWorkCprmSfd,mwPlyCreateSofdec,mwPlySetFrmSync,mwPlyStartFname,mwPlySetAudioCh,mwPlySetOutVol,fn_43e910,fn_43e980,sprintf				8	0	11	
+833	1	270538	252	fn_270538	0	1	270ee0,270fc8,2720b0	Task_Kill,fn_20c7e0,fn_20c818,fn_20c850,fn_41c530	Ps2/Cri/Music.cpp			5	0	1	
+834	1	270730	616	fn_270730	0	1	2709f0,270ee0,270ef0	fn_20beb0,fn_20c7b8,fn_20c7c8,Memory_AllocBlock,FastMemset,fn_419f70,fn_41c278,fn_41c350,fn_41c8b8,fn_41c960	Ps2/Cri/Music.cpp			9	0	5	
+835	1	271350	296	fn_271350	0	2	2712b0	Task_Kill,fn_20c7e0,fn_20c818,fn_4631b8,fn_463718,fn_463bd8	Ps2/Cri/Sound.cpp			4	0	1	
+836	1	2715b0	72	fn_2715b0	0	1	214688		Ps2/Cri/Sound.cpp			1	0	2	
+837	1	271748	168	fn_271748	0	1	24cdc0	fn_3199e0,fn_4158f0,fn_415908,fn_462d38,fn_4637f8	Ps2/Cri/Sound.cpp			3	0	1	
+838	1	271988	380	fn_271988	0	1	2720b0	fn_20c148,fn_463410,fn_4634a0,fn_463588,fn_4635f8,fn_463770	Ps2/Cri/Sound.cpp			6	0	1	
+839	1	271b08	392	fn_271b08	0	1	2720b0	fn_20c148,Task_Kill,fn_465308,fn_465478,fn_4656b0,fn_465840	Ps2/Cri/Sound.cpp			6	0	1	
+840	1	271c90	604	fn_271c90	0	1	2720b0	fn_463588,fn_4635f8,fn_463670,fn_4656b0	Ps2/Cri/Sound.cpp			1	0	0	
+841	1	2720e0	280	fn_2720e0	0	1	2727b0	sceGsSetDefDBuff,sceGsSwapDBuff,FlushCache				3	0	7	
+842	1	272aa0	68	fn_272aa0	0	1	2727b0					0	0	3	
+843	1	272b28	32	fn_272b28	0	1	272ae8					0	0	0	
+844	1	272ba8	360	fn_272ba8	0	1	2721f8,272488	sceGsSyncV,fn_382938,sceDmaGetChan,sceDmaSend				7	0	2	
+845	1	273630	1540	fn_273630	0	1	213e30,2140f8	cosf,sqrtf,fn_340bb0,fn_340bf8				9	0	2	
+846	1	273c70	40	fn_273c70	0	0	273c38					0	0	0	
+847	1	273c98	40	fn_273c98	0	0	273c38					0	0	0	
+848	1	273d50	40	fn_273d50	0	0	273cc0					0	0	0	
+849	1	274688	384	fn_274688	0	1	2240c8,2240d8	DIntr			GS priv 1000	1	0	15	
+850	1	274eb8	252	fn_274eb8	0	6	275520,275530	sceGsSetDefDispEnv				6	0	2	
+851	1	275d98	1508	fn_275d98	0	1	275300,2753a0	fn_27c288,FlushCache	Ps2/Renderer/ScreenCopy.cpp	DIRECT=2,FLUSH=2,dmatag:ret=1		8	0	4	
+852	2	211b38	460	fn_211b38	0	1	211878,24cdc0	fn_3199e0,cPxFileInterface_StartFileLoading,cPxFileInterface_FileLoadStatus,cPxFileInterface_CloseFileHandle,fn_467670	Ps2/FileIODrv/FileIODrv.cpp			9	0	6	
+853	2	2122c8	36	fn_2122c8	0	2	211878		Ps2/FileIODrv/FileIODrv.cpp			0	0	0	
+854	2	2122f0	92	fn_2122f0	0	0	211878	fn_370a48	Ps2/FileIODrv/FileIODrv.cpp			2	0	2	
+855	2	212a70	204	fn_212a70	0	2	212590	fn_2c7658,fn_2c7668				6	0	1	
+856	2	212d40	144	fn_212d40	0	0	212590	fn_2c7658,fn_2c7668				3	0	1	
+857	2	212dd0	412	fn_212dd0	0	1	211100,263700,265600,267d00,26cdf8	Memory_AllocBlock	Ps2/Main/PS2Main.cpp			7	0	11	
+858	2	2190a8	576	fn_2190a8	0	1	2168e0,216ac0,219438,21e618	sceMcMkdir,sceMcSync,fn_4749a8,fn_474edc	Ps2/MemoryCard/SyncMemCard.cpp			7	0	5	
+859	2	2192e8	332	fn_2192e8	0	2	2168e0,216ac0,219438,21e618	fn_4749a8	Ps2/MemoryCard/SyncMemCard.cpp			3	0	4	
+860	2	2197f8	372	fn_2197f8	0	1	216ac0,216f50,2170f0,219970,24cdc0	fn_4749a8	Ps2/MemoryCard/SyncMemCard.cpp			4	0	3	
+861	2	21a4d8	460	fn_21a4d8	0	1	219970,24cdc0	Memory_AllocBlock,fn_20f330,FastMemset,fn_4749a8	Ps2/MemoryCard/SyncMemCard.cpp			9	0	6	
+862	2	21ef18	32	fn_21ef18	0	1	21f630		Ps2/MemoryCard/SyncMemCard.cpp			0	0	0	
+863	2	2201e8	1280	fn_2201e8	0	1	213c78,213c98,213ce8,213e30,214058,214220,214638,214688,222210	__throw,fn_202e40,fn_326140,fn_32cc08,fn_32d3f0,fn_32dbf0,fn_32dc00,fn_32e178,fn_32e3f8	Ps2/Renderer/BoneDetach.cpp			9	0	4	
+864	2	2229a0	924	fn_2229a0	0	1	213de8,213e30,2140c8,2140f8,214170,214220,214238,214638,214688,222510	fn_32cc08	Ps2/Renderer/BoneDetach.cpp			9	0	4	
+865	2	224cc8	348	fn_224cc8	0	1	2124b0,2124c0,269900					9	0	7	
+866	2	2250f0	112	fn_2250f0	0	6	23c908	fn_2ae560,fn_32cc08				3	0	0	
+867	2	225208	308	fn_225208	0	7	23c908	fn_2ae560,fn_32cc08				6	0	0	
+868	2	2255b8	324	fn_2255b8	0	0	214688,23c908	fn_2ae560				7	0	0	
+869	2	225700	280	fn_225700	0	15	213c98,23c908	fn_2ae560,fn_32cc08				4	0	1	
+870	2	225818	272	fn_225818	0	5	213c98,225928	fn_2ae560,fn_32cc08				5	0	1	
+871	2	225b78	196	fn_225b78	0	0	23c908	fn_2ae560				4	0	2	
+872	2	225c40	516	fn_225c40	0	161	213c78,213cb8,23c908	fn_2ae560,fn_32cb68,fn_32d100				8	0	2	
+873	2	226088	156	fn_226088	0	1	226128,226540,226558					0	0	0	
+874	2	226588	104	fn_226588	0	6	249e38	tanf				1	0	1	
+875	2	2265f0	32	fn_2265f0	0	0	249e38					0	0	0	
+876	2	226c60	92	fn_226c60	0	1	274eb8,275510	FlushCache				1	0	1	
+877	2	227f58	924	anti_alias_or_blur	0	1	229970,22a2b0,22a618,22be18	fn_382938		dmatag:refs=1		5	0	9	
+878	2	228460	360	fn_228460	0	1	2287a8,24e680	fn_382938,sceGsSetDefLoadImage,sceGsExecLoadImage,FlushCache				1	0	7	
+879	2	22bf18	172	fn_22bf18	0	1	22b870					0	0	8	
+880	2	22c748	96	fn_22c748	0	3	22c838					0	0	1	
+881	2	22c7a8	44	fn_22c7a8	0	2	22c838					0	0	1	
+882	2	22c7d8	96	fn_22c7d8	0	0	22c838					0	0	1	
+883	2	22d540	440	fn_22d540	0	0	22ccb8,22d1a0		Ps2/Renderer/Character/ps2BasicPrimitives.cpp			3	0	3	
+884	2	22d6f8	784	fn_22d6f8	0	2	213ce8,22ccb8,22d1a0	sceVu0RotTransPers	Ps2/Renderer/Character/ps2BasicPrimitives.cpp			10	0	7	
+885	2	22da08	740	fn_22da08	0	1	22ccb8,22d1a0		Ps2/Renderer/Character/ps2BasicPrimitives.cpp			10	0	4	
+886	2	22dcf0	812	fn_22dcf0	0	1	22ccb8,22d1a0		Ps2/Renderer/Character/ps2BasicPrimitives.cpp			10	0	5	
+887	2	22e110	788	fn_22e110	0	1	213ce8,22ccb8,22d1a0	sceVu0RotTransPers	Ps2/Renderer/Character/ps2BasicPrimitives.cpp			10	0	6	
+888	2	230710	232	fn_230710	0	0	22ccb8,22d1a0,22d2e8	sceVu0RotTransPers	Ps2/Renderer/Character/ps2BasicPrimitives.cpp			5	0	1	
+889	2	2307f8	232	fn_2307f8	0	0	22ccb8,22d1a0,22d2e8	sceVu0RotTransPers	Ps2/Renderer/Character/ps2BasicPrimitives.cpp			5	0	1	
+890	2	2308e0	256	fn_2308e0	0	0	22ccb8,22d1a0,22d2e8	sceVu0RotTransPers	Ps2/Renderer/Character/ps2BasicPrimitives.cpp			6	0	1	
+891	2	2309e0	220	fn_2309e0	0	1	22ccb8,22d1a0,22d2e8	sceVu0RotTransPers	Ps2/Renderer/Character/ps2BasicPrimitives.cpp			6	0	1	
+892	2	230c68	224	fn_230c68	0	0	22ccb8,22d1a0,22d2e8		Ps2/Renderer/Character/ps2BasicPrimitives.cpp			6	0	0	
+893	2	230d48	324	fn_230d48	0	0	22ccb8,22d1a0,22d2e8		Ps2/Renderer/Character/ps2BasicPrimitives.cpp			6	0	0	
+894	2	230e90	228	fn_230e90	0	0	22ccb8,22d1a0,22d2e8		Ps2/Renderer/Character/ps2BasicPrimitives.cpp			5	0	0	
+895	2	2315d8	572	fn_2315d8	0	0	2314d8	FastMemcpy	Ps2/Renderer/Character/ps2render.cpp			9	0	9	
+896	2	232628	10856	fn_232628	0	1	213ce8,213e88,213f70,214058,2149f8,215720,22c838,2318b8,2322b0,232368,232420,2324d8,275260,275300,275328,275360,275380,2753a0	atan2f,fn_326140	Ps2/Renderer/Character/ps2render.cpp	DIRECT=4,FLUSH=6,UNPACK=17,vif:STCYCL=3		23	117	83	
+897	2	235090	1864	fn_235090	0	0	22c838	fn_379988	Ps2/Renderer/Character/ps2render.cpp	FLUSH=1,STMASK=1,dmatag:next=1,vif:ITOP=1		5	0	52	
+898	2	235a58	484	fn_235a58	0	1	22c838,231ad0,275328,275360	fn_326140,fn_326150	Ps2/Renderer/Character/ps2render.cpp			5	0	3	
+899	2	235e28	2444	fn_235e28	0	1	213ce8,214058,214eb0,22c838,2318b8,23de10,275300,2753a0	sqrtf	Ps2/Renderer/Character/ps2render.cpp	DIRECT=1,FLUSH=2		10	53	16	
+900	2	236878	808	fn_236878	0	3	213ce8,214778,2148a0,2149f8,224e28,22bfc8,249e38	fn_2ebc20	Ps2/Renderer/Character/ps2render.cpp			4	20	9	
+901	2	237660	908	fn_237660	0	1	236db0,236f30,275300,2753a0		Ps2/Renderer/Character/ps2render.cpp			7	0	7	
+902	2	23d2f0	880	fn_23d2f0	0	1	23cf90,23d128		Ps2/Renderer/Character/ps2render.cpp			11	61	13	
+903	2	23da40	260	fn_23da40	0	1	23d660		Ps2/Renderer/Character/ps2render.cpp			7	0	4	
+904	2	23e378	1204	fn_23e378	0	4	24e680,252d40,253108,253cd0	Memory_AllocBlock,Memory_CurrentBlock	Ps2/Renderer/Character/ps2render.cpp	DIRECT=6,UNPACK=1		8	0	44	
+905	2	242ad0	1316	fn_242ad0	0	1	213ce8,2148a0,22c630,22c838,240438	sinf	Ps2/Renderer/Character/ps2render.cpp			9	18	18	
+906	2	244368	3580	fn_244368	0	1	213ce8,213e88,214058,23cae8,23db48,2478f0,247bd8,248058,248900,26d2e8	FastMemcpy,sceVu0LightColorMatrix	Ps2/Renderer/Character/ps2render.cpp	DIRECT=1,FLUSH=2,UNPACK=1,vif:BASE=1,vif:OFFSET=1,vif:STCYCL=1		42	65	29	
+907	2	2459f8	844	fn_2459f8	0	1	213c78,213ce8,22c620,22c630,22c838,245168		Ps2/Renderer/Character/ps2render.cpp			5	3	9	
+908	2	245d48	980	fn_245d48	0	1	213c78,213ce8,22c838,245168		Ps2/Renderer/Character/ps2render.cpp			11	36	9	
+909	2	246120	308	fn_246120	0	2	223fa8,26bcf8		Ps2/Renderer/Character/ps2render.cpp			3	0	5	
+910	2	246258	1728	fn_246258	0	1	213ce8,247bd8,248900		Ps2/Renderer/Character/ps2render.cpp	DIRECT=1,FLUSH=1,UNPACK=3,vif:STCYCL=1		36	0	8	
+911	2	246918	984	fn_246918	0	1	23db48,247bd8,248058,248900,26d2e8		Ps2/Renderer/Character/ps2render.cpp	DIRECT=1,FLUSH=1		18	0	8	
+912	2	24aae0	424	fn_24aae0	0	0	274eb8,274fb8,2755b8	sceGsSyncV,fn_2f6a90,fn_370770,fn_382938	Ps2/Renderer/Character/ps2render.cpp		GS priv 1000	3	0	5	
+913	2	24c358	104	fn_24c358	0	0	2379f0,238130,2384f0		Ps2/Renderer/Character/ps2render.cpp			0	0	1	
+914	2	24c508	112	fn_24c508	0	0	23d660		Ps2/Renderer/Character/ps2render.cpp			0	0	2	
+915	2	24cd90	44	fn_24cd90	0	1	2457d0	fn_2ae560	Ps2/Renderer/Character/ps2render.cpp			0	0	0	
+916	2	24d8e8	656	fn_24d8e8	0	1	2124b0,2124c0,269900,26cf00,26cf70,26cfa8,26d590	Memory_CurrentBlock	Ps2/Renderer/Character/ps2Setup.cpp			9	0	18	
+917	2	24db78	1140	fn_24db78	0	1	268ae0,268ec0,269170,26c848,26ca98,26cc68,26ccb0,26cf00,26cf10,26cf70,26d298,26d308		Ps2/Renderer/Character/ps2Setup.cpp			9	0	39	
+918	2	24dff0	968	fn_24dff0	0	1	268ae0,268ec0,26c848,26ca98,26cc68,26ccb0,26cf00,26cf10,26cf70,26d298,26d308		Ps2/Renderer/Character/ps2Setup.cpp			9	0	17	
+919	2	24e3b8	708	fn_24e3b8	0	1	25cfb8,260de8,260ef8,26de50,26de88,26dec0	fn_341b18,fn_341ca0,fn_341d30,fn_3431b8,fn_343210,sprintf	Ps2/Renderer/Character/ps2Setup.cpp			9	0	6	
+920	2	255460	588	fn_255460	0	1	268648,26cb00,26cb20,26cb40,26cb60,26d590		Ps2/Renderer/Character/ps2Setup.cpp			6	0	6	
+921	2	256e70	1252	fn_256e70	0	0	250450	fn_340bb0,fn_340bf8,fn_384d58,fn_384d68,fn_384d78,sceVif1PkRet,fn_384fa0,fn_385220,fn_3852a0	Ps2/Renderer/Character/ps2Setup.cpp			9	0	7	
+922	2	2591c0	1444	fn_2591c0	0	1	250e38,258998,258b70	fn_341d30,fn_3431b8,fn_343210,fn_384d58,fn_384d78,fn_384dd0,sceVif1PkNext,fn_384eb0,sceVif1PkRet,fn_385220,fn_3852a0	Ps2/Renderer/Character/ps2Setup.cpp	MSCNT=1		9	0	11	
+923	2	259768	1316	fn_259768	0	3	250e38,258998,258b70	fn_341d30,fn_3431b8,fn_343210,fn_384d58,fn_384d78,fn_384dd0,sceVif1PkNext,fn_384eb0,sceVif1PkRet,fn_385220,fn_3852a0	Ps2/Renderer/Character/ps2Setup.cpp	MSCNT=1		9	0	13	
+924	2	259c90	348	fn_259c90	0	1	238ff8,26cec0,26d298		Ps2/Renderer/Character/ps2Setup.cpp			9	0	5	
+925	2	25b038	644	fn_25b038	0	4	2637a8,267de0	Memory_CurrentBlock	Ps2/Renderer/Character/ps2Setup.cpp			7	0	8	
+926	2	25b2c0	320	fn_25b2c0	0	2	2457d0,254fd0,25bb50,260c30	fn_2aed48	Ps2/Renderer/Character/ps2Setup.cpp			2	0	2	
+927	2	25e798	652	fn_25e798	0	1	24e7b8,24f290	fn_340bb0,fn_340bf8	Ps2/Renderer/Character/ps2Setup.cpp			9	0	6	
+928	2	25eb58	156	fn_25eb58	0	6	269900		Ps2/Renderer/Character/ps2Setup.cpp			3	0	2	
+929	2	25ebf8	164	fn_25ebf8	0	0	269900		Ps2/Renderer/Character/ps2Setup.cpp			3	0	3	
+930	2	25eca0	76	fn_25eca0	0	3	269900		Ps2/Renderer/Character/ps2Setup.cpp			0	0	2	
+931	2	25fe10	148	fn_25fe10	0	1	24e680,252d40		Ps2/Renderer/Character/ps2Setup.cpp	DIRECT=1		1	0	3	
+932	2	260a08	308	fn_260a08	0	0	2457d0,25bb50,260c30	fn_2aed48	Ps2/Renderer/Character/ps2Setup.cpp			1	0	2	
+933	2	264290	1732	fn_264290	0	2	213b78,213c78,213ce8,2140c8,214638,214688,2146c8,214eb0,215780,263950	fn_32cb68,fn_32d128				14	0	23	
+934	2	264958	1032	fn_264958	0	2	213ce8,214658,263950,26d590	fn_32cc08		dmatag:refs=1		9	8	14	
+935	2	266858	1212	fn_266858	0	2	265c98	fn_384de8,sceVif1PkOpenDirectCode,fn_385130,fn_3852a0,fn_476e00		FLUSHA=1		6	0	3	
+936	2	266d18	904	fn_266d18	0	1	24e680,265c98,275300,2753a0	fn_27d418,fn_382938,sceDmaSend,fn_476e00		STMASK=1,dmatag:end=2,dmatag:next=1		11	0	4	
+937	2	2670a0	808	fn_2670a0	0	1	226fa0,2673c8,275300,2753a0	fn_384de8,sceVif1PkOpenDirectCode,fn_385130,fn_385220				7	0	3	
+938	2	267ee0	824	fn_267ee0	0	3	268218,26d590,275300,2753a0,275618	fn_384d78,fn_384de8,sceVif1PkOpenDirectCode,fn_385130,fn_385160,sceVif1PkCloseGifTag,fn_3852a0,sceVif1PkAddGsAD,__fixunssfdi		FLUSH=1		6	0	7	
+939	2	26b548	800	fn_26b548	0	0	24e680,268648,269bd8,26b150,26c140	fn_20f330,fn_27d418,fn_382938,sceDmaSend,FlushCache	Ps2/Renderer/Texture/TextureManager.cpp		D2(GIF)	6	0	9	
+940	2	26b868	392	fn_26b868	0	2	268648,269bd8,26b150,26c140	fn_27d418,fn_382938	Ps2/Renderer/Texture/TextureManager.cpp			2	0	1	
+941	2	26cba8	84	fn_26cba8	0	0	268cf8	fn_382938,sceDmaSend	Ps2/Renderer/Texture/TextureManager.cpp			0	0	2	
+942	2	26d098	76	fn_26d098	0	1	268648,269bd8		Ps2/Renderer/Texture/TextureManager.cpp			1	0	1	
+943	2	26d160	276	fn_26d160	0	0	268648,269bd8,26b150	fn_382938	Ps2/Renderer/Texture/TextureManager.cpp		D2(GIF)	4	0	1	
+944	2	26dba0	320	fn_26dba0	0	0	268648,269bd8,26b150	fn_382938	Ps2/Renderer/Texture/TextureManager.cpp		D2(GIF)	5	0	1	
+945	2	26ea60	652	fn_26ea60	0	1	26e830	fn_27e000,fn_280388,fn_2803b0,fn_280810,fn_280928,fn_283ce8,fn_32cc08				6	0	2	
+946	2	26ecf0	124	fn_26ecf0	0	3	26e2f0	__throw,fn_202e40,fn_280b48,fn_280b88				1	0	0	
+947	2	2717f0	312	fn_2717f0	0	1	24cdc0,271350	Memory_AllocBlock,fn_20f330,fn_3199e0,fn_4158f0,fn_415908,fn_4637f8,fn_464a68	Ps2/Cri/Sound.cpp			9	0	4	
+948	2	272d20	44	fn_272d20	0	1	272ba8					0	0	0	
+949	2	274050	904	fn_274050	0	1	24bcd0,24d858			DIRECT=1,FLUSH=1		1	0	3	
+950	2	274c48	284	fn_274c48	0	1	229970,22ad10,22be18,24e680					2	0	3	
+951	2	2751a8	100	fn_2751a8	0	0	274808,274eb8	sceGsResetGraph				1	0	2	
+952	2	2753c0	220	fn_2753c0	0	2	24e680,274808,274d68,274eb8	fn_27c850,fn_27c860				5	0	5	
+953	2	275698	1792	fn_275698	0	1	24e680,275310,275328,275338,275348,275360,275370,275d98	Memory_AllocBlock,Memory_CurrentBlock,FlushCache	Ps2/Renderer/ScreenCopy.cpp			9	0	5	
+954	3	2114d8	196	fn_2114d8	0	1	211b38	Memory_AllocBlock,Memory_CurrentBlock	Ps2/FileIODrv/FileIODrv.cpp			2	0	6	
+955	3	215bd8	208	fn_215bd8	0	0	236878					5	19	1	
+956	3	215ca8	76	fn_215ca8	0	2	225208	fn_32c9c8				1	0	0	
+957	3	2187b0	848	fn_2187b0	0	2	217278,21a4d8,24cdc0	fn_3199e0,sceMcSync,sceMcGetDir,fn_4749a8,fn_4751d8,fn_4753a0	Ps2/MemoryCard/SyncMemCard.cpp			8	0	5	
+958	3	219640	436	fn_219640	0	6	2190a8,2192e8		Ps2/MemoryCard/SyncMemCard.cpp			3	0	0	
+959	3	21b000	444	fn_21b000	0	3	217b98,2197f8,24cdc0		Ps2/MemoryCard/SyncMemCard.cpp			5	0	0	
+960	3	21f8c0	176	fn_21f8c0	0	1	2192e8		Ps2/MemoryCard/SyncMemCard.cpp			1	0	0	
+961	3	2206e8	748	fn_2206e8	0	1	2146c8,2201e8,221530,222058,222510,2238f8		Ps2/Renderer/BoneDetach.cpp			10	0	0	
+962	3	2209d8	1512	fn_2209d8	0	5	2227e0,2229a0	fn_20ca08,FastMemcpy	Ps2/Renderer/BoneDetach.cpp			11	0	1	
+963	3	226bf8	104	fn_226bf8	0	13	24cdc0,2753b0,2753c0					2	0	1	
+964	3	2283b0	172	RegisterBloomCode	0	1	228460,22bf18,275300					2	0	6	
+965	3	229498	1240	fn_229498	0	1	24e680,25fe10	fn_382938,sceGsSetDefLoadImage,sceGsExecLoadImage,FlushCache				2	0	6	
+966	3	22d408	312	fn_22d408	0	0	2309e0		Ps2/Renderer/Character/ps2BasicPrimitives.cpp			3	15	0	
+967	3	2357d8	640	fn_2357d8	0	2	22c838,231ad0,232628,275328,275360	fn_326140	Ps2/Renderer/Character/ps2render.cpp			6	0	9	
+968	3	23a280	8892	fn_23a280	0	1	213ce8,214058,237660,2388b0,246258,26d2e8,26de88,26dec0,26df48	FastMemset,FastMemcpy	Ps2/Renderer/Character/ps2render.cpp	DIRECT=7,FLUSH=5,FLUSHA=2,MSCAL=2,MSCALF=2,UNPACK=3,vif:BASE=6,vif:OFFSET=6,vif:STCYCL=3		73	39	55	
+969	3	246cf0	3068	fn_246cf0	0	4	239c48,244368,2459f8,245d48,246120,24cff8	fn_326140	Ps2/Renderer/Character/ps2render.cpp	DIRECT=1,FLUSH=1,MSCALF=1		102	0	33	
+970	3	24a8c0	540	fn_24a8c0	0	0	2367b8,236ba0,236c80,24e680,266858,274eb8,274fb8,2755b8	fn_378138	Ps2/Renderer/Character/ps2render.cpp		D1(VIF1),D_CTRL/STAT/PCR,GS priv 1000	7	0	11	
+971	3	24b598	484	fn_24b598	0	1	214eb0,225700	fn_2ae560,fn_351c18,DIntr,fn_486008	Ps2/Renderer/Character/ps2render.cpp			9	11	6	
+972	3	24b9d0	764	fn_24b9d0	0	5	22da08		Ps2/Renderer/Character/ps2render.cpp			3	0	0	
+973	3	24ca30	124	fn_24ca30	0	0	23e378		Ps2/Renderer/Character/ps2render.cpp			0	0	9	
+974	3	24d640	280	fn_24d640	0	0	214eb0,225700		Ps2/Renderer/Character/ps2render.cpp			2	11	2	
+975	3	254c60	880	fn_254c60	0	2	2291f0,229348,23e378,24e680	Memory_AllocBlock,fn_382938,sceGsSetDefLoadImage,sceGsExecLoadImage,FlushCache	Ps2/Renderer/Character/ps2Setup.cpp			9	0	9	
+976	3	2556b0	5596	fn_2556b0	0	2	2140c8,2140f8,2141a8,214638,214688,2149c8,214eb0,21fc78,21ffd0,222f98,250fd0,254fd0,2551a0,255460,25e798,260520,26dd90,26ddd0,26de10,26df80	fn_20beb0,fn_20c148,Memory_AllocBlock,FastMemset,FastMemcpy,Memory_CurrentBlock,fn_27e840,fn_283bd8,fn_283c18,fn_2aed48,fn_2b44a8,fn_32cb68,fn_340bb0,fn_340bf8,fn_341a50,fn_341e10,fn_474c78,fn_4753a0,atoi,fn_478998,fn_478a70	Ps2/Renderer/Character/ps2Setup.cpp			9	0	78	
+977	3	25b400	1008	fn_25b400	0	1	211100,2457d0,254fd0,2551a0,25bb50,26ecf0	__throw,fn_202e40,fn_20c148,Memory_AllocBlock,FastMemset,FastMemcpy,fn_27dfd0,fn_283bd8	Ps2/Renderer/Character/ps2Setup.cpp			5	0	11	
+978	3	25c858	524	fn_25c858	0	2	2124b0,2124c0,24d8e8,269900,26b868		Ps2/Renderer/Character/ps2Setup.cpp			9	0	13	
+979	3	25d4d0	1444	fn_25d4d0	0	2	2140c8,2140f8,2141a8,214638,2149c8,24e3b8	fn_32cb68,fn_340bb0,fn_340bf8	Ps2/Renderer/Character/ps2Setup.cpp			9	0	3	
+980	3	25da78	1080	fn_25da78	0	0	252148,259768	FastMemcpy,fn_340b78,fn_340b90,fn_340ba0,fn_340bf8	Ps2/Renderer/Character/ps2Setup.cpp	dmatag:ret=1		12	0	6	
+981	3	25deb0	2280	fn_25deb0	0	2	2140c8,2140f8,2141a8,214638,2149c8,250fd0,2591c0,259768	FastMemcpy,fn_32cb68,fn_340bb0,fn_340bf8	Ps2/Renderer/Character/ps2Setup.cpp	dmatag:ret=1		12	0	5	
+982	3	25ecf0	420	fn_25ecf0	0	0	2124b0,2124c0,269900,26b868		Ps2/Renderer/Character/ps2Setup.cpp			9	0	10	
+983	3	260708	244	fn_260708	0	0	259768		Ps2/Renderer/Character/ps2Setup.cpp	dmatag:ret=1		7	0	0	
+984	3	2610f0	6904	fn_2610f0	0	2	213900,213980,213a60,213b78,213bd8,213c78,213c98,213cb8,213ce8,214058,2140c8,214658,214eb0,225208,2637d8,2655c0,26bcf8,26d590,275328,275360,275618	FastMemset,FastMemcpy,fn_384de8,sceVif1PkOpenDirectCode,fn_385130,fn_385220,fn_3852a0,sceVu0NormalLightMatrix,sceVu0LightColorMatrix	Ps2/Renderer/Effects/meshdraw.cpp	FLUSH=1		9	0	121	
+985	3	264d60	1116	fn_264d60	0	3	2140c8,214638,263cf8,264290,264958,275300,2753a0	fn_384de8,sceVif1PkOpenDirectCode,fn_385130,fn_385220,fn_3852a0		FLUSH=1	D_CTRL/STAT/PCR	9	4	8	
+986	3	2651c0	1020	fn_2651c0	0	0	2140c8,214638,263cf8,264290,264958,275300,2753a0	fn_384de8,sceVif1PkOpenDirectCode,fn_385130,fn_385220,fn_3852a0		FLUSH=1		9	4	8	
+987	3	26cc00	100	fn_26cc00	0	0	26d098	fn_382938,sceDmaSend	Ps2/Renderer/Texture/TextureManager.cpp			1	0	1	
+988	3	26fbf0	400	Movie_UpdateFrame	0	1	272d10,272d20	fn_2c6878,fn_2c76d8,fn_4154e0,mwPlyGetCurFrm,mwPlyRelCurFrm,mwPlyGetStat				4	0	3	
+989	3	2743d8	684	Gs_FlipFields	0	1	224000,2240c8,2240d8,23de10,24bcd0,24c7f8,24c8d8,24d858,24e680,274688,274c48,274fb8,2755b8	fn_278050,fn_2788d8,fn_278bd8,fn_486008				7	0	16	
+990	4	21e818	396	fn_21e818	0	1	217278,2187b0,218b00	fn_3199e0,sceMcSync,sceMcGetInfo	Ps2/MemoryCard/SyncMemCard.cpp			5	0	1	
+991	4	21ef90	228	fn_21ef90	0	1	217e18,219640,21aae0		Ps2/MemoryCard/SyncMemCard.cpp			3	0	1	
+992	4	21f318	212	fn_21f318	0	2	2165d8,216758,218110,219640	sceMcFormat	Ps2/MemoryCard/SyncMemCard.cpp			2	0	1	
+993	4	21f7a0	32	fn_21f7a0	0	3	219640		Ps2/MemoryCard/SyncMemCard.cpp			0	0	0	
+994	4	21f7c0	252	fn_21f7c0	0	2	216498,217e18,219640,21aae0		Ps2/MemoryCard/SyncMemCard.cpp			3	0	2	
+995	4	21fae8	240	fn_21fae8	0	3	2178a8,21b000		Ps2/MemoryCard/SyncMemCard.cpp			1	0	0	
+996	4	220fc0	416	fn_220fc0	0	5	2209d8,2272b8,2457d0	fn_283b80,fn_2ae560	Ps2/Renderer/BoneDetach.cpp			9	0	4	
+997	4	221de0	632	fn_221de0	0	1	2209d8		Ps2/Renderer/BoneDetach.cpp			7	0	0	
+998	4	2235a8	268	fn_2235a8	0	1	2209d8	fn_283b80	Ps2/Renderer/BoneDetach.cpp			6	0	2	
+999	4	2236b8	288	fn_2236b8	0	1	2209d8,2272b8,2457d0	fn_283b80,fn_2ae560	Ps2/Renderer/BoneDetach.cpp			4	0	3	
+1000	4	2237d8	284	fn_2237d8	0	3	2209d8,2272b8	fn_283b80,fn_2ae560	Ps2/Renderer/BoneDetach.cpp			5	0	3	
+1001	4	23e830	3784	fn_23e830	0	1	2357d8,235a58,23de10,23e378,24afa0,275260,275300,275360,275380,2753a0	fn_27d3f0	Ps2/Renderer/Character/ps2render.cpp	DIRECT=3,FLUSH=3		12	9	39	
+1002	4	23f6f8	772	fn_23f6f8	0	1	2357d8,23de10,23e378,24afa0,275338,275370	fn_278050,fn_278520,fn_2793e0,fn_279ab0,fn_27c888,fn_27c8a0,fn_27d110,fn_27d3f0	Ps2/Renderer/Character/ps2render.cpp	UNPACK=1		4	0	24	
+1003	4	23fa00	704	fn_23fa00	0	1	23de10,241da0,242230,246cf0	fn_326140	Ps2/Renderer/Character/ps2render.cpp			9	5	6	
+1004	4	241410	2448	fn_241410	0	35	2240c8,226f78,227f58,22cb78,2314d8,236c80,2457d0,24b598,24d758,24e680,266d18,26ea60,2743d8,2752b0,275300,275328,275360,275380,2753a0	fn_278050,fn_278520,fn_27cf38,fn_27d418,fn_283b80,fn_2ae560,fn_2f6a90,fn_2f6b08,fn_367250,fn_37b3b8,fn_382938,sceDmaSend,FlushCache	Ps2/Renderer/Character/ps2render.cpp		D1(VIF1),D_CTRL/STAT/PCR,GIF regs	9	0	55	
+1005	4	242ff8	4976	fn_242ff8	0	1	213ce8,23a280,23d2f0	fn_379988	Ps2/Renderer/Character/ps2render.cpp	DIRECT=5,FLUSH=2,STMASK=2,STROW=1,dmatag:end=10,dmatag:next=2,dmatag:ref=1,vif:ITOP=1	D9(toSPR),D_CTRL/STAT/PCR	9	0	99	
+1006	4	24cbf8	192	fn_24cbf8	0	0	23de10,246cf0,24ac88		Ps2/Renderer/Character/ps2render.cpp			3	0	5	
+1007	4	259df0	904	fn_259df0	0	1	211100,254fd0,2551a0,257c10,25b2c0,25bb50,25d098,25d4d0,25deb0,26cf00,26ecf0	__throw,fn_20beb0,fn_20c148,Memory_AllocBlock,Memory_CurrentBlock,fn_283bd8,fn_283c18,fn_283c48,fn_283ca8,fn_340420	Ps2/Renderer/Character/ps2Setup.cpp			7	0	18	
+1008	4	25a178	3132	fn_25a178	0	1	211100,24db78,24dff0,254fd0,2551a0,257590,257a00,257c10,259c90,25b2c0,25d098,25d4d0,25deb0,26cf00,26dd90,26ddd0,26de10,26df80,26ecf0,273630	__throw,fn_20beb0,fn_20c148,Memory_AllocBlock,fn_20f330,Memory_CurrentBlock,fn_283a60,fn_283bd8,fn_283c18,fn_283c48,fn_283ca8,fn_315fb8,fn_321c00,fn_322088,fn_340420,fn_341a50,fn_341bc0,fn_351918	Ps2/Renderer/Character/ps2Setup.cpp			9	0	51	
+1009	4	25b7f0	860	fn_25b7f0	0	12	2457d0,25b400,25bb50,260c30,2638c8	FastMemcpy,fn_283b68,fn_283ca8,fn_2aed48	Ps2/Renderer/Character/ps2Setup.cpp			7	0	13	
+1010	4	260800	240	fn_260800	0	0	211100,2556b0	__throw,Memory_AllocBlock,Memory_CurrentBlock,fn_27d6f8,fn_283bd8	Ps2/Renderer/Character/ps2Setup.cpp			2	0	6	
+1011	4	263428	640	fn_263428	0	1	226fa0,2610f0,275300,2753a0	fn_384de8,sceVif1PkOpenDirectCode,fn_385130,fn_385160,sceVif1PkCloseGifTag,sceVif1PkAddGsAD	Ps2/Renderer/Effects/meshdraw.cpp			8	0	5	
+1012	4	263778	44	fn_263778	0	0	2610f0		Ps2/Renderer/Effects/meshdraw.cpp			0	0	0	
+1013	4	263bb8	316	fn_263bb8	0	1	22c748,24c868,264d60	fn_20c7e0,fn_20c818,fn_2dc568				5	0	4	
+1014	4	265748	296	fn_265748	0	0	22c748,24c868,264d60	fn_20c7e0,fn_20c818				6	0	3	
+1015	4	265870	316	fn_265870	0	1	22c748,24c868,264d60	fn_20c7e0,fn_20c818				6	0	4	
+1016	4	273d78	728	fn_273d78	0	2	2283b0,24c7f8,24e680,274050,274d68,274eb8,2753c0,2754a8,2754b8,275540,275598,2755a8	sceGsResetGraph,fn_206258,fn_27c860,fn_382938		STMASK=1,dmatag:next=1		4	0	12	
+1017	5	218268	1352	fn_218268	0	5	217278,2187b0,21e818	fn_3199e0,sceMcSync,sceMcGetInfo	Ps2/MemoryCard/SyncMemCard.cpp			9	0	1	
+1018	5	218ef8	432	fn_218ef8	0	1	21ac78,21f078,21f160,21f208,21f318,21f618,21f6d0,21f7a0,21f7c0,21f8c0		Ps2/MemoryCard/SyncMemCard.cpp			0	0	2	
+1019	5	21eef0	36	fn_21eef0	0	1	21fae8		Ps2/MemoryCard/SyncMemCard.cpp			0	0	0	
+1020	5	221c00	480	fn_221c00	0	4	221de0	fn_1667a8,fn_283b80	Ps2/Renderer/BoneDetach.cpp			9	0	3	
+1021	5	224e98	60	fn_224e98	0	6	273d78					0	0	1	
+1022	5	231250	648	fn_231250	0	4	22c920,236878,24c868,273d78,2755b8	sceGsSyncV,Memory_AllocBlock,fn_27d418,sceDmaGetChan,FlushCache	Ps2/Renderer/Character/ps2render.cpp	STMASK=1,dmatag:next=1	D_CTRL/STAT/PCR	4	12	20	
+1023	5	23df70	1028	fn_23df70	0	1	235c40,235e28,23cc00,23de10,246cf0,24ac88,24afa0,265870	fn_27d3f0	Ps2/Renderer/Character/ps2render.cpp			9	8	15	
+1024	5	23fcc0	668	fn_23fcc0	0	1	23e830,23f6f8,23fa00,24ac88,275328,275360	fn_278050,fn_278520,fn_279968,fn_279ba8,fn_27aba8,fn_27b718,fn_27bce8,fn_27c8a0,fn_27cd58,fn_27ce50	Ps2/Renderer/Character/ps2render.cpp			3	0	13	
+1025	5	249060	3544	fn_249060	0	1	213ce8,213e88,214058,22c838,23cae8,242ad0,242ff8,2457d0,246120,246918	FastMemset,FastMemcpy,sceVu0LightColorMatrix,fn_476e00	Ps2/Renderer/Character/ps2render.cpp	FLUSH=1		11	74	44	
+1026	5	25ca68	1344	fn_25ca68	0	2	211100,2556b0,259df0,25a178,262be8,267de0	__throw,Memory_AllocBlock,Memory_CurrentBlock,fn_27d6f8,fn_283bd8,fn_283c08,fn_2ec750,fn_330138,fn_33f1c8,fn_37c420	Ps2/Renderer/Character/ps2Setup.cpp			9	0	25	
+1027	5	2659b0	80	fn_2659b0	0	1	263bb8					1	0	1	
+1028	6	212f70	1164	fn_212f70	0	1	211288,211de0,2135a8,223fb8,231250,23c540,24d128	fn_1db688,fn_205f00,Memory_Initialise,Memory_AllocBlock,fn_2f7f68,fn_2f8018,sceSdRemoteInit,sceSdRemote,fn_474c78,sprintf,fn_476988,fn_4769d8,fn_482740,sceSifInitRpc,sceSifInitIopHeap,fn_485cb8,sceSifSyncIop,sceSifRebootIop	Ps2/Main/PS2Main.cpp			9	0	17	
+1029	6	21a0e0	1012	fn_21a0e0	0	0	218268,21ac78,21b000,21f0d0,21f208,21f318,21f618,21f630,21f7a0,21f7c0,21f970,21fae8,24cdc0		Ps2/MemoryCard/SyncMemCard.cpp			9	0	3	
+1030	6	21ebe0	220	fn_21ebe0	0	1	218268,218ef8		Ps2/MemoryCard/SyncMemCard.cpp			4	0	2	
+1031	6	21fa08	220	fn_21fa08	0	1	217f90,218268,219640		Ps2/MemoryCard/SyncMemCard.cpp			1	0	1	
+1032	6	24cf08	76	fn_24cf08	0	3	249060		Ps2/Renderer/Character/ps2render.cpp			3	0	0	
+1033	6	26fd80	1076	fn_26fd80	0	1	224e98,226bf8,25efd0,26f068,26f240,26f918,26fbf0,2720e0,272a60,272aa0,272b08,272b28,272b48,272ba0,275520,275530	fn_20f330,FastMemset,fn_37b600,fn_414d28,fn_4158a8,Mwply_Stop,Mwply_Destroy,mwPlyInitSfdFx,mwPlyFinishSfdFx,fn_474dc4				9	0	19	
+1034	7	219ce8	1016	fn_219ce8	0	2	218268,21ac78,21ae70,21b000,21f970,21f9c8,21fa08,21fae8,21fbd8,24cdc0		Ps2/MemoryCard/SyncMemCard.cpp			9	0	14	
+1035	7	23ff60	1240	fn_23ff60	0	1	223fa8,227cd0,2282f8,236ba0,238ff8,23cc00,23de10,23df70,23fcc0,246cf0,24ac88,24afa0,24cf08,263428,2659b0,266858,2670a0	fn_129a18,fn_27c898,fn_27d3f0	Ps2/Renderer/Character/ps2render.cpp			9	0	29	
+1036	7	24cab0	156	fn_24cab0	0	0	23cc00,23de10,24cf08		Ps2/Renderer/Character/ps2render.cpp			3	0	3	
+1037	7	24cb50	164	fn_24cb50	0	0	23cc00,23de10,24afa0,24cf08		Ps2/Renderer/Character/ps2render.cpp			3	0	3	
+1038	8	24c280	64	fn_24c280	0	35	22c920,236878,23ff60		Ps2/Renderer/Character/ps2render.cpp			0	0	1	
+1039	9	21a6a8	648	fn_21a6a8	0	1	2162d8,2165d8,216758,217a20,218110,219640,241410,24c280	sceMcFormat	Ps2/MemoryCard/SyncMemCard.cpp			2	0	1	
+1040	9	21e9a8	76	fn_21e9a8	0	0	241410,24c280		Ps2/MemoryCard/SyncMemCard.cpp			1	0	0	
+1041	9	21eea0	76	fn_21eea0	0	0	241410,24c280		Ps2/MemoryCard/SyncMemCard.cpp			1	0	0	
+1042	9	2304c0	100	fn_2304c0	0	2	241410,24c280	Memory_AllocBlock	Ps2/Renderer/Character/ps2BasicPrimitives.cpp			0	0	4	
+1043	10	21f3f0	240	fn_21f3f0	0	1	2162d8,21a6a8,21f4e0,21f630		Ps2/MemoryCard/SyncMemCard.cpp			2	0	0	
+1044	11	218c10	740	fn_218c10	0	1	216c50,218268,21a930,21aae0,21eef0,21ef18,21ef38,21ef90,21f3f0,21f7a0	sceMcInit,sceMcSync	Ps2/MemoryCard/SyncMemCard.cpp			6	0	2	
