@@ -1042,6 +1042,31 @@ void render_native(std::uint32_t type, const std::uint8_t *data, std::uint32_t b
     native::Batch b;
     if (bytes < sizeof b) return;
     std::memcpy(&b, data, sizeof b);
+    if (native::character(b.program)) {
+        // a character batch: with VU1 skipped, each pass's A+D (mem[], in[1]) and tags as its XGKICK would have set them,
+        // then its draw; in mirror the message comes after that pass's packet
+        const std::uint8_t *mem = data + sizeof b + native::kCharRegQwords * 16, *in = mem + native::kCharMemQwords * 16;
+        if (bytes < sizeof b + (native::kCharRegQwords + native::kCharMemQwords + 3) * 16) return;
+        const auto prim = [](std::uint32_t tag_hi) {
+            if (tag_hi & (1u << 14)) write(0x00, (tag_hi >> 15) & 0x7FFu);
+        };
+        const std::uint32_t first = b.flags & native::kSkipped ? 0u : b.pass, last = b.flags & native::kSkipped ? native::passes(b.program) : b.pass + 1;
+        for (std::uint32_t p = first; p < last && p < 3; ++p) {
+            if (b.flags & native::kSkipped) {
+                prim(b.tags[0]);
+                for (std::uint32_t m : native::kPassAd[p]) {
+                    Reg128 q;
+                    std::memcpy(&q, m == 46 ? in + 16 : mem + m * 16, 16);
+                    write_packed(0xE, q);
+                }
+                prim(b.tags[1]);
+            }
+#ifdef PS2_GPU
+            if (gpu_on()) gpu::native_batch(g_state, data, bytes, p);
+#endif
+        }
+        return;
+    }
     if (b.flags & native::kSkipped) {
         // what the skipped GIF packet would have set: each tag's PRIM (PRE), and the A+D registers between them
         const auto prim = [](std::uint32_t tag_hi) {
@@ -1056,7 +1081,7 @@ void render_native(std::uint32_t type, const std::uint8_t *data, std::uint32_t b
         prim(b.tags[1]);
     }
 #ifdef PS2_GPU
-    if (gpu_on()) gpu::native_batch(g_state, data, bytes);
+    if (gpu_on()) gpu::native_batch(g_state, data, bytes, 0u);
 #endif
 }
 
@@ -1069,7 +1094,7 @@ void vblank(bool start) {
     if (start) {
         vu::flush_kicks();
         if (seamv::on() && !queue::vu_active()) seamv::vblank(static_cast<std::uint32_t>(frame_count()));
-        if (native::world() && !queue::vu_active()) native::vblank(static_cast<std::uint32_t>(frame_count()));
+        if (native::active() && !queue::vu_active()) native::vblank(static_cast<std::uint32_t>(frame_count()));
         g_odd_field = !g_odd_field;
         raise(8);
         if (queue::active()) queue::post(queue::kVblank, static_cast<std::uint32_t>(frame_count()), 0, nullptr, 0);

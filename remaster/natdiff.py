@@ -2,7 +2,9 @@
 # remaster/natdiff.sh runs the scene). Two steps:
 #   natdiff.py groups <draw dump dir> <category>   the PS2_DRAW_SKIP list that isolates the category: every draw group of
 #       the dumped frames that classify.py's first-match rules (remaster/categories.json) put elsewhere, and the category's
-#       groups whose VU1 program the native path does not draw; the clear is kept. Writes groups.json next to the dump.
+#       groups whose VU1 program the native path does not draw; the clear is kept, and so are the native groups of the
+#       category a pass blends over (UNDER: the character highlight and shading passes read the base pass's Ad and Cd).
+#       Writes groups.json next to the dump.
 #   natdiff.py compare <PS2_NATIVE_DUMP dir> [--scene s --category c --out file]   reads the run the runtime dumped (the
 #       emulated frame and Z buffer before the run of native draws, after it, and the native target after it, all at the
 #       output resolution) and compares them inside the category's mask: the pixels the category's draws changed in either
@@ -22,8 +24,12 @@ from PIL import Image
 
 HERE = Path(__file__).resolve().parent
 # VU1 programs each category's native path draws (runtime/src/native.hpp)
-NATIVE = {'world': ('567ce7d8', '002c80ed', '50bda0e2')}
+CHARACTER = ('672fef39', 'ad5f3626', '51bdaf8f', 'c77204b7', '2f9dff01', '95a24514')
+NATIVE = {'world': ('567ce7d8', '002c80ed', '50bda0e2'), 'character': CHARACTER, 'character_highlight': CHARACTER, 'character_shading': CHARACTER}
 KEEP = {'clear'}
+# categories drawn over another one they read (Ad, Cd): its native groups stay in, so the difference is the category's own
+# on top of a base the native path draws exactly (character: 0 differences)
+UNDER = {'character_highlight': ('character',), 'character_shading': ('character',)}
 
 
 def classify_module():
@@ -47,8 +53,9 @@ def groups(dump, category):
     for g, rs in by_group.items():
         f = cls.features(rs, main_fbp)
         cat = next((rule['category'] for rule in rules if cls.match(rule, f)), 'unclassified')
-        mine = cat == category and any(f['vu1'].startswith(h) for h in native)
-        why = 'native' if mine else 'kept' if cat in KEEP else f'{cat} (not native)' if cat == category else cat
+        ours = cat == category or cat in UNDER.get(category, ())
+        mine = ours and any(f['vu1'].startswith(h) for h in native)
+        why = ('native' if cat == category else f'native {cat}') if mine else 'kept' if cat in KEEP else f'{cat} (not native)' if ours else cat
         report[why][0] += 1
         report[why][1] += f['prims']
         (kept if mine or cat in KEEP else skip).append(g)

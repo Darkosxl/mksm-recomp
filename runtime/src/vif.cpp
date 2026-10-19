@@ -77,7 +77,7 @@ void run_vu(int unit, std::uint32_t address, int kind) {
         if (seamv::on()) seamv::program(kind, address, u.base, u.ofst, u.tops, u.top, u.itop, u.dbf);
         vu::flush_kicks();
         vu::set_tops(u.top, u.itop);
-        if (native::world() && native::program(kind, u.top)) return;
+        if (native::active() && native::program(kind, u.top)) return;
         if (native::r14() && native::r14_defer(kind, address)) return;
     } else {
         u.itop = u.itops;
@@ -301,7 +301,7 @@ void execute(int unit, std::uint32_t cmd, const std::uint32_t *data, std::uint32
         break;
     case 0x14: case 0x15:
         if (unit == 1 && !shadow(unit) && gs::drawdbg::enabled()) gs::drawdbg::vu1_start(imm * 8u, g_vu1_code);
-        if (unit == 1 && !shadow(unit) && (native::world() || native::r14())) native::mscal(imm * 8u);
+        if (unit == 1 && !shadow(unit) && (native::active() || native::r14())) native::mscal(imm * 8u);
         run_vu(unit, imm * 8u, op == 0x15 ? 1 : 0);
         break;
     case 0x17: run_vu(unit, shadow(unit) ? 0u : vu::tpc(unit), 2); break;

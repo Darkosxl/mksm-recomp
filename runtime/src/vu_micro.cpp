@@ -692,17 +692,19 @@ void flush_kicks() {
     if (g_pending_kicks.empty() && !native::g_pending) return;
     std::vector<PendingKick> kicks;
     kicks.swap(g_pending_kicks);
-    // native.hpp: a world batch read at its program start goes to the renderer around its XGKICK
+    // native.hpp: a batch read at its program start goes to the renderer around its XGKICKs
     const bool native_batch = native::g_pending;
     if (native_batch) {
         for (const PendingKick &k : kicks) native::kick(k.start, k.data.data(), k.count);
-        native::kicks_begin();
+        if (kicks.empty()) native::kicks_none();
     }
-    for (const PendingKick &k : kicks) {
+    for (std::size_t i = 0; i < kicks.size(); ++i) {
+        const PendingKick &k = kicks[i];
+        if (native_batch) native::kick_begin(i);
         if (gs::drawdbg::enabled()) gs::drawdbg::set_kick_source(k.source);
         gif::transfer(1, k.data.data(), k.count);
+        if (native_batch) native::kick_end(i, kicks.size());
     }
-    if (native_batch) native::kicks_end();
 }
 
 bool kicks_pending() { return !g_pending_kicks.empty(); }

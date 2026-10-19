@@ -864,12 +864,14 @@ void emit_native() {
     g_native_emitted = g_native_draws.size();
 }
 
+void tiles_apply();
 void tiles_writeback();
 bool native_tiles();
 
 void emit_all() {
     emit_pre();
-    if (native_tiles()) {  // replace mode, tiles: the write-backs (deferred ones too) go ahead of the batch that needs them
+    if (native_tiles()) {  // replace mode, tiles: the write-backs the pending batch needs go ahead of it
+        tiles_apply();
         tiles_writeback();
         emit_native();
     }
@@ -1574,13 +1576,15 @@ struct Native {
     // replace mode, tiles (§7.3): the target bound to one frame + Z buffer and kept coherent with VRAM per tile
     bool tiles = false, bound = false;
     WGPUComputePipeline writeback_tiles = nullptr;
-    std::uint32_t tx = 0, ty = 0, newer = 0, stale = 0;  // tiles across, down; tiles native-newer; tiles VRAM-newer
-    std::vector<std::uint8_t> tile;
-    std::uint32_t marked[4] = {}, marked_flags = 0;  // a tile rect known to be native-newer with at least these flags
-    bool marked_valid = false;
+    std::uint32_t tx = 0, ty = 0;  // tiles across (<= 128) and down (<= 128)
+    // tile bitsets, two words per row: native-newer colour and Z, VRAM-newer, and what the emulated primitives of the
+    // pending batch read and write (applied when the batch goes into the stream, tiles_apply)
+    std::uint64_t tc[128][2] = {}, tz[128][2] = {}, tv[128][2] = {}, pr[128][2] = {}, pw[128][2] = {};
+    bool pending = false;
     std::vector<std::uint32_t> list;  // tiles waiting for a write-back (x | y << 8 | flags << 16)
     std::uint64_t bound_lo[2] = {}, bound_hi[2] = {};  // VRAM bytes of the bound frame and Z pages
     std::uint64_t imports = 0, tile_writebacks = 0;
+    std::uint64_t programs[32] = {};  // messages drawn per program (characters: per pass)
     std::map<std::string, std::uint64_t> unsupported;
 } g_nat;
 
@@ -1588,13 +1592,15 @@ constexpr std::uint32_t kNativeTiles = 2048u, kNativeAlpha = 1024u, kNativeImpor
 
 // GS ALPHA (Cv = ((A - B) * C >> 7) + D; A, B, D: 0 Cs, 1 Cd, 2 zero; C: 0 As, 1 Ad, 2 FIX) as fixed-function blending,
 // with the shader's alpha output As / 128 (§4.3). 0: not expressible without the destination alpha (C = Ad) or not seen.
-enum NativeBlend : std::uint32_t { kBlendNone = 1, kBlendKeep, kBlendZero, kBlendLerp, kBlendAdd, kBlendSrc, kBlendDst, kBlendRevSub };
+// kBlendDst (Cd·C): the shader outputs C/256 and blends Dst·src + Src·dst (= 2·Cd·C/256), so C up to 255 needs no clamp.
+// kBlendDstAlpha (0211, Cs·Ad + Cd): DstAlpha under the A/128 storage of the colour target's alpha (§4.3).
+enum NativeBlend : std::uint32_t { kBlendNone = 1, kBlendKeep, kBlendZero, kBlendLerp, kBlendAdd, kBlendSrc, kBlendDst, kBlendRevSub, kBlendDstAlpha };
 
 std::uint32_t native_blend(std::uint32_t alpha, bool abe) {
     if (!abe) return kBlendNone;
     const std::uint32_t a = alpha & 3u, b = (alpha >> 2) & 3u, c = (alpha >> 4) & 3u, d = (alpha >> 6) & 3u;
     if (a == b) return d == 0 ? kBlendNone : d == 1 ? kBlendKeep : kBlendZero;
-    if (c == 1) return 0;
+    if (c == 1) return a == 0 && b == 2 && d == 1 ? kBlendDstAlpha : 0;
     if (a == 0 && b == 1 && d == 1) return kBlendLerp;
     if (a == 0 && b == 2 && d == 1) return kBlendAdd;
     if (a == 0 && b == 2 && d == 2) return kBlendSrc;
@@ -1622,16 +1628,19 @@ WGPURenderPipeline native_pipeline(std::uint32_t key) {
     case kBlendLerp: bs.color.srcFactor = f, bs.color.dstFactor = nf; break;
     case kBlendAdd: bs.color.srcFactor = f, bs.color.dstFactor = WGPUBlendFactor_One; break;
     case kBlendSrc: bs.color.srcFactor = f; break;
-    case kBlendDst: bs.color.srcFactor = WGPUBlendFactor_Zero, bs.color.dstFactor = f; break;
+    case kBlendDst: bs.color.srcFactor = WGPUBlendFactor_Dst, bs.color.dstFactor = WGPUBlendFactor_Src; break;
+    case kBlendDstAlpha: bs.color.srcFactor = WGPUBlendFactor_DstAlpha, bs.color.dstFactor = WGPUBlendFactor_One; break;
     case kBlendRevSub: bs.color.operation = WGPUBlendOperation_ReverseSubtract, bs.color.srcFactor = f, bs.color.dstFactor = WGPUBlendFactor_One; break;
     case kBlendZero: bs.color.srcFactor = WGPUBlendFactor_Zero; break;
     default: break;
     }
     WGPUColorTargetState color = WGPU_COLOR_TARGET_STATE_INIT;
     color.format = WGPUTextureFormat_RGBA8Unorm;
+    // the colour target's alpha holds min(A, 128) / 128 for DstAlpha (§4.3): written with the frame's alpha
     color.writeMask = import ? WGPUColorWriteMask_All
-                      : (key & kNativeColor) && blend != kBlendKeep ? WGPUColorWriteMask_Red | WGPUColorWriteMask_Green | WGPUColorWriteMask_Blue
-                                                                    : WGPUColorWriteMask_None;
+                             : ((key & kNativeColor) && blend != kBlendKeep ? WGPUColorWriteMask_Red | WGPUColorWriteMask_Green | WGPUColorWriteMask_Blue
+                                                                             : WGPUColorWriteMask_None) |
+                                   ((key & kNativeAlpha) ? WGPUColorWriteMask_Alpha : WGPUColorWriteMask_None);
     if (!import && blend != kBlendNone && blend != kBlendKeep) color.blend = &bs;
     WGPUColorTargetState targets[2] = {color, WGPU_COLOR_TARGET_STATE_INIT};
     targets[1].format = WGPUTextureFormat_R8Uint;
@@ -1984,10 +1993,11 @@ void native_sync(int why = kCloseSync) {
 // A tile is native-newer (colour and/or Z: the target holds draws VRAM lacks) or VRAM-newer (an emulated draw, upload or
 // copy changed it since the target had it), never both. A native batch imports the VRAM-newer tiles of its scissor and marks
 // the scissor native-newer (the CPU does not know where its triangles land); any other access to the frame or Z pages first
-// writes back the native-newer tiles it touches and, if it writes, marks them VRAM-newer. PS2_NATIVE_RUNS=1: stage 1's round
-// trip per run instead.
+// writes back the native-newer tiles it touches and, if it writes, marks them VRAM-newer. Emulated primitives only note
+// their tiles; their batch applies them when it goes into the stream (emit_all). PS2_NATIVE_RUNS=1: stage 1's round trip
+// per run instead.
 constexpr std::uint32_t kTilePx = 16;
-enum : std::uint8_t { kTileColor = 1, kTileZ = 2, kTileVram = 4 };
+enum : std::uint8_t { kTileColor = 1, kTileZ = 2 };
 
 std::uint64_t tile_samples(std::uint32_t x, std::uint32_t y) {
     const std::uint32_t w = g_nat.target.width / g_sx, h = g_nat.target.height / g_sy;
@@ -2024,34 +2034,73 @@ void tiles_writeback() {
     g_nat.list.clear();
 }
 
-// Tiles [x0, x1] x [y0, y1]: the native-newer ones go on the write-back list; with mark they become VRAM-newer.
-void tiles_touch(int x0, int y0, int x1, int y1, bool mark) {
+// Clips a tile rect to the binding; false if nothing is left.
+bool tiles_clip(int &x0, int &y0, int &x1, int &y1) {
     x0 = std::max(x0, 0), y0 = std::max(y0, 0);
     x1 = std::min(x1, static_cast<int>(g_nat.tx) - 1), y1 = std::min(y1, static_cast<int>(g_nat.ty) - 1);
-    if (x0 > x1 || y0 > y1 || (!g_nat.newer && !mark)) return;
-    for (int y = y0; y <= y1; ++y)
-        for (int x = x0; x <= x1; ++x) {
-            std::uint8_t &t = g_nat.tile[static_cast<std::size_t>(y) * g_nat.tx + static_cast<std::size_t>(x)];
-            if (t & (kTileColor | kTileZ)) {
-                g_nat.list.push_back(static_cast<std::uint32_t>(x) | static_cast<std::uint32_t>(y) << 8 | static_cast<std::uint32_t>(t & 3u) << 16);
-                t &= ~(kTileColor | kTileZ);
-                --g_nat.newer;
-                g_nat.marked_valid = false;
-            }
-            if (mark && !(t & kTileVram)) {
-                t |= kTileVram;
-                ++g_nat.stale;
-            }
+    return x0 <= x1 && y0 <= y1;
+}
+
+// Bits x0..x1 of a 128-bit row.
+void row_mask(int x0, int x1, std::uint64_t m[2]) {
+    for (int w = 0; w < 2; ++w) {
+        const int lo = std::max(x0 - w * 64, 0), hi = std::min(x1 - w * 64, 63);
+        m[w] = lo > hi ? 0ull : hi - lo == 63 ? ~0ull : ((1ull << (hi - lo + 1)) - 1) << lo;
+    }
+}
+
+// Row y's native-newer tiles under m go on the write-back list and stop being native-newer.
+void take_newer(int y, const std::uint64_t m[2]) {
+    for (int w = 0; w < 2; ++w) {
+        std::uint64_t bits = (g_nat.tc[y][w] | g_nat.tz[y][w]) & m[w];
+        while (bits) {
+            const int b = __builtin_ctzll(bits);
+            bits &= bits - 1;
+            const std::uint32_t flags = ((g_nat.tc[y][w] >> b) & 1u ? kTileColor : 0u) | ((g_nat.tz[y][w] >> b) & 1u ? kTileZ : 0u);
+            g_nat.list.push_back(static_cast<std::uint32_t>(w * 64 + b) | static_cast<std::uint32_t>(y) << 8 | flags << 16);
         }
+        g_nat.tc[y][w] &= ~m[w];
+        g_nat.tz[y][w] &= ~m[w];
+    }
 }
 
-// An access to GS pixels [x0, x1] x [y0, y1] of the bound frame or Z buffer.
-void tiles_rect(int x0, int y0, int x1, int y1, bool mark) {
-    tiles_touch(x0 / static_cast<int>(kTilePx), y0 / static_cast<int>(kTilePx), x1 / static_cast<int>(kTilePx), y1 / static_cast<int>(kTilePx), mark);
+// Tiles [x0, x1] x [y0, y1], now: the native-newer ones go on the write-back list; with mark they become VRAM-newer.
+void tiles_touch(int x0, int y0, int x1, int y1, bool mark) {
+    if (!tiles_clip(x0, y0, x1, y1)) return;
+    for (int y = y0; y <= y1; ++y) {
+        std::uint64_t m[2];
+        row_mask(x0, x1, m);
+        take_newer(y, m);
+        if (mark) g_nat.tv[y][0] |= m[0], g_nat.tv[y][1] |= m[1];
+    }
 }
 
-// An access to VRAM bytes r: the tiles of the bound frame and Z pages it overlaps.
-void tiles_range(const Range &r, bool mark) {
+// The same for an emulated primitive: noted, applied with its batch (tiles_apply).
+void tiles_pend(int x0, int y0, int x1, int y1, bool write) {
+    if (!tiles_clip(x0, y0, x1, y1)) return;
+    std::uint64_t (&p)[128][2] = write ? g_nat.pw : g_nat.pr;
+    for (int y = y0; y <= y1; ++y) {
+        std::uint64_t m[2];
+        row_mask(x0, x1, m);
+        p[y][0] |= m[0], p[y][1] |= m[1];
+    }
+    g_nat.pending = true;
+}
+
+void tiles_apply() {
+    if (!g_nat.pending) return;
+    g_nat.pending = false;
+    for (std::uint32_t y = 0; y < g_nat.ty; ++y) {
+        const std::uint64_t m[2] = {g_nat.pr[y][0] | g_nat.pw[y][0], g_nat.pr[y][1] | g_nat.pw[y][1]};
+        if (!(m[0] | m[1])) continue;
+        take_newer(static_cast<int>(y), m);
+        g_nat.tv[y][0] |= g_nat.pw[y][0], g_nat.tv[y][1] |= g_nat.pw[y][1];
+        g_nat.pr[y][0] = g_nat.pr[y][1] = g_nat.pw[y][0] = g_nat.pw[y][1] = 0;
+    }
+}
+
+// VRAM bytes r: the tile rect of each bound frame and Z page it overlaps, to f(x0, y0, x1, y1).
+template <class F> void tiles_pages(const Range &r, F &&f) {
     if (!r.overlaps(g_nat.bound_lo[0], g_nat.bound_hi[0]) && !r.overlaps(g_nat.bound_lo[1], g_nat.bound_hi[1])) return;
     for (int buffer = 0; buffer < 2; ++buffer) {
         const std::uint64_t base = g_nat.bound_lo[buffer], end = g_nat.bound_hi[buffer];
@@ -2063,14 +2112,29 @@ void tiles_range(const Range &r, bool mark) {
         const int tw = static_cast<int>(pw / kTilePx), th = static_cast<int>(ph / kTilePx);
         for (std::uint64_t p = p0; p < p1; ++p) {
             const int px = static_cast<int>(p % per_row), py = static_cast<int>(p / per_row);
-            tiles_touch(px * tw, py * th, px * tw + tw - 1, py * th + th - 1, mark);
+            f(px * tw, py * th, px * tw + tw - 1, py * th + th - 1);
         }
     }
+}
+
+void tiles_range(const Range &r, bool mark) {
+    tiles_pages(r, [&](int x0, int y0, int x1, int y1) { tiles_touch(x0, y0, x1, y1, mark); });
+}
+
+void tiles_reset() {
+    std::memset(g_nat.tc, 0, sizeof g_nat.tc);
+    std::memset(g_nat.tz, 0, sizeof g_nat.tz);
+    std::memset(g_nat.pr, 0, sizeof g_nat.pr);
+    std::memset(g_nat.pw, 0, sizeof g_nat.pw);
+    std::memset(g_nat.tv, 0, sizeof g_nat.tv);
+    for (std::uint32_t y = 0; y < g_nat.ty; ++y) row_mask(0, static_cast<int>(g_nat.tx) - 1, g_nat.tv[y]);  // every tile VRAM-newer
+    g_nat.pending = false;
 }
 
 // Writes back every native-newer tile (the binding stays).
 void tiles_flush() {
     if (!g_nat.bound) return;
+    tiles_apply();
     tiles_touch(0, 0, static_cast<int>(g_nat.tx) - 1, static_cast<int>(g_nat.ty) - 1, false);
     tiles_writeback();
 }
@@ -2095,7 +2159,7 @@ void tiles_bind(const Context &c) {
     g_nat.fbp = fbp, g_nat.fbw = fbw, g_nat.fpsm = fpsm, g_nat.zbp = zbp, g_nat.zpsm = zpsm;
     g_nat.tx = (width / g_sx + kTilePx - 1) / kTilePx;
     g_nat.ty = (rows + kTilePx - 1) / kTilePx;
-    g_nat.tile.assign(static_cast<std::size_t>(g_nat.tx) * g_nat.ty, kTileVram);
+    tiles_reset();
     for (int buffer = 0; buffer < 2; ++buffer) {
         std::uint32_t pw, ph;
         page_size(buffer ? zpsm : fpsm, pw, ph);
@@ -2103,9 +2167,6 @@ void tiles_bind(const Context &c) {
         g_nat.bound_lo[buffer] = static_cast<std::uint64_t>(buffer ? zbp : fbp) * 256;
         g_nat.bound_hi[buffer] = g_nat.bound_lo[buffer] + per_row * ((rows + ph - 1) / ph) * 8192;
     }
-    g_nat.stale = g_nat.tx * g_nat.ty;
-    g_nat.newer = 0;
-    g_nat.marked_valid = false;
     g_nat.bound = true;
     ++g_nat.runs;
 }
@@ -2113,77 +2174,67 @@ void tiles_bind(const Context &c) {
 // A native batch drawing into scissor samples [sx0, sx1) x [sy0, sy1) with these writes (kTileColor, kTileZ): imports the
 // VRAM-newer tiles there, then marks them native-newer.
 void tiles_draw(std::uint32_t sx0, std::uint32_t sy0, std::uint32_t sx1, std::uint32_t sy1, std::uint8_t writes) {
-    const int x0 = static_cast<int>(sx0 / g_sx / kTilePx), y0 = static_cast<int>(sy0 / g_sy / kTilePx);
-    const int x1 = static_cast<int>((sx1 - 1) / g_sx / kTilePx), y1 = static_cast<int>((sy1 - 1) / g_sy / kTilePx);
-    if (g_nat.stale) {
-        static std::vector<std::uint32_t> list;
-        list.clear();
-        std::uint64_t samples = 0;
-        for (int y = y0; y <= y1; ++y)
-            for (int x = x0; x <= x1; ++x) {
-                std::uint8_t &t = g_nat.tile[static_cast<std::size_t>(y) * g_nat.tx + static_cast<std::size_t>(x)];
-                if (!(t & kTileVram)) continue;
-                t &= ~kTileVram;
-                --g_nat.stale;
-                list.push_back(static_cast<std::uint32_t>(x) | static_cast<std::uint32_t>(y) << 8);
-                samples += tile_samples(static_cast<std::uint32_t>(x), static_cast<std::uint32_t>(y));
+    int x0 = static_cast<int>(sx0 / g_sx / kTilePx), y0 = static_cast<int>(sy0 / g_sy / kTilePx);
+    int x1 = static_cast<int>((sx1 - 1) / g_sx / kTilePx), y1 = static_cast<int>((sy1 - 1) / g_sy / kTilePx);
+    if (!tiles_clip(x0, y0, x1, y1)) return;
+    static std::vector<std::uint32_t> list;
+    list.clear();
+    std::uint64_t samples = 0;
+    for (int y = y0; y <= y1; ++y) {
+        std::uint64_t m[2];
+        row_mask(x0, x1, m);
+        for (int w = 0; w < 2; ++w) {
+            std::uint64_t bits = g_nat.tv[y][w] & m[w];
+            g_nat.tv[y][w] &= ~m[w];
+            while (bits) {
+                const int b = __builtin_ctzll(bits);
+                bits &= bits - 1;
+                list.push_back(static_cast<std::uint32_t>(w * 64 + b) | static_cast<std::uint32_t>(y) << 8);
+                samples += tile_samples(static_cast<std::uint32_t>(w * 64 + b), static_cast<std::uint32_t>(y));
             }
-        if (!list.empty()) {
-            std::uint32_t zmax;
-            float scale;
-            native_depth(g_nat.zpsm, zmax, scale);
-            const std::uint32_t at = arena_append(list.data(), list.size() * 4);
-            NativeDraw d;
-            d.pipeline = native_pipeline(kNativeImport | kNativeTiles);
-            d.color = g_nat.target.color_view;
-            d.depth = g_nat.target.depth_view;
-            d.alpha = g_nat.target.alpha_view;
-            d.param = push_params({g_nat.fbp, g_nat.fbw, g_nat.fpsm, g_nat.zbp, g_nat.zpsm, at, 0u, g_nat.target.width, g_nat.target.height, 0u, 0u, 0u, 0u, zmax, f2u(scale), 0u});
-            d.vertices = 6;
-            d.instances = static_cast<std::uint32_t>(list.size());
-            d.scissor[2] = g_nat.target.width;
-            d.scissor[3] = g_nat.target.height;
-            g_native_draws.push_back(d);
-            g_nat.imported += samples;
-            ++g_nat.imports;
-            list.clear();
+            if (writes & kTileColor) g_nat.tc[y][w] |= m[w];
+            if (writes & kTileZ) g_nat.tz[y][w] |= m[w];
         }
     }
-    if (!writes) return;
-    const std::uint32_t r[4] = {static_cast<std::uint32_t>(x0), static_cast<std::uint32_t>(y0), static_cast<std::uint32_t>(x1), static_cast<std::uint32_t>(y1)};
-    if (g_nat.marked_valid && r[0] >= g_nat.marked[0] && r[1] >= g_nat.marked[1] && r[2] <= g_nat.marked[2] && r[3] <= g_nat.marked[3] && !(writes & ~g_nat.marked_flags)) return;
-    for (int y = y0; y <= y1; ++y)
-        for (int x = x0; x <= x1; ++x) {
-            std::uint8_t &t = g_nat.tile[static_cast<std::size_t>(y) * g_nat.tx + static_cast<std::size_t>(x)];
-            if (!(t & (kTileColor | kTileZ))) ++g_nat.newer;
-            t |= writes;
-        }
-    std::memcpy(g_nat.marked, r, sizeof r);
-    g_nat.marked_flags = writes;
-    g_nat.marked_valid = true;
+    if (list.empty()) return;
+    std::uint32_t zmax;
+    float scale;
+    native_depth(g_nat.zpsm, zmax, scale);
+    const std::uint32_t at = arena_append(list.data(), list.size() * 4);
+    NativeDraw d;
+    d.pipeline = native_pipeline(kNativeImport | kNativeTiles);
+    d.color = g_nat.target.color_view;
+    d.depth = g_nat.target.depth_view;
+    d.alpha = g_nat.target.alpha_view;
+    d.param = push_params({g_nat.fbp, g_nat.fbw, g_nat.fpsm, g_nat.zbp, g_nat.zpsm, at, 0u, g_nat.target.width, g_nat.target.height, 0u, 0u, 0u, 0u, zmax, f2u(scale), 0u});
+    d.vertices = 6;
+    d.instances = static_cast<std::uint32_t>(list.size());
+    d.scissor[2] = g_nat.target.width;
+    d.scissor[3] = g_nat.target.height;
+    // the import goes ahead of the batch's draws, which are pushed after it
+    g_native_draws.push_back(d);
+    g_nat.imported += samples;
+    ++g_nat.imports;
 }
 
 // An emulated primitive with setup w and box [minx, maxx] x [miny, maxy] (gpu::draw): what it reads of the bound target
-// is written back first, what it writes becomes VRAM-newer.
+// must be written back before its batch runs, what it writes becomes VRAM-newer.
 void tiles_emulated(const std::uint32_t *w, std::uint32_t flags, int minx, int miny, int maxx, int maxy, const Range &tex, const Range *levels, std::uint32_t mips) {
     if ((flags & 64u) && (w[7] & 7u) == 0 && ((w[7] >> 4) & 3u) == 0) return;  // ATST NEVER + AFAIL KEEP: no access
+    const int t = static_cast<int>(kTilePx);
     // the frame (blending reads it); a tile covers its colour and Z, so the Z buffer on the same rect is covered too
     const bool frame = w[1] == g_nat.fbp && w[2] == g_nat.fbw && w[3] == g_nat.fpsm;
-    if (frame) tiles_rect(minx, miny, maxx, maxy, true);
-    else tiles_range(pages(w[1], w[2], w[3], minx, miny, maxx, maxy), true);
+    if (frame) tiles_pend(minx / t, miny / t, maxx / t, maxy / t, true);
+    else tiles_pages(pages(w[1], w[2], w[3], minx, miny, maxx, maxy), [](int x0, int y0, int x1, int y1) { tiles_pend(x0, y0, x1, y1, true); });
     if (flags & 512u) {
         const bool write = !(flags & 32u);
-        if (w[5] != g_nat.zbp || w[6] != g_nat.zpsm || w[2] != g_nat.fbw) tiles_range(pages(w[5], w[2], w[6], minx, miny, maxx, maxy), write);
-        else if (!frame) tiles_rect(minx, miny, maxx, maxy, write);
+        if (w[5] != g_nat.zbp || w[6] != g_nat.zpsm || w[2] != g_nat.fbw)
+            tiles_pages(pages(w[5], w[2], w[6], minx, miny, maxx, maxy), [&](int x0, int y0, int x1, int y1) { tiles_pend(x0, y0, x1, y1, write); });
+        else if (!frame) tiles_pend(minx / t, miny / t, maxx / t, maxy / t, write);
     }
     if (flags & 2u)
-        for (std::uint32_t n = 0; n <= mips; ++n) tiles_range(n ? levels[n] : tex, false);
-    // the write-back stays on g_nat.list until the batch holding this primitive goes into the stream (emit_all); native
-    // draws not in the stream yet go ahead of it now (with the uploads they read)
-    if (g_native_draws.size() > g_native_emitted) {
-        emit_pre();
-        emit_native();
-    }
+        for (std::uint32_t n = 0; n <= mips; ++n)
+            tiles_pages(n ? levels[n] : tex, [](int x0, int y0, int x1, int y1) { tiles_pend(x0, y0, x1, y1, false); });
 }
 
 // Any other access: VRAM bytes r are read (and, with write, written) outside the native path; the native draws and
@@ -2243,16 +2294,20 @@ void native_open(const State &st) {
     ++g_nat.runs;
 }
 
-void native_record(const State &st, const std::uint8_t *payload, std::uint32_t bytes) {
+void native_record(const State &st, const std::uint8_t *payload, std::uint32_t bytes, std::uint32_t pass) {
     native::Batch b;
     std::memcpy(&b, payload, sizeof b);
+    const bool character = native::character(b.program);
     g_nat.in_kick = false;
     const std::uint32_t kick_prims = g_nat.kick_prims;
     g_nat.kick_prims = 0;
     ++g_nat.batches;
-    const bool oracle = b.flags & native::kOracle;
+    // a character record: registers, constants, input, then each XGKICK's output (the oracle of pass `pass`)
+    const std::size_t char_in = (native::kCharRegQwords + native::kCharMemQwords + native::char_input_qwords(b.program, b.n)) * 16;
+    const bool oracle = (b.flags & native::kOracle) && (!character || pass < b.kicks);
     const std::size_t body = sizeof b + static_cast<std::size_t>(b.nad) * 16;
-    const std::size_t record = (native::kRegQwords * 4 + static_cast<std::size_t>(b.n) * native::kVertexWords * (oracle ? 2 : 1)) * 4;
+    const std::size_t record = character ? char_in + static_cast<std::size_t>(b.kicks) * b.n * 48
+                                         : (native::kRegQwords * 4 + static_cast<std::size_t>(b.n) * native::kVertexWords * (oracle ? 2 : 1)) * 4;
     const auto unsupported = [](const char *why) { ++g_nat.unsupported[why]; };
     if (bytes < body + record) return unsupported("short record");
     if (drawdbg::enabled() && drawdbg::skipped(st)) {  // framedbg isolation skipped the batch's emulated draw
@@ -2263,11 +2318,11 @@ void native_record(const State &st, const std::uint8_t *payload, std::uint32_t b
     if (!(st.prmodecont & 1u)) attr = (st.prim & 7u) | (st.prmode & ~7ull);
     const std::uint32_t prim = static_cast<std::uint32_t>(st.prim) & 7u;
     const Context &c = st.ctx[(attr >> 9) & 1u];
-    if (!g_nat.replace && (b.tags[1] & (1u << 14)) && ((b.tags[1] >> 15) & 0x7FFu) != (static_cast<std::uint32_t>(st.prim) & 0x7FFu)) ++g_nat.tag_prim;
+    if (!g_nat.replace && !character && (b.tags[1] & (1u << 14)) && ((b.tags[1] >> 15) & 0x7FFu) != (static_cast<std::uint32_t>(st.prim) & 0x7FFu)) ++g_nat.tag_prim;
     if (g_nat.tiles) {
+        // the emulated primitives before this batch go first, with the write-backs they need; then the binding
+        if (!g_batch.prims.empty() || !g_nat.list.empty() || g_nat.pending) emit_all();
         tiles_bind(c);
-        // the emulated primitives before this batch go first, and the write-backs they needed
-        if (!g_batch.prims.empty() || !g_nat.list.empty()) emit_all();
     } else if (g_nat.open && g_nat.replace) {  // a run draws into one frame and Z buffer, at most as high as its target
         const std::uint32_t fbp = (static_cast<std::uint32_t>(c.frame) & 0x1FFu) * 32u, fbw = static_cast<std::uint32_t>(c.frame >> 16) & 0x3Fu;
         const std::uint32_t fpsm = static_cast<std::uint32_t>(c.frame >> 24) & 0x3Fu, zbp = (static_cast<std::uint32_t>(c.zbuf) & 0x1FFu) * 32u;
@@ -2341,7 +2396,13 @@ void native_record(const State &st, const std::uint8_t *payload, std::uint32_t b
     g_nat.ry1 = std::max(g_nat.ry1, sy1);
     g_nat.zwritten = g_nat.zwritten || zwrite;
     const std::uint32_t setup_at = arena_append(w, sizeof w);
-    const std::uint32_t regs_at = arena_append(payload + body, record);
+    // a character's passes share one copy of the record (replace: one message draws them all)
+    static const std::uint8_t *last_payload = nullptr;
+    static std::uint32_t last_at = 0, last_seq = ~0u, last_frame = ~0u;
+    static std::uint64_t last_serial = ~0ull;
+    const bool shared = character && payload == last_payload && b.seq == last_seq && b.frame == last_frame && g_serial == last_serial;
+    const std::uint32_t regs_at = shared ? last_at : arena_append(payload + body, record);
+    last_payload = payload, last_at = regs_at, last_seq = b.seq, last_frame = b.frame, last_serial = g_serial;
     if (flags & 2u) {  // later uploads over these textures must wait for the native draws (as for the emulated ones)
         for (std::uint32_t n = 0; n <= mip_levels(w); ++n) {
             const Range r = level_range(w, n);
@@ -2354,11 +2415,16 @@ void native_record(const State &st, const std::uint8_t *payload, std::uint32_t b
     std::uint32_t zmax;
     float scale;
     native_depth(w[6], zmax, scale);
-    const std::uint32_t pflags = (g_nat.plight ? 1u : 0u) | ((flags & 1u) ? 2u : 0u) | (oracle ? 4u : 0u) | (g_nat.hw_interp ? 8u : 0u);
+    // 16: the alpha output is the stored alpha, not a blend factor; 32: Cd·C as C/256 (64: C = FIX)
+    const std::uint32_t csel = (static_cast<std::uint32_t>(c.alpha) >> 4) & 3u;
+    const bool factor_as = csel == 0 && (blend == kBlendLerp || blend == kBlendAdd || blend == kBlendSrc || blend == kBlendRevSub);
+    const std::uint32_t pflags = (g_nat.plight ? 1u : 0u) | ((flags & 1u) ? 2u : 0u) | (oracle ? 4u : 0u) | (g_nat.hw_interp ? 8u : 0u) | (factor_as ? 0u : 16u) |
+                                 (blend == kBlendDst ? 32u : 0u) | (blend == kBlendDst && csel == 2 ? 64u : 0u);
     const std::uint32_t ofx = static_cast<std::uint32_t>(c.xyoffset) & 0xFFFFu, ofy = static_cast<std::uint32_t>(c.xyoffset >> 32) & 0xFFFFu;
     for (int i = 0; i < count; ++i) {
         NativeDraw d;
-        d.param = push_params({regs_at, b.program, b.n, b.nad, setup_at, ofx, ofy, t.width, t.height, splits[i].split, prim, pflags, 0u, zmax, f2u(scale), g_nat.adc_back});
+        d.param = push_params({regs_at, b.program, b.n, character ? pass : b.nad, setup_at, ofx, ofy, t.width, t.height, splits[i].split, prim, pflags, 0u, zmax, f2u(scale),
+                               g_nat.adc_back});
         std::uint32_t key = blend | (cmp << 5) | (splits[i].zwrite ? kNativeZWrite : 0u) | (splits[i].color ? kNativeColor : 0u) | (splits[i].alpha ? kNativeAlpha : 0u);
         if (((c.alpha >> 4) & 3u) == 2u) key |= kNativeConstant;
         d.pipeline = native_pipeline(key);
@@ -2376,10 +2442,12 @@ void native_record(const State &st, const std::uint8_t *payload, std::uint32_t b
         ++g_nat.draws;
     }
     ++g_nat.drawn;
+    ++g_nat.programs[b.program & 31u];
     g_nat.triangles += tris;
     if (oracle && prim != 3) {
         // the GS's triangles for this kick against the strip breaks of the VU1 output (XYZF2 bit 15)
-        const std::uint8_t *out = payload + body + (native::kRegQwords * 4 + static_cast<std::size_t>(b.n) * native::kVertexWords) * 4;
+        const std::uint8_t *out = character ? payload + body + char_in + static_cast<std::size_t>(pass) * b.n * 48
+                                            : payload + body + (native::kRegQwords * 4 + static_cast<std::size_t>(b.n) * native::kVertexWords) * 4;
         std::uint32_t expected = 0, cross = 0;
         for (std::uint32_t k = 0; k < b.n; ++k) {
             std::uint32_t xyzw;
@@ -2395,7 +2463,7 @@ void native_record(const State &st, const std::uint8_t *payload, std::uint32_t b
 }
 
 bool native_init() {
-    g_nat.on = native::world();
+    g_nat.on = native::active();
     if (!g_nat.on) return true;
     const auto on = [](const char *name) {
         const char *e = std::getenv(name);
@@ -2504,6 +2572,9 @@ void native_stats() {
     if (g_nat.replace) std::fprintf(stderr, "; %llu write-backs", static_cast<unsigned long long>(g_nat.writebacks));
     else std::fprintf(stderr, "; vertex tag PRIM differs from the GS's in %llu", static_cast<unsigned long long>(g_nat.tag_prim));
     const double frames = static_cast<double>(std::max<std::uint64_t>(g_nat.frames, 1));
+    std::fprintf(stderr, "\n[native] drawn per program:");
+    for (std::uint32_t i = 0; i < 32; ++i)
+        if (g_nat.programs[i]) std::fprintf(stderr, " %u:%llu", i, static_cast<unsigned long long>(g_nat.programs[i]));
     if (g_nat.tiles)
         std::fprintf(stderr, "\n[native] tiles: %llu bindings, %llu imports, %llu write-backs", static_cast<unsigned long long>(g_nat.runs),
                      static_cast<unsigned long long>(g_nat.imports), static_cast<unsigned long long>(g_nat.tile_writebacks));
@@ -3165,12 +3236,7 @@ void read_state(std::vector<std::uint32_t> &vram, std::uint32_t &scale, std::vec
 void write_state(const std::vector<std::uint32_t> &vram, std::uint32_t scale, const std::vector<std::uint32_t> &clut) {
     native_sync();
     wait_idle();
-    if (g_nat.bound) {  // VRAM is replaced: what the target holds is stale everywhere
-        std::fill(g_nat.tile.begin(), g_nat.tile.end(), kTileVram);
-        g_nat.stale = g_nat.tx * g_nat.ty;
-        g_nat.newer = 0;
-        g_nat.marked_valid = false;
-    }
+    if (g_nat.bound) tiles_reset();  // VRAM is replaced: what the target holds is stale everywhere
     const std::size_t words = kMemorySize / 4;
     const std::uint32_t from_x = scale & 0xFFu, from_y = scale >> 8 ? scale >> 8 : from_x;
     const std::uint32_t from = from_x * from_y, to = g_samples;
@@ -3205,8 +3271,8 @@ void native_begin(const State &st) {
     if (!g_nat.open) native_open(st);
 }
 
-void native_batch(const State &st, const std::uint8_t *payload, std::uint32_t bytes) {
-    if (g_nat.on) native_record(st, payload, bytes);
+void native_batch(const State &st, const std::uint8_t *payload, std::uint32_t bytes, std::uint32_t pass) {
+    if (g_nat.on) native_record(st, payload, bytes, pass);
 }
 
 void native_vblank(std::uint64_t frame) {
