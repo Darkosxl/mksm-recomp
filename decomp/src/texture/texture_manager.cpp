@@ -95,7 +95,7 @@ PS2_DECOMP(0026D590, TextureManager::GetSlot) {
 }
 
 // Gives texture slot a1 a linked texture, slot a2, that the character renderer draws over it as an extra blended pass
-// (set from a model's texture chunk). a1 records a2 and is flagged kHasLinked, a2 is flagged kIsLinked.
+// (set from a model's texture chunk). a1 records a2 as its link A (kHasLinkA), a2 is flagged kIsLinkA.
 PS2_DECOMP(0026DD90, TextureManager::SetLinkedTexture) {
     const TextureManager mgr = self(c);
     const std::uint32_t from = c.r[a1].w[0], to = c.r[a2].w[0];
@@ -104,11 +104,11 @@ PS2_DECOMP(0026DD90, TextureManager::SetLinkedTexture) {
     const std::uint32_t to_offset = TextureManager::scaled(c, to);
 
     const TextureSlot a{mgr.slots + from_offset};
-    a.linked = static_cast<std::uint16_t>(to);
-    a.flags |= kHasLinked;
+    a.link_a = static_cast<std::uint16_t>(to);
+    a.flags |= kHasLinkA;
     const std::uint32_t slots = mgr.slots;  // reloaded after the stores, as the original does
     const TextureSlot b{slots + to_offset};
-    b.flags |= kIsLinked;
+    b.flags |= kIsLinkA;
 
     set32(c.r[a3], a.addr);
     set32(c.r[t0], b.addr);

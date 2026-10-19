@@ -1,11 +1,12 @@
 // Ps2/Renderer/Character/ps2render.cpp: the texture filter (GS TEX1) of a mesh draw.
-#include "chain.hpp"
+#include "vif.hpp"
 
 namespace {
 
 using namespace ps2;
 using namespace ps2::gpr;
 using namespace decomp::render;
+using gs::Tex1;
 
 // The renderer's default TEX1 fields, one word each (fn_224ef0 sets L and K).
 constexpr std::uint32_t kFilterDefaults = 0x004F4FE0u;
@@ -43,6 +44,7 @@ constexpr std::uint32_t kNoMipmaps = 0x10000;  // draw flag (a1)
 // the default filter fields, the mesh's own L and K when it has them, and the per-mode minification override, and
 // remembers the L and K it used. Called by the mesh packers fn_236f30 and fn_237660 before each draw.
 PS2_DECOMP(00236DB0, EmitTextureFilter) {
+    const Chain chain;
     const std::uint32_t mesh = c.r[a0].w[0];
     set32(c.r[v0], 0x00010000u);
     set32(c.r[a3], 0x004F0000u);
@@ -54,9 +56,9 @@ PS2_DECOMP(00236DB0, EmitTextureFilter) {
         set32(c.r[v1], ld32(kFilterDefaults + kForceDefaultLod));
         tick(c, 4);
         if (c.r[v1].d[0] == 0) {
-            const std::uint32_t p = ld32(kChainPtr);
-            put_ad(p, Tex1{.mmag = Tex1::kLinear, .mmin = Tex1::kLinear}.bits(), GsReg::TEX1_1);
-            st32(kChainPtr, p + 16);  // the original stores the pointer after each word
+            const std::uint32_t p = chain.ptr;
+            put_ad(p, gs::TEX1_1, Tex1{.mmag = Tex1::kLinear, .mmin = Tex1::kLinear}.bits());
+            chain.ptr = p + 16;  // the original stores the pointer after each word
             st32(kLastL, ~0u);
             st32(kLastK, ~0u);
 
@@ -66,7 +68,7 @@ PS2_DECOMP(00236DB0, EmitTextureFilter) {
             set32(c.r[a1], p + 12);
             set32(c.r[a2], p + 16);
             set32(c.r[a3], ~0u);
-            set32(c.r[t0], static_cast<std::uint32_t>(GsReg::TEX1_1));
+            set32(c.r[t0], gs::TEX1_1);
             set32(c.r[t1], 0x00660000u);
             set32(c.r[t2], 0x00660000u);
             tick(c, 23);
@@ -127,9 +129,9 @@ PS2_DECOMP(00236DB0, EmitTextureFilter) {
         .k = 0u - c.r[t2].w[0],  // the game keeps K negated
     };
     const std::uint64_t value = tex1.bits();
-    const std::uint32_t p = ld32(kChainPtr);
-    put_ad(p, value, GsReg::TEX1_1);
-    st32(kChainPtr, p + 16);
+    const std::uint32_t p = chain.ptr;
+    put_ad(p, gs::TEX1_1, value);
+    chain.ptr = p + 16;
     st32(kLastK, c.r[t2].w[0]);
     st32(kLastL, c.r[t1].w[0]);
 
@@ -137,7 +139,7 @@ PS2_DECOMP(00236DB0, EmitTextureFilter) {
     set32(c.r[v1], p);
     c.r[a0].sd[0] = static_cast<std::int64_t>(value) >> 32;
     set32(c.r[a1], 0x00660000u);
-    set32(c.r[a2], static_cast<std::uint32_t>(GsReg::TEX1_1));
+    set32(c.r[a2], gs::TEX1_1);
     set32(c.r[a3], p + 16);
     set32(c.r[t0], 0x00660000u);
     tick(c, 33);

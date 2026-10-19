@@ -34,29 +34,29 @@ constexpr std::uint32_t kCycle = vif::Stcycl(4, 4);
 constexpr std::uint32_t kV4_32Unit = vif::num_field(1) | vif::element_bits(vif::V4_32);  // 0x10080
 
 // One qword of VU1 data at vu_addr: STCYCL 4,4 and UNPACK V4-32, closed.
-Closed UnpackQword(Cpu &c, const Chain &chain, std::uint32_t vu_addr, std::uint64_t lo, std::uint64_t hi,
-                   std::uint32_t break_pc = 0) {
+Chain::Closed UnpackQword(Cpu &c, const Chain &chain, std::uint32_t vu_addr, std::uint64_t lo, std::uint64_t hi,
+                          std::uint32_t break_pc = 0) {
     Packet pk{chain.ptr};
     pk.w32(kCycle);
-    OpenUnpack(chain, pk, vif::V4_32, vu_addr);
+    chain.open_unpack(pk, vif::V4_32, vu_addr);
     pk.w64(lo);
     pk.w64(hi);
     chain.ptr = pk.p;
-    return CloseUnpack(c, chain, pk.p, break_pc);
+    return chain.close_unpack(c, pk.p, break_pc);
 }
 
 // One GS register as an A+D qword at vu_addr
-Closed UnpackAd(Cpu &c, const Chain &chain, std::uint32_t vu_addr, gs::Reg reg, std::uint64_t value,
-                std::uint32_t break_pc = 0) {
+Chain::Closed UnpackAd(Cpu &c, const Chain &chain, std::uint32_t vu_addr, gs::Reg reg, std::uint64_t value,
+                       std::uint32_t break_pc = 0) {
     return UnpackQword(c, chain, vu_addr, value, reg, break_pc);
 }
 
 // the scratch registers every path leaves from its last close
-void LeaveClose(Cpu &c, const Closed &last, unsigned word_reg, unsigned bits_reg, unsigned num_reg) {
-    set32(c.r[word_reg], last.word);
-    c.r[bits_reg].d[0] = last.elem_bits;
+void LeaveClose(Cpu &c, const Chain::Closed &last, unsigned word_reg, unsigned bits_reg, unsigned num_reg) {
+    set32(c.r[word_reg], last.code);
+    c.r[bits_reg].d[0] = last.element_bits;
     set32(c.r[num_reg], last.num);
-    set32(c.r[a1], last.step);
+    set32(c.r[a1], last.num_field);
     set32(c.r[a2], last.at);
     set32(c.r[a3], Chain::kAddr);
 }
@@ -102,12 +102,12 @@ PS2_DECOMP(00248900, PackHighlightPass) {
         const std::uint64_t tex0 = c.r[v0].d[0];
 
         tick(c, 41);
-        const Closed first = UnpackAd(c, chain, kVuAlpha, gs::ALPHA_1, gs::Alpha(gs::Zero, gs::Zero, gs::Fix, gs::Cd),
-                                      0x00248e7cu);
+        const Chain::Closed first =
+            UnpackAd(c, chain, kVuAlpha, gs::ALPHA_1, gs::Alpha(gs::Zero, gs::Zero, gs::Fix, gs::Cd), 0x00248e7cu);
         const std::uint64_t never = gs::Test(true, gs::A_NEVER, 0, gs::KEEP, true, gs::Z_GEQUAL);
         UnpackAd(c, chain, kVuTest, gs::TEST_1, never);
         UnpackAd(c, chain, kVuTex0, gs::TEX0_1, tex0);
-        const Closed last = UnpackAd(c, chain, kVuFba, gs::FBA_1, 1);
+        const Chain::Closed last = UnpackAd(c, chain, kVuFba, gs::FBA_1, 1);
         tick(c, 107);
 
         // v0 the last code, v1 its element bits, a0 its NUM, a1-a3 as every path; t0-t7 the constants
@@ -171,7 +171,7 @@ PS2_DECOMP(00248900, PackHighlightPass) {
         vu0::qmtc2(c, t0, vu0::vf1);
         vu0::sqc2(c, vu0::vf1, f.at(0));
         const Reg128 &colour = c.vu0.vf[1];
-        const Closed last = UnpackQword(c, chain, kVuColour, colour.d[0], colour.d[1]);
+        const Chain::Closed last = UnpackQword(c, chain, kVuColour, colour.d[0], colour.d[1]);
         tick(c, 131);
 
         // v0 the last NUM, v1 its code, a0 its element bits, a1-a3 as every path; t0/t1 the colour; t2-t7 constants

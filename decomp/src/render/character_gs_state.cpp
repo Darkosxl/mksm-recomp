@@ -8,16 +8,13 @@
 //   0x25-0x27   pass 2 (environment highlight): ALPHA_1, TEST_1, TEX0_1
 //   0x2d        FBA_1
 #include "ps2/decomp_vu0.hpp"
-#include "vif_e.hpp"
+#include "vif.hpp"
 
 namespace {
 
 using namespace ps2;
 using namespace ps2::gpr;
 using namespace decomp::render;
-using gs::Afail;
-using gs::Atst;
-using gs::Ztst;
 
 // globals
 constexpr std::uint32_t kShadowPass = 0x004F4B2Cu;      // nonzero while the fighters are drawn as their shadows
@@ -32,19 +29,19 @@ constexpr std::uint32_t kHighlightFix = 0x004F4C3Cu;    // pass 2 of draw mode 0
 constexpr std::uint32_t kVuHighlightRgba = 0x20, kVuAdTag = 0x21, kVuBaseAlpha = 0x22, kVuBaseTest = 0x23;
 constexpr std::uint32_t kVuHighlightAlpha = 0x25, kVuHighlightTest = 0x26, kVuHighlightTex0 = 0x27, kVuFba = 0x2d;
 
-constexpr GifTag kAdTag = GifTagAd(4);
+constexpr gif::Tag128 kAdTag = gif::AdTag(4);
 
 // pass 1, normal: alpha blending; alpha >= 0x50 or only the colour is written; destination alpha test on
 constexpr std::uint64_t kBlend = gs::Alpha(gs::Cs, gs::Cd, gs::As, gs::Cd);
-constexpr std::uint64_t kBaseTest = gs::Test({true, Atst::Gequal, 0x50, Afail::RgbOnly, true, false, true, Ztst::Gequal});
+constexpr std::uint64_t kBaseTest = gs::Test(true, gs::A_GEQUAL, 0x50, gs::RGB_ONLY, true, gs::Z_GEQUAL, true, false);
 // pass 1, shadow: the destination darkened by Cs * FIX, only where its alpha MSB is 1, and FBA 0 clears it: each
 // pixel is darkened once however many shadow triangles cover it
-constexpr std::uint64_t kShadowTest = gs::Test({false, Atst::Gequal, 0x04, Afail::Keep, true, true, true, Ztst::Gequal});
+constexpr std::uint64_t kShadowTest = gs::Test(false, gs::A_GEQUAL, 0x04, gs::KEEP, true, gs::Z_GEQUAL, true, true);
 // pass 1 of the fighter instances (fn_247bd8): opaque, or blended by a fixed alpha
-constexpr std::uint64_t kOpaqueTest = gs::Test({true, Atst::Gequal, 0x3c, Afail::RgbOnly, false, false, true, Ztst::Greater});
-constexpr std::uint64_t kFadeTest = gs::Test({true, Atst::Gequal, 0x04, Afail::Keep, false, false, true, Ztst::Gequal});
+constexpr std::uint64_t kOpaqueTest = gs::Test(true, gs::A_GEQUAL, 0x3c, gs::RGB_ONLY, true, gs::Z_GREATER);
+constexpr std::uint64_t kFadeTest = gs::Test(true, gs::A_GEQUAL, 0x04, gs::KEEP, true, gs::Z_GEQUAL);
 // pass 2: added on top
-constexpr std::uint64_t kHighlightTest = gs::Test({true, Atst::Gequal, 0x3c, Afail::Keep, false, false, true, Ztst::Gequal});
+constexpr std::uint64_t kHighlightTest = gs::Test(true, gs::A_GEQUAL, 0x3c, gs::KEEP, true, gs::Z_GEQUAL);
 static_assert(kAdTag.lo == 0x1000000000000004ull && kAdTag.hi == 0xe && kBlend == 0x44 && kBaseTest == 0x5750b &&
                   kShadowTest == 0x5c04a && kOpaqueTest == 0x733cb && kFadeTest == 0x5004b && kHighlightTest == 0x503cb,
               "the original's constants");
@@ -65,8 +62,8 @@ struct CharacterInstance {
 
 // fn_2478f0's records, written through its own pointer: STCYCL 4,4, UNPACK V4-32 of NUM 1, the qword (24 bytes)
 std::uint32_t put_constant(std::uint32_t p, std::uint32_t vu_addr, const Qword &q) {
-    wr<std::uint32_t>(p, Stcycl(4, 4));
-    wr<std::uint32_t>(p + 4, Unpack(UnpackFormat::V4_32, vu_addr, 1));
+    wr<std::uint32_t>(p, vif::Stcycl(4, 4));
+    wr<std::uint32_t>(p + 4, vif::Unpack(vif::V4_32, vu_addr, 1));
     for (std::uint32_t i = 0; i < 4; ++i) wr<std::uint32_t>(p + 8 + 4 * i, q.w[i]);
     return p + 24;
 }
@@ -101,47 +98,47 @@ PS2_DECOMP(002478F0, PackCharacterBaseState) {
         set32(c.r[at], kPercent.bits);
     }
     std::uint32_t end = put_constant(p, kVuAdTag, kAdTag.words());
-    end = put_constant(end, kVuBaseAlpha, Ad(GsReg::ALPHA_1, blend));
-    end = put_constant(end, kVuBaseTest, Ad(GsReg::TEST_1, test));
-    end = put_constant(end, kVuFba, Ad(GsReg::FBA_1, gs::Fba(!shadow)));
+    end = put_constant(end, kVuBaseAlpha, Ad(gs::ALPHA_1, blend));
+    end = put_constant(end, kVuBaseTest, Ad(gs::TEST_1, test));
+    end = put_constant(end, kVuFba, Ad(gs::FBA_1, gs::Fba(!shadow)));
     f.lq(s0, 16);
     f.lq(s1, 0);
     f.pop();
 
     // The original computes each NUM as (128 payload bits / 128 per element) << 16 with DIVU; registers hold its
     // constants and those quotients.
-    mmi::divu(c, 0, 128, UnpackElementBits(UnpackFormat::V4_32));
+    mmi::divu(c, 0, 128, vif::element_bits(vif::V4_32));
     const std::uint32_t num_field = c.lo.w[0] << 16;
     set32(c.r[v0], end);
     set32(c.r[t8], end);
     set32(c.r[t6], 128);
     if (!shadow) {
-        set32(c.r[v1], Unpack(UnpackFormat::V4_32, kVuFba));
-        set32(c.r[a0], Unpack(UnpackFormat::V4_32, kVuBaseTest));
+        set32(c.r[v1], vif::Unpack(vif::V4_32, kVuFba));
+        set32(c.r[a0], vif::Unpack(vif::V4_32, kVuBaseTest));
         c.r[a1].d[0] = test;
         set32(c.r[a2], 128);
         set32(c.r[a3], num_field);
         set32(c.r[t0], num_field);
-        set32(c.r[t1], Stcycl(4, 4));
+        set32(c.r[t1], vif::Stcycl(4, 4));
         set32(c.r[t2], num_field);
-        set32(c.r[t3], static_cast<std::uint32_t>(GsReg::TEST_1));
-        set32(c.r[t4], static_cast<std::uint32_t>(GsReg::FBA_1));
+        set32(c.r[t3], gs::TEST_1);
+        set32(c.r[t4], gs::FBA_1);
         set32(c.r[t5], 1);
         set32(c.r[t7], 128);
         tick(c, 96);
     } else {
         c.r[v1].sd[0] = fix;
-        set32(c.r[a0], Unpack(UnpackFormat::V4_32, kVuFba));
+        set32(c.r[a0], vif::Unpack(vif::V4_32, kVuFba));
         c.r[a1].d[0] = test;
-        set32(c.r[a2], Unpack(UnpackFormat::V4_32, kVuBaseTest));
+        set32(c.r[a2], vif::Unpack(vif::V4_32, kVuBaseTest));
         set32(c.r[a3], 128);
         set32(c.r[t0], num_field);
         set32(c.r[t1], num_field);
-        set32(c.r[t2], Stcycl(4, 4));
+        set32(c.r[t2], vif::Stcycl(4, 4));
         set32(c.r[t3], num_field);
-        set32(c.r[t4], static_cast<std::uint32_t>(GsReg::TEST_1));
+        set32(c.r[t4], gs::TEST_1);
         set32(c.r[t5], 128);
-        set32(c.r[t7], static_cast<std::uint32_t>(GsReg::FBA_1));
+        set32(c.r[t7], gs::FBA_1);
         tick(c, 105);
     }
 }
@@ -151,7 +148,7 @@ PS2_DECOMP(002478F0, PackCharacterBaseState) {
 PS2_DECOMP(00247BD8, ChainCharacterBaseState) {
     const Chain chain;
     const CharacterInstance inst{c.r[a0].w[0]};
-    const std::uint32_t first = chain.ptr.get();
+    const std::uint32_t first = chain.ptr;
     chain.unpack_qword(c, kVuAdTag, kAdTag.words());
 
     const std::int32_t alpha = inst.alpha().get();
@@ -164,10 +161,10 @@ PS2_DECOMP(00247BD8, ChainCharacterBaseState) {
     } else {
         kind = Opaque, blend = kBlend, test = kOpaqueTest;
     }
-    chain.unpack_qword(c, kVuBaseAlpha, Ad(GsReg::ALPHA_1, blend));
-    const std::uint32_t test_at = chain.ptr.get();
-    chain.unpack_qword(c, kVuBaseTest, Ad(GsReg::TEST_1, test));
-    const Chain::Closed fba = chain.unpack_qword(c, kVuFba, Ad(GsReg::FBA_1, gs::Fba(false)));
+    chain.unpack_qword(c, kVuBaseAlpha, Ad(gs::ALPHA_1, blend));
+    const std::uint32_t test_at = chain.ptr;
+    chain.unpack_qword(c, kVuBaseTest, Ad(gs::TEST_1, test));
+    const Chain::Closed fba = chain.unpack_qword(c, kVuFba, Ad(gs::FBA_1, gs::Fba(false)));
 
     // what the original leaves in its scratch registers: the last close, its constants, and per path the values
     // it built the middle records from
@@ -175,30 +172,30 @@ PS2_DECOMP(00247BD8, ChainCharacterBaseState) {
     set32(c.r[v1], fba.element_bits);
     set32(c.r[a0], fba.num);
     set32(c.r[a1], fba.num_field);
-    set32(c.r[a2], fba.code_addr);
+    set32(c.r[a2], fba.at);
     set32(c.r[a3], Chain::kAddr);
     set32(c.r[t0], 0xFFFF0000u);
     set32(c.r[t4], Chain::kAddr);
     set32(c.r[t5], Chain::kAddr + 0x1d00u);
-    set32(c.r[t6], Stcycl(4, 4));
+    set32(c.r[t6], vif::Stcycl(4, 4));
     set32(c.r[t7], 1u << 16 | 128u);
     set32(c.r[t8], 0xFFFF0000u);
     switch (kind) {
     case Fade:
-        set32(c.r[t1], static_cast<std::uint32_t>(GsReg::TEST_1));
+        set32(c.r[t1], gs::TEST_1);
         set32(c.r[t2], first + 8);
         tick(c, 172);
         break;
     case Mode:
         set32(c.r[t1], test_at);
-        set32(c.r[t2], static_cast<std::uint32_t>(GsReg::TEST_1));
-        set32(c.r[t3], static_cast<std::uint32_t>(GsReg::ALPHA_1));
+        set32(c.r[t2], gs::TEST_1);
+        set32(c.r[t3], gs::ALPHA_1);
         tick(c, 170);
         break;
     case Opaque:
         set32(c.r[t1], test_at);
-        set32(c.r[t2], static_cast<std::uint32_t>(GsReg::ALPHA_1));
-        set32(c.r[t3], static_cast<std::uint32_t>(GsReg::TEST_1));
+        set32(c.r[t2], gs::ALPHA_1);
+        set32(c.r[t3], gs::TEST_1);
         tick(c, 167);
         break;
     }
@@ -260,22 +257,22 @@ PS2_DECOMP(00248058, ChainCharacterHighlightState) {
     sqc2(c, vf1, f.at(0));  // the colour goes out through the stack
 
     const Chain chain;
-    const std::uint32_t first = chain.ptr.get();
+    const std::uint32_t first = chain.ptr;
     chain.unpack_qword(c, kVuHighlightRgba, Qword{{c.vu0.vf[vf1].w[0], c.vu0.vf[vf1].w[1], c.vu0.vf[vf1].w[2], c.vu0.vf[vf1].w[3]}});
-    chain.unpack_qword(c, kVuHighlightTex0, Ad(GsReg::TEX0_1, tex0));
-    chain.unpack_qword(c, kVuFba, Ad(GsReg::FBA_1, gs::Fba(false)));
+    chain.unpack_qword(c, kVuHighlightTex0, Ad(gs::TEX0_1, tex0));
+    chain.unpack_qword(c, kVuFba, Ad(gs::FBA_1, gs::Fba(false)));
 
     Chain::Closed last{};
     std::uint32_t at_p8 = 0;
     const bool normal = inst.draw_mode().get() == 0;
     const bool by_dest_alpha = !normal && rd<std::uint32_t>(kHighlightBlend) != 0;
     if (normal) {
-        chain.unpack_qword(c, kVuHighlightTest, Ad(GsReg::TEST_1, kHighlightTest));
-        at_p8 = chain.ptr.get() + 8;
-        last = chain.unpack_qword(c, kVuHighlightAlpha, Ad(GsReg::ALPHA_1, AddBlend(rd<std::uint32_t>(kHighlightFix))));
+        chain.unpack_qword(c, kVuHighlightTest, Ad(gs::TEST_1, kHighlightTest));
+        at_p8 = chain.ptr + 8;
+        last = chain.unpack_qword(c, kVuHighlightAlpha, Ad(gs::ALPHA_1, AddBlend(rd<std::uint32_t>(kHighlightFix))));
     } else {
-        chain.unpack_qword(c, kVuHighlightAlpha, Ad(GsReg::ALPHA_1, by_dest_alpha ? kAddByDestAlpha : AddBlend(32)));
-        last = chain.unpack_qword(c, kVuHighlightTest, Ad(GsReg::TEST_1, kFadeTest));
+        chain.unpack_qword(c, kVuHighlightAlpha, Ad(gs::ALPHA_1, by_dest_alpha ? kAddByDestAlpha : AddBlend(32)));
+        last = chain.unpack_qword(c, kVuHighlightTest, Ad(gs::TEST_1, kFadeTest));
     }
     f.lq(s0, 48);
     f.lq(s1, 32);
@@ -285,36 +282,36 @@ PS2_DECOMP(00248058, ChainCharacterHighlightState) {
     // what the original leaves in its scratch registers
     set32(c.r[v0], last.code);
     set32(c.r[a1], last.num_field);
-    set32(c.r[a2], last.code_addr);
+    set32(c.r[a2], last.at);
     c.r[t5].sd[0] = static_cast<std::int64_t>(tex0) >> 32;
     c.r[t6].sd[0] = static_cast<std::int32_t>(tex0);
     set32(c.r[t7], Chain::kAddr);
-    set32(c.r[t8], Stcycl(4, 4));
+    set32(c.r[t8], vif::Stcycl(4, 4));
     set32(c.r[t9], Chain::kAddr + 0x1d00u);
     if (normal) {
         set32(c.r[v1], last.element_bits);
         set32(c.r[a0], last.num);
         set32(c.r[a3], at_p8);
-        set32(c.r[t0], Unpack(UnpackFormat::V4_32, kVuHighlightAlpha));
-        set32(c.r[t1], static_cast<std::uint32_t>(GsReg::TEST_1));
+        set32(c.r[t0], vif::Unpack(vif::V4_32, kVuHighlightAlpha));
+        set32(c.r[t1], gs::TEST_1);
         set32(c.r[t2], kHighlightFix & 0xFFFF0000u);
         set32(c.r[t3], 0x68);
-        set32(c.r[t4], static_cast<std::uint32_t>(GsReg::ALPHA_1));
+        set32(c.r[t4], gs::ALPHA_1);
         tick(c, lit ? 277 : 222);
     } else {
         set32(c.r[v1], last.num);
         set32(c.r[a0], last.element_bits);
         set32(c.r[a3], Chain::kAddr);
         if (by_dest_alpha) {
-            set32(c.r[t0], static_cast<std::uint32_t>(GsReg::ALPHA_1));
-            set32(c.r[t1], Unpack(UnpackFormat::V4_32, kVuHighlightTex0));
+            set32(c.r[t0], gs::ALPHA_1);
+            set32(c.r[t1], vif::Unpack(vif::V4_32, kVuHighlightTex0));
         } else {
             set32(c.r[t0], 32);
             set32(c.r[t1], 0x68);
         }
-        set32(c.r[t2], Unpack(UnpackFormat::V4_32, kVuFba));
+        set32(c.r[t2], vif::Unpack(vif::V4_32, kVuFba));
         set32(c.r[t3], first + 24);
-        set32(c.r[t4], static_cast<std::uint32_t>(GsReg::TEX0_1));
+        set32(c.r[t4], gs::TEX0_1);
         tick(c, lit ? (by_dest_alpha ? 282 : 281) : (by_dest_alpha ? 227 : 226));
     }
 }

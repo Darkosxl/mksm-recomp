@@ -131,6 +131,36 @@ struct gptr {
     explicit operator bool() const { return addr != 0; }
 };
 
+// One member of a guest struct, for views of the game's objects in emulated RAM: reading it is a load, assigning it a
+// store, through the same access paths as the recompiled code (rd/wr).
+//   struct TextureSlot {
+//       std::uint32_t addr;
+//       Field<std::uint16_t> width{addr + 0x08};
+//       Field<std::uint16_t> tbw{addr + 0x10};
+//   };
+//   const TextureSlot tex{c.r[gpr::a1].w[0]};
+//   tex.tbw = (tex.width + 63) / 64;     // a halfword load at +0x08, a halfword store at +0x10
+template <class T>
+class Field {
+public:
+    constexpr Field(std::uint32_t address) : addr_(address) {}
+    Field(const Field &) = default;
+
+    operator T() const { return rd<T>(addr_); }
+    const Field &operator=(T v) const {
+        wr<T>(addr_, v);
+        return *this;
+    }
+    // copies the value, not the address
+    const Field &operator=(const Field &o) const { return *this = static_cast<T>(o); }
+    const Field &operator|=(T v) const { return *this = static_cast<T>(static_cast<T>(*this) | v); }
+
+    std::uint32_t address() const { return addr_; }
+
+private:
+    std::uint32_t addr_;
+};
+
 // The original's stack frame, so the saved registers and every callee's frame land where the recompiled code puts
 // them (the bytes below sp are part of the hashed state):
 //   StackFrame f(c, 0x30);   // addiu sp, sp, -0x30

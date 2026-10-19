@@ -7,7 +7,7 @@
 //
 // The code keeps the original's registers and stores (scratch registers included) because the callees and the
 // preemption checks in the padding loops see them; each step is named after the libvifpk operation it inlines.
-#include "../render/vif_packet.hpp"
+#include "../render/vif.hpp"
 #include "texture_manager.hpp"
 
 namespace {
@@ -27,13 +27,13 @@ constexpr std::uint32_t kUploadTexels = 0x00268EC0u;   // fn_268ec0(mgr, slot, 0
 
 // Zero words at the chain's write pointer, reloading and storing it for each word, until it reaches register `end`
 // (v0 = the pointer, v1 = more to go). False when the machine unwound at the loop head.
-bool pad_until(Cpu &c, const Vif1Packet &chain, unsigned end, std::uint32_t loop) {
+bool pad_until(Cpu &c, const Chain &chain, unsigned end, std::uint32_t loop) {
     for (;;) {
-        set32(c.r[v0], chain.cur);
+        set32(c.r[v0], chain.ptr);
         wr<std::uint32_t>(c.r[v0].w[0], 0);
         set32(c.r[v0], c.r[v0].w[0] + 4);
         c.r[v1].d[0] = c.r[v0].d[0] < c.r[end].d[0];
-        chain.cur = c.r[v0].w[0];
+        chain.ptr = c.r[v0].w[0];
         tick(c, 7);
         if (!c.r[v1].d[0]) return true;
         if (poll(c, loop)) return false;
@@ -66,18 +66,18 @@ void close_dma_tag(Cpu &c, unsigned t, unsigned p) {
 
 // Opens a cnt DMA tag (QWC 0) at register p, qword aligned: it becomes the open tag, no VIF code is open and the
 // pointer moves past the tag's 8 bytes (v0 = the tag word, v1 = p + 4, register after = p + 8).
-void open_cnt(Cpu &c, const Vif1Packet &chain, unsigned p, unsigned after) {
+void open_cnt(Cpu &c, const Chain &chain, unsigned p, unsigned after) {
     const std::uint32_t at = c.r[p].w[0];
-    chain.cur = at;
-    set32(c.r[v0], dma::tag(dma::kCnt));
-    chain.dma_tag = at;
+    chain.ptr = at;
+    set32(c.r[v0], static_cast<std::uint32_t>(dma::Tag(dma::CNT, 0)));
+    chain.tag = at;
     set32(c.r[v1], at + 4);
     wr<std::uint32_t>(at, c.r[v0].w[0]);
     set32(c.r[after], at + 8);
-    chain.cur = c.r[v1].w[0];
+    chain.ptr = c.r[v1].w[0];
     wr<std::uint32_t>(at + 4, 0);
-    chain.cur = c.r[after].w[0];
-    chain.vif_code = 0;
+    chain.ptr = c.r[after].w[0];
+    chain.code = 0;
 }
 
 }
@@ -86,7 +86,7 @@ void open_cnt(Cpu &c, const Vif1Packet &chain, unsigned p, unsigned after) {
 // per slot its CLUT and image transfers (fn_268ae0, fn_268ec0), then a cnt block with a DIRECT A+D TEXFLUSH and FLUSH.
 // Meshdraw (fn_2610f0, one slot) and fn_246120 (a range) call it before drawing with textures not resident yet.
 PS2_DECOMP(0026BCF8, TextureManager::UploadSlots) {
-    const Vif1Packet chain = frame_chain();
+    const Chain chain;
     StackFrame f(c, 0x70);
     f.sq(s1, 0x50);
     f.sq(s0, 0x60);
@@ -108,7 +108,7 @@ PS2_DECOMP(0026BCF8, TextureManager::UploadSlots) {
     f.sd(t0, 0x08);
 
     // pad the chain with zero words to the next qword boundary (t2 = the end, a3 = whether there is any)
-    set32(c.r[a3], chain.cur);
+    set32(c.r[a3], chain.ptr);
     set32(c.r[t3], chain.addr);
     c.r[t2].d[0] = c.r[a3].d[0] & ~std::uint64_t{15};
     c.r[v1].d[0] = c.r[t2].d[0] < c.r[a3].d[0];
@@ -123,22 +123,22 @@ PS2_DECOMP(0026BCF8, TextureManager::UploadSlots) {
 
     // sceVif1PkCnt: align, close the open DMA tag, open a cnt tag; then FLUSH, so the draws already in the chain are
     // done before the transfers
-    set32(c.r[a2], chain.cur);
+    set32(c.r[a2], chain.ptr);
     set32(c.r[a3], chain.addr);
     c.r[v0].d[0] = c.r[a2].d[0] & 12;
     tick(c, 5);
     if (c.r[v0].d[0] && !pad_to_qword(c, a2, 0x0026BDA0u)) return;
-    set32(c.r[a0], chain.dma_tag);
+    set32(c.r[a0], chain.tag);
     tick(c, 3);
     if (c.r[a0].d[0]) close_dma_tag(c, a0, a2);
     open_cnt(c, chain, a2, a0);
-    set32(c.r[a1], vif::code(vif::kFlush));
+    set32(c.r[a1], vif::Flush());
     set32(c.r[a2], chain.addr);
-    set32(c.r[v0], chain.cur);
+    set32(c.r[v0], chain.ptr);
     wr<std::uint32_t>(c.r[v0].w[0], c.r[a1].w[0]);
     set32(c.r[v0], c.r[v0].w[0] + 4);
     c.r[a0].d[0] = c.r[v0].d[0];
-    chain.cur = c.r[v0].w[0];
+    chain.ptr = c.r[v0].w[0];
     c.r[v1].d[0] = c.r[a0].d[0] & 12;
     tick(c, 20);
 
@@ -147,12 +147,12 @@ PS2_DECOMP(0026BCF8, TextureManager::UploadSlots) {
         tick(c, 1);
         if (!pad_to_qword(c, a0, 0x0026BE30u)) return;
     }
-    set32(c.r[a1], chain.dma_tag);
+    set32(c.r[a1], chain.tag);
     tick(c, 3);
     if (c.r[a1].d[0]) close_dma_tag(c, a1, a0);
-    chain.cur = c.r[a0].w[0];
+    chain.ptr = c.r[a0].w[0];
     set32(c.r[a1], chain.addr);
-    chain.dma_tag = 0;
+    chain.tag = 0;
 
     // the uploaders append through their own packet: hand them the chain's header
     set32(c.r[a0], kUploadPacket);
@@ -193,14 +193,14 @@ PS2_DECOMP(0026BCF8, TextureManager::UploadSlots) {
     if (!call(c, kFastMemcpy, Ra{0x0026BEECu})) return;
 
     // sceVif1PkCnt again
-    set32(c.r[a2], chain.cur);
+    set32(c.r[a2], chain.ptr);
     c.r[v0].d[0] = c.r[a2].d[0] & 12;
     tick(c, 4);
     if (c.r[v0].d[0]) {
         tick(c, 1);
         if (!pad_to_qword(c, a2, 0x0026BF00u)) return;
     }
-    set32(c.r[a0], chain.dma_tag);
+    set32(c.r[a0], chain.tag);
     tick(c, 3);
     if (c.r[a0].d[0]) close_dma_tag(c, a0, a2);
     open_cnt(c, chain, a2, a1);
@@ -208,7 +208,7 @@ PS2_DECOMP(0026BCF8, TextureManager::UploadSlots) {
     set32(c.r[a3], chain.addr);
 
     // sceVif1PkOpenDirectCode: pad so that the DIRECT code is the last word of a qword (a1 = where it goes)
-    set32(c.r[v1], chain.cur);
+    set32(c.r[v1], chain.ptr);
     c.r[a0].d[0] = c.r[v1].d[0] & c.r[a0].d[0];
     set32(c.r[a1], c.r[a0].w[0] + 12);
     c.r[v0].d[0] = c.r[a1].d[0] < c.r[v1].d[0];
@@ -217,25 +217,25 @@ PS2_DECOMP(0026BCF8, TextureManager::UploadSlots) {
     c.r[v1].d[0] = c.r[v1].d[0] < c.r[a1].d[0];
     tick(c, 21);
     if (c.r[v1].d[0] && !pad_until(c, chain, a1, 0x0026BF90u)) return;
-    set32(c.r[v0], chain.cur);
-    set32(c.r[a1], vif::code(vif::kDirect));
+    set32(c.r[v0], chain.ptr);
+    set32(c.r[a1], vif::Direct(0));
     set32(c.r[t1], chain.addr);
-    set32(c.r[a2], gs::kTexflush);
+    set32(c.r[a2], gs::TEXFLUSH);
     set32(c.r[v1], c.r[v0].w[0] + 4);
-    chain.vif_code = c.r[v0].w[0];
-    chain.cur = c.r[v1].w[0];
+    chain.code = c.r[v0].w[0];
+    chain.ptr = c.r[v1].w[0];
     wr<std::uint32_t>(c.r[v0].w[0], c.r[a1].w[0]);
-    set32(c.r[a3], gif::kImage);
+    set32(c.r[a3], gif::IMAGE);
 
     // sceVif1PkOpenGifTag with the template, then one A+D qword: TEXFLUSH = 0
-    set32(c.r[a0], chain.cur);
+    set32(c.r[a0], chain.ptr);
     f.lq(v0, 0x00);
     chain.gif_tag = c.r[a0].w[0];
     st128(c.r[a0].w[0] & ~15u, c.r[v0]);
-    set32(c.r[v1], chain.cur);
+    set32(c.r[v1], chain.ptr);
     set32(c.r[v0], c.r[v1].w[0] + 16);
     set32(c.r[a0], c.r[v1].w[0] + 32);
-    chain.cur = c.r[v0].w[0];
+    chain.ptr = c.r[v0].w[0];
     wr<std::uint32_t>(c.r[v1].w[0] + 16, 0);
     wr<std::uint32_t>(c.r[v0].w[0] + 8, c.r[a2].w[0]);
     wr<std::uint32_t>(c.r[v0].w[0] + 12, 0);
@@ -243,7 +243,7 @@ PS2_DECOMP(0026BCF8, TextureManager::UploadSlots) {
     tick(c, 21);
 
     // sceVif1PkCloseGifTag: NLOOP = the qwords after the tag (dwords for REGLIST, any length for IMAGE) per NREG
-    chain.cur = c.r[a0].w[0];
+    chain.ptr = c.r[a0].w[0];
     set32(c.r[t0], chain.gif_tag);
     c.r[a2].d[0] = rd<std::uint64_t>(c.r[t0].w[0]);
     const std::uint64_t tag = c.r[a2].d[0];
@@ -252,7 +252,7 @@ PS2_DECOMP(0026BCF8, TextureManager::UploadSlots) {
     set32(c.r[a1], c.r[a0].w[0] - 2);
     c.r[v1].d[0] = gif::flg(tag);
     set32(c.r[a0], c.r[a1].w[0] >> 1);
-    c.r[v0].d[0] = c.r[v1].d[0] ^ gif::kReglist;
+    c.r[v0].d[0] = c.r[v1].d[0] ^ gif::REGLIST;
     if (c.r[v0].d[0]) c.r[a1].d[0] = c.r[a0].d[0];
     tick(c, 13);
     if (c.r[v1].d[0] != c.r[a3].d[0]) {
@@ -273,16 +273,16 @@ PS2_DECOMP(0026BCF8, TextureManager::UploadSlots) {
     chain.gif_tag = 0;
 
     // sceVif1PkCloseDirectCode: pad, the DIRECT code's IMMEDIATE += the qwords after it; then FLUSH and pad
-    set32(c.r[v1], chain.cur);
+    set32(c.r[v1], chain.ptr);
     c.r[v0].d[0] = c.r[v1].d[0] & 12;
     tick(c, 9);
     if (c.r[v0].d[0] && !pad_to_qword(c, v1, 0x0026C080u)) return;
-    chain.cur = c.r[v1].w[0];
+    chain.ptr = c.r[v1].w[0];
     set32(c.r[a3], chain.addr);
-    set32(c.r[a1], vif::code(vif::kFlush));
+    set32(c.r[a1], vif::Flush());
     set32(c.r[a2], ~15u);
-    set32(c.r[v0], chain.cur);
-    set32(c.r[a0], chain.vif_code);
+    set32(c.r[v0], chain.ptr);
+    set32(c.r[a0], chain.code);
     set32(c.r[v0], c.r[v0].w[0] - 4);
     set32(c.r[v0], c.r[v0].w[0] - c.r[a0].w[0]);
     set32(c.r[v1], rd<std::uint32_t>(c.r[a0].w[0]));
@@ -290,12 +290,12 @@ PS2_DECOMP(0026BCF8, TextureManager::UploadSlots) {
     set32(c.r[v0], c.r[v0].w[0] >> 2);
     set32(c.r[v1], c.r[v1].w[0] + c.r[v0].w[0]);
     wr<std::uint32_t>(c.r[a0].w[0], c.r[v1].w[0]);
-    chain.vif_code = 0;
-    set32(c.r[v0], chain.cur);
+    chain.code = 0;
+    set32(c.r[v0], chain.ptr);
     wr<std::uint32_t>(c.r[v0].w[0], c.r[a1].w[0]);
     set32(c.r[v0], c.r[v0].w[0] + 4);
     c.r[a1].d[0] = c.r[v0].d[0] & c.r[a2].d[0];
-    chain.cur = c.r[v0].w[0];
+    chain.ptr = c.r[v0].w[0];
     c.r[a0].d[0] = c.r[a1].d[0] < c.r[v0].d[0];
     set32(c.r[v1], c.r[a1].w[0] + 16);
     if (c.r[a0].d[0]) c.r[a1].d[0] = c.r[v1].d[0];

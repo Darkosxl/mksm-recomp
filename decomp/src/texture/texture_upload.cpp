@@ -7,15 +7,14 @@
 //   3. a ref tag that DMAs the data straight from EE memory behind a DIRECT of the same size.
 // Every library call is the original `jal` from the original's register state; a0 is always the packet (s0).
 #include "texture_manager.hpp"
-#include "../render/vif_e.hpp"
+#include "../render/vif.hpp"
 
 namespace {
 
 using namespace ps2;
 using namespace ps2::gpr;
+using namespace decomp::render;
 using namespace decomp::texture;
-namespace rv = decomp::render;
-using rv::GsReg;
 
 constexpr unsigned s8 = gpr::fp;  // the frame pointer register, a ninth saved register here (`fp` is also ps2::fp)
 
@@ -60,8 +59,8 @@ struct UploadPacket {
         f.lq(a1, 0);
         return lib(kPkOpenGifTag, 4, ra);
     }
-    bool add_gs_ad(GsReg reg, std::uint64_t value, std::int32_t cycles, std::uint32_t ra) const {
-        set32(c.r[a1], static_cast<std::uint32_t>(reg));
+    bool add_gs_ad(gs::Reg reg, std::uint64_t value, std::int32_t cycles, std::uint32_t ra) const {
+        set32(c.r[a1], reg);
         c.r[a2].d[0] = value;
         return lib(kPkAddGsAD, cycles, ra);
     }
@@ -86,7 +85,7 @@ struct UploadPacket {
         c.r[a1].d[0] = data.d[0];
         c.r[a2].d[0] = qwc.d[0];
         c.r[a3].d[0] = 0;
-        c.r[t0].d[0] = qwc.d[0] | rv::Direct(0);
+        c.r[t0].d[0] = qwc.d[0] | vif::Direct(0);
         c.r[t1].d[0] = 0;
         return lib(kPkRef, 9, ra);
     }
@@ -175,19 +174,19 @@ PS2_DECOMP(00268AE0, TextureManager::UploadClut) {
     c.r[v1].d[0] = cpsm << 24;
     c.r[s2].d[0] = cbp << 32;
     c.r[s1].d[0] = cpsm << 56;
-    if (!pk.add_gs_ad(GsReg::BITBLTBUF, rv::gs::BitBltBuf(c.r[s3].d[0], 1, cpsm, cbp, 1, cpsm), 16, 0x00268BF0u)) return;
+    if (!pk.add_gs_ad(gs::BITBLTBUF, gs::BitBltBuf(c.r[s3].d[0], 1, cpsm, cbp, 1, cpsm), 16, 0x00268BF0u)) return;
     c.r[v0].d[0] = c.r[s4].d[0] << 32;
-    if (!pk.add_gs_ad(GsReg::TRXREG, rv::gs::TrxReg(16, c.r[s4].d[0]), 7, 0x00268C0Cu)) return;
-    if (!pk.add_gs_ad(GsReg::TRXPOS, rv::gs::TrxPos(0, 0, 0, 0), 5, 0x00268C20u)) return;
-    if (!pk.add_gs_ad(GsReg::TRXDIR, rv::gs::TrxDir(rv::gs::TrxDirection::HostToLocal), 5, 0x00268C34u)) return;
+    if (!pk.add_gs_ad(gs::TRXREG, gs::TrxReg(16, c.r[s4].d[0]), 7, 0x00268C0Cu)) return;
+    if (!pk.add_gs_ad(gs::TRXPOS, gs::TrxPos(0, 0, 0, 0), 5, 0x00268C20u)) return;
+    if (!pk.add_gs_ad(gs::TRXDIR, gs::TrxDir(gs::HOST_TO_LOCAL), 5, 0x00268C34u)) return;
     if (!pk.close_gif_tag(0x00268C40u)) return;
     if (!pk.close_direct_code(0x00268C4Cu)) return;
 
     if (!pk.cnt(4, 0x00268C5Cu)) return;
     if (!pk.align(0x00268C70u)) return;
-    if (!pk.add_code(rv::Direct(1), 0x00268C84u)) return;
-    if (!pk.add_dword(c.r[s5].d[0] | rv::GifTagImage(0).lo, 6, 0x00268C9Cu)) return;  // IMAGE, NLOOP = the size
-    if (!pk.add_dword(rv::GifTagImage(0).hi, 4, 0x00268CACu)) return;
+    if (!pk.add_code(vif::Direct(1), 0x00268C84u)) return;
+    if (!pk.add_dword(c.r[s5].d[0] | gif::ImageTag(0).lo, 6, 0x00268C9Cu)) return;  // IMAGE, NLOOP = the size
+    if (!pk.add_dword(gif::ImageTag(0).hi, 4, 0x00268CACu)) return;
     if (!pk.ref(c.r[s3], c.r[s5], 0x00268CD0u)) return;
     restore();
 }
@@ -296,20 +295,20 @@ PS2_DECOMP(00268EC0, TextureManager::UploadImage) {
     const std::uint64_t tbw = c.r[s2].d[0], psm = c.r[s5].d[0];
     c.r[v0].d[0] = tbw << 48;
     c.r[v1].d[0] = psm << 56;
-    const std::uint64_t bitbltbuf = rv::gs::BitBltBuf(c.r[s8].d[0], tbw, psm, c.r[s7].d[0], tbw, psm);
-    if (!pk.add_gs_ad(GsReg::BITBLTBUF, bitbltbuf, 16, 0x0026905Cu)) return;
-    if (!pk.add_gs_ad(GsReg::TRXREG, rv::gs::TrxReg(c.r[s3].d[0], c.r[s1].d[0]), 6, 0x00269074u)) return;
-    if (!pk.add_gs_ad(GsReg::TRXPOS, rv::gs::TrxPos(0, 0, 0, 0), 5, 0x00269088u)) return;
-    if (!pk.add_gs_ad(GsReg::TRXDIR, rv::gs::TrxDir(rv::gs::TrxDirection::HostToLocal), 5, 0x0026909Cu)) return;
+    const std::uint64_t bitbltbuf = gs::BitBltBuf(c.r[s8].d[0], tbw, psm, c.r[s7].d[0], tbw, psm);
+    if (!pk.add_gs_ad(gs::BITBLTBUF, bitbltbuf, 16, 0x0026905Cu)) return;
+    if (!pk.add_gs_ad(gs::TRXREG, gs::TrxReg(c.r[s3].d[0], c.r[s1].d[0]), 6, 0x00269074u)) return;
+    if (!pk.add_gs_ad(gs::TRXPOS, gs::TrxPos(0, 0, 0, 0), 5, 0x00269088u)) return;
+    if (!pk.add_gs_ad(gs::TRXDIR, gs::TrxDir(gs::HOST_TO_LOCAL), 5, 0x0026909Cu)) return;
     if (!pk.close_gif_tag(0x002690A8u)) return;
     if (!pk.close_direct_code(0x002690B4u)) return;
 
     if (!pk.cnt(4, 0x002690C4u)) return;
     if (!pk.align(0x002690D8u)) return;
-    if (!pk.add_code(rv::Direct(1), 0x002690ECu)) return;
+    if (!pk.add_code(vif::Direct(1), 0x002690ECu)) return;
     c.r[v0].d[0] = c.r[s4].d[0];
-    if (!pk.add_dword(c.r[s4].d[0] | rv::GifTagImage(0).lo, 7, 0x00269108u)) return;  // IMAGE, NLOOP = the size
-    if (!pk.add_dword(rv::GifTagImage(0).hi, 4, 0x00269118u)) return;
+    if (!pk.add_dword(c.r[s4].d[0] | gif::ImageTag(0).lo, 7, 0x00269108u)) return;  // IMAGE, NLOOP = the size
+    if (!pk.add_dword(gif::ImageTag(0).hi, 4, 0x00269118u)) return;
     if (!pk.ref(c.r[s8], c.r[s4], 0x0026913Cu)) return;
     restore();
 }

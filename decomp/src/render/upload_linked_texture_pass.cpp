@@ -118,7 +118,7 @@ void leave(Cpu &c, const StackFrame &f) {
 
 }
 
-// Fighter draw (fn_246cf0), per mesh: when the mesh's linked texture (TextureManager kHasLinked: a second texture drawn
+// Fighter draw (fn_246cf0), per mesh: when the mesh's linked texture (TextureManager link A: a second texture drawn
 // over the first as an extra pass) differs from the previous mesh's (*a2, updated), sets the passes' GS state in VU1:
 // without one, pass 1 blends by alpha with a cutout test and passes 2 and 3 are switched off (ATST NEVER); with one,
 // pass 1 is opaque, pass 2 draws the linked texture, pass 3 is on if there is a projector. Then the draw's constant
