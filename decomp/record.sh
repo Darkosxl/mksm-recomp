@@ -13,7 +13,12 @@ out=$1 funcs=$2; shift 2
 mkdir -p "$out"
 cd "$here"
 export PS2_GS=${PS2_GS:-soft}
-ctx=$(mktemp -d)
+# contexts go to disk, not /tmp: /tmp is a tmpfs on the boxes and counts against run.sh's MemoryMax=3G (decomp/ci.sh)
+if [ "$funcs" = all ]; then nfuncs=$(grep -cE '^[0-9A-Fa-f]{8}' decomp/overrides.txt); else nfuncs=$(tr ',' '\n' <<< "$funcs" | grep -c .); fi
+need_mb=$((nfuncs * $# * ${COUNT:-16} * 33)) free_mb=$(df -Pm "$P" | awk 'NR == 2 {print $4}')
+echo "contexts: up to $nfuncs functions x $# scenes x ${COUNT:-16}, ~$((need_mb / 1024)) GB of $((free_mb / 1024)) GB free"
+[ $((need_mb * 13 / 10)) -lt "$free_mb" ] || { echo "not enough disk for the contexts (needs 30% headroom)"; exit 1; }
+mkdir -p "$P/logs"; ctx=$(mktemp -d "$P/logs/difftest-ctx.XXXXXX")
 trap 'rm -rf "$ctx"' EXIT
 for scene in "$@"; do
   if [ "$scene" = boot ]; then state=- frame=1500 args=
@@ -29,7 +34,12 @@ for scene in "$@"; do
     PS2_LOCK=$out/.lock-$scene remaster/run.sh "$out/rec-$scene" $((frame + 2)) "$state" $args > /dev/null &
 done
 wait
-grep -h 'contexts recorded' "$out"/rec-*/run.log | sed 's|/tmp/[^ ]*/||' | sort | tee "$out/recorded.txt"
+ok=1
+for scene in "$@"; do  # a run that did not reach its frame limit was killed: its contexts may be truncated
+  grep -q 'frame limit reached' "$out/rec-$scene/run.log" || { echo "recording $scene did not finish:"; tail -3 "$out/rec-$scene/run.log"; ok=0; }
+done
+[ $ok = 1 ] || exit 1
+grep -h 'contexts recorded' "$out"/rec-*/run.log | sed -E 's| in /.*/| in |' | sort | tee "$out/recorded.txt"
 n=$(find "$ctx" -name '*.ctx' | wc -l)
 echo "contexts: $n"
 [ "$n" -gt 0 ] || exit 0

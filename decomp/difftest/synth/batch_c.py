@@ -5,7 +5,7 @@ Takes one recorded context as the machine snapshot, then for each requested func
 register contents (all 128 bits of every GPR but zero/sp/ra, HI/LO, f12-f15) and with the arguments and the memory
 the function reads set up to cover its branches. Replay them with build/native-mksm/difftest like recorded ones.
 
-  synth.py <base.ctx> <out dir> <hex addr>[,<hex addr>...] [--count N] [--seed S]
+  decomp/difftest/synth/batch_c.py <base.ctx> <out dir> <hex addr>[,<hex addr>...] [--count N] [--seed S]
 
 Each context is a full snapshot (~32 MB): generate, replay and delete in batches.
 """
