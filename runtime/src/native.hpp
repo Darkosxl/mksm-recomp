@@ -7,8 +7,9 @@
 // world draw and hands it to the renderer (gs/gpu/gpu.cpp) next to the batch's XGKICK. Rendering only and off by default;
 // it reads emulator state and never writes any, except in replace mode (the default with PS2_NATIVE) and PS2_R14.
 //   PS2_NATIVE=world|all        replace: the world batches skip VU1 (their GIF packets and compute raster with it) and
-//                               the native path draws them into a target that is written back to compute VRAM at the
-//                               end of each run (gpu.cpp). EE-visible state stays the same (§6.2: VU1 and vifvu differ)
+//                               the native path draws them into a target kept coherent with compute VRAM per 16x16 tile
+//                               (gpu.cpp tiles_*; PS2_NATIVE_RUNS=1: stage 1's import + write-back per run instead).
+//                               EE-visible state stays the same (§6.2: VU1 and vifvu differ)
 //   PS2_NATIVE_MIRROR=1         side by side instead: VU1 and the emulated path draw as today, the native path draws
 //                               into its own target, which only the dump shows (remaster/natdiff.sh)
 //   PS2_NATIVE_FRAMES=a,n       only frames a..a+n-1 (default: all)

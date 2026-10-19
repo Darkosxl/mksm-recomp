@@ -635,6 +635,22 @@ fn native_full_vs(@builtin(vertex_index) index: u32) -> ImportOut {
     return out;
 }
 
+// Replace mode, tiles (gpu.cpp tiles_draw): one instance per tile of NATIVE_TILE x NATIVE_TILE GS pixels, from the list
+// at data[prm(5)] (x | y << 8, in tiles); prm 7, 8 the target size in samples.
+const NATIVE_TILE: u32 = 16u;
+
+@vertex
+fn native_tile_vs(@builtin(vertex_index) index: u32, @builtin(instance_index) tile: u32) -> ImportOut {
+    let e = data[prm(5u) + tile];
+    let cx = select(0u, 1u, index == 1u || index == 2u || index == 4u);
+    let cy = select(0u, 1u, index == 2u || index == 4u || index == 5u);
+    let x = min(((e & 0xFFu) + cx) * NATIVE_TILE * SCALE, prm(7u));
+    let y = min((((e >> 8u) & 0xFFu) + cy) * NATIVE_TILE * SCALE_Y, prm(8u));
+    var out: ImportOut;
+    out.pos = vec4<f32>(f32(x) / f32(prm(7u)) * 2.0 - 1.0, 1.0 - f32(y) / f32(prm(8u)) * 2.0, 0.0, 1.0);
+    return out;
+}
+
 @fragment
 fn native_import_fs(in: ImportOut) -> NativeFrag {
     let px = u32(in.pos.x);
@@ -666,6 +682,23 @@ fn native_writeback(@builtin(global_invocation_id) gid: vec3<u32>) {
     if (px >= prm(7u) || py >= prm(8u)) {
         return;
     }
+    writeback_sample(px, py, true, prm(9u) != 0u);
+}
+
+// Tiles (gpu.cpp tiles_writeback): workgroup z = one tile of the list at data[prm(5)] (x | y << 8 | flags << 16: 1 colour,
+// 2 Z native-newer); prm 7, 8 the target size in samples.
+@compute @workgroup_size(8, 8)
+fn native_writeback_tiles(@builtin(global_invocation_id) gid: vec3<u32>) {
+    let e = data[prm(5u) + gid.z];
+    let px = (e & 0xFFu) * NATIVE_TILE * SCALE + gid.x;
+    let py = ((e >> 8u) & 0xFFu) * NATIVE_TILE * SCALE_Y + gid.y;
+    if (px >= prm(7u) || py >= prm(8u)) {
+        return;
+    }
+    writeback_sample(px, py, ((e >> 16u) & 1u) != 0u, ((e >> 16u) & 2u) != 0u);
+}
+
+fn writeback_sample(px: u32, py: u32, color: bool, depth: bool) {
     let x = px / SCALE;
     let y = py / SCALE_Y;
     let k = (py % SCALE_Y) * SCALE + px % SCALE;
@@ -675,10 +708,10 @@ fn native_writeback(@builtin(global_invocation_id) gid: vec3<u32>) {
     if (prm(2u) == 0x00u) {
         v = v | (textureLoad(nat_alpha, at, 0).x << 24u);
     }
-    if (read_sample(prm(2u), prm(0u), prm(1u), x, y, k) != v) {
+    if (color && read_sample(prm(2u), prm(0u), prm(1u), x, y, k) != v) {
         write_sample(prm(2u), prm(0u), prm(1u), x, y, k, v);
     }
-    if (prm(9u) != 0u) {
+    if (depth) {
         let d = textureLoad(nat_depth, at, 0);
         let scale = bitcast<f32>(prm(14u));
         if (d != f32(read_sample(prm(4u), prm(3u), prm(1u), x, y, k) & prm(13u)) * scale) {

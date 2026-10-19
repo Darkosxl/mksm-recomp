@@ -1165,3 +1165,39 @@ when the render side refuses a batch VU1 has already skipped (none seen: `unsupp
 GS-state shadow on the VU side would make the decision safe); vertex buffers keyed by source address instead of
 per-batch uploads; `hash_part` part 24 and lockstep as a local-only setting (§6.5); savestates taken mid-run (the run is
 written back first, but the VU1 state of skipped batches is not what VU1 would have left).
+
+### 7.3 Replace mode without the round trip per run (2026-10-19)
+
+On the laptop (RTX 4050) stage 1's replace mode was slower than the emulated path at 3x6 (academy 52.0 → 30.1 fps) while
+every thread's CPU time went down: the GPU was the cap. Each run imported the whole target (frame and Z, a full-screen
+pass) and wrote back the union of its batches' scissors (the whole screen), and every emulated draw between native
+batches ended a run. Counted on w5 (1x, `PS2_THREADS=1`, capture + 600 frames, `[native] per frame` line):
+
+| Scene | runs / frame | samples imported / frame | written back / frame |
+|---|---|---|---|
+| goro | 8.55 | 1,225,714 | 1,225,714 |
+| foundry | 10.58 | 1,516,899 | 1,516,899 |
+| academy | 20.00 | 2,867,200 | 2,867,200 |
+
+×18 at 3x6 (academy: 52 M samples each way per frame).
+
+**Now** (`gpu.cpp` `tiles_*`): the target stays bound to one frame + Z buffer (a new FBP/ZBP writes the old one back and
+rebinds; the double buffer makes it once a frame) and is kept coherent with compute VRAM per tile of 16 × 16 GS pixels.
+A tile is native-newer (colour, Z) or VRAM-newer, never both. A native batch imports the VRAM-newer tiles of its scissor
+(one instanced draw over a tile list) and marks its scissor native-newer (the CPU does not know where its triangles
+land). An emulated primitive (its box, on the bound frame/Z; by pages when it uses other buffers that alias them, and
+for texture reads), an upload or CLUT load, a local copy, a download, a savestate and the display first write back the
+native-newer tiles they touch (one compute dispatch over a tile list, queued ahead of the emulated batch that needs it)
+and, if they write, mark them VRAM-newer. `PS2_NATIVE_RUNS=1` keeps stage 1's round trip for A/B.
+
+| Scene | bindings / frame | samples imported / frame | written back / frame | import draws / write-back dispatches per frame |
+|---|---|---|---|---|
+| goro | 1.00 | 486,321 (−60 %) | 486,321 (−60 %) | 8.3 / 32.7 |
+| foundry | 0.99 | 554,720 (−63 %) | 554,720 (−63 %) | 10.6 / 43.8 |
+| academy | 1.00 | 606,796 (−79 %) | 606,796 (−79 %) | 19.3 / 84.9 |
+
+What remains is about one full frame each way (the clear sprite at the start of the frame makes every tile VRAM-newer;
+the glow and the display read it all at the end) plus the boxes of the emulated characters between world batches, which
+stage 2 removes. Gate: the image and state hash at the capture frame are identical to `PS2_NATIVE_RUNS=1` in all 12
+scenes (`capture.sh`, lavapipe 1x); the switch-off build is unchanged (no code runs without `PS2_NATIVE`).
+
