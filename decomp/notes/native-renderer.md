@@ -55,7 +55,7 @@ and then draws the screen-space work. `fn_223fa8(id)` brackets every step (ids 0
 | p=1 | - | fn_2659b0(`[0x4eff9c]`) | - | - |
 | p=0, if `[0x4f508c]` | - | fn_23df70(0) | 0x49e430 / 0x49f900 / 0x4a20b0 | another instance path (calls fn_246cf0 and fn_235e28) |
 | p=0 and p=1, if `[0x4f5080]` | t=5 (R2+0x18 / +0x60) | fn_263428 (meshdraw.cpp) | - | effect meshes |
-| p=0, if not `[0x665f6c]` | t=3 (R2+0x10 / +0x58) | **fn_246cf0**(o, n+4, n+8, p, 1, 0, 3) | **0x49e430** | the fighters (character programs, §3) |
+| p=0, if not `[0x665f6c]` | t=3 (R2+0x10 / +0x58) | **fn_246cf0**(o, n+4, n+8, p, 1, 0, 3) | **0x49e430** | the fighters (character programs, §3). fn_246cf0 also holds labels of the 0x49f900 image, used when called from fn_23df70/fn_23fa00/fn_24cbf8, which upload that image; koop's fighters use it. Which path draws which fighter is for the attribution run (§7). |
 | after the passes | t=6 / t=7 (R2+0x1c, +0x20 / +0x64, +0x68) | fn_266858, fn_2670a0 | - | - |
 | then | - | virtual call on `[0x677d40]` (0x24031c / 0x240344) | - | the Flash/menu layer (inferred from the object; not decompiled) |
 | then | - | fn_27c898(0x67b750), **packet_anti_alias_or_blur** (0x227cd0), fn_24afa0, fn_27d3f0, fn_266858(..., 0, 1), fn_2282f8 | - | screen copy and post FX packets |
@@ -73,8 +73,9 @@ fn_241410 (0x241410, 2448 B, `unit_0050.cpp:1734`; R = 0x4f4b40):
 
 1. If R+0x10 = 2: wait (fn_24e680), FlushCache, and if at least 0x20 bytes are queued and R+0xc = 0, kick the chain
    early (0x24149c-0x2414d8, D1_CHCR = 0x145).
-2. Lists t=2 and t=3 (0x241544-0x2416a8): per instance fn_283b80, fn_2457d0, fn_367250 (pxmaptrig), fn_26ea60;
-   list t=1 (R2+0x10/0x58): fn_2ae560 (anim), fn_2457d0, fn_26ea60. These run after the instances were drawn.
+2. Post-draw instance work (0x241528-0x2416a8): list t=2, per instance fn_283b80, fn_2457d0, fn_367250 (pxmaptrig),
+   fn_26ea60; the first node of list t=1: fn_2ae560 (anim), fn_26ea60; list t=3, per instance fn_2ae560, fn_2457d0,
+   fn_26ea60. These run after the instances were drawn (in the previous fn_2f4200 call).
 3. fn_24b598, fn_24d758, wait, D_CTRL |= 2 (0x2416cc), fn_22cb78 (ps2BasicPrimitives.cpp).
 4. **Game-state updates inside the render layer**: per object in the table at 0x6680d8, a float timer at o+0x1a0 is
    advanced and wrapped (0x241768-0x2417e8); `[0x6b32e0]` = fn_37b3b8(0) (0x24182c); the frame counter `[0x4f4d64]`
