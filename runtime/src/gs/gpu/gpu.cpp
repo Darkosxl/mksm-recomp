@@ -738,32 +738,49 @@ bool batch_conflict(const Range &r, bool clut) {
     return false;
 }
 
+// Uploads and CLUT loads in as few dispatches as their order allows: each goes into the earliest dispatch of its kind
+// after every dispatch holding an earlier op it depends on (an upload over memory an earlier upload wrote or an
+// earlier CLUT load reads; a CLUT load of memory an earlier upload wrote). CLUT loads keep their chain order, so each
+// load_clut dispatch holds consecutive loads of the chain.
 void emit_pre() {
-    std::size_t i = 0;
-    while (i < g_pre.size()) {
-        const bool clut = g_pre[i].clut;
-        std::size_t j = i + 1;
-        while (j < g_pre.size() && g_pre[j].clut == clut) {
-            bool overlap = false;
-            if (!clut)
-                for (std::size_t k = i; k < j && !overlap; ++k) overlap = uploads_overlap(g_pre[k], g_pre[j]);
-            if (overlap) break;
-            ++j;
+    const std::size_t n = g_pre.size();
+    static std::vector<std::uint32_t> group;
+    static std::vector<bool> kinds;  // per dispatch: CLUT loads (true) or uploads
+    group.assign(n, 0);
+    kinds.clear();
+    std::uint32_t chain = 0;
+    for (std::size_t j = 0; j < n; ++j) {
+        const PreOp &op = g_pre[j];
+        std::uint32_t g = op.clut ? chain : 0;
+        for (std::size_t k = 0; k < j; ++k) {
+            const PreOp &e = g_pre[k];
+            const bool after = op.clut ? !e.clut && e.range.overlaps(op.range.lo, op.range.hi)
+                                       : e.clut ? e.range.overlaps(op.range.lo, op.range.hi) : uploads_overlap(e, op);
+            if (after) g = std::max(g, group[k] + 1);
         }
-        const std::uint32_t count = static_cast<std::uint32_t>(j - i);
+        while (g < kinds.size() && kinds[g] != op.clut) ++g;
+        if (g == kinds.size()) kinds.push_back(op.clut);
+        group[j] = g;
+        if (op.clut) chain = g;
+    }
+    for (std::uint32_t g = 0; g < kinds.size(); ++g) {
+        const bool clut = kinds[g];
+        std::uint32_t count = 0;
+        for (std::size_t j = 0; j < n; ++j) count += group[j] == g;
         std::uint32_t *records = g_arena.grow(count * 12u);
         const std::uint32_t offset = static_cast<std::uint32_t>(records - g_arena.data());
-        std::uint32_t total = 0;
-        for (std::size_t k = i; k < j; ++k) {
-            std::memcpy(records + (k - i) * 12, g_pre[k].rec, sizeof g_pre[k].rec);
+        std::uint32_t total = 0, r = 0;
+        for (std::size_t j = 0; j < n; ++j) {
+            if (group[j] != g) continue;
+            std::memcpy(records + r * 12, g_pre[j].rec, sizeof g_pre[j].rec);
             if (!clut) {
-                records[(k - i) * 12 + 11] = total;
-                total += g_pre[k].rec[7];
+                records[r * 12 + 11] = total;
+                total += g_pre[j].rec[7];
             }
+            ++r;
         }
         if (clut) g_commands.push_back({kLoadClut, count, 1, push_params({offset, count})});  // one workgroup per load
         else dispatch_linear(kUpload, total * g_samples, push_params({offset, count, total}));  // one thread per sample
-        i = j;
     }
     g_pre.clear();
 }
