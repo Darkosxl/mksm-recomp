@@ -12,6 +12,7 @@
 00225FC0	SetCharRenderFlag	decomp/src/render/character.cpp
 00226B70	SetScreenBrightness	decomp/src/render/render_settings.cpp
 00226DF0	SetSkipModelRender	decomp/src/render/render_settings.cpp
+00242FF8	DrawModelSegments	decomp/src/render/draw_segments.cpp
 002459F8	CullCharacterSegments	decomp/src/render/character_cull.cpp
 00245D48	CullCharacterSegmentsProjected	decomp/src/render/character_cull.cpp
 0024C238	RadiansToAngle	decomp/src/render/ps2render.cpp
