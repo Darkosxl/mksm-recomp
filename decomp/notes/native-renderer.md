@@ -1,6 +1,6 @@
 # Native renderer for MK:SM: design
 
-Status: sections 1-5 written; the rest is in progress (sections marked TODO are not filled yet).
+Status: complete (2026-10-19). Static analysis only; the runs that would confirm the open points are in §7.
 
 Scope: replace the VIF1 → VU1 → GIF → GS emulation path for the game's 3D with native WebGPU draw calls, keeping
 the approved look and leaving game state bit-identical. Design only; no code is changed by this document.
@@ -755,8 +755,143 @@ normals (the modern mode). Gated the same way, plus the decomp's own difftest fo
 
 ## 6. Exactness
 
-TODO
+From a read of the runtime (`runtime/src/`) and a static scan of every EE access to the render hardware
+(`python3 -I decomp/notes/tools/io_access_scan.py [--fn <addr>] [--cop]`: memory ops on DMAC/VIF/GIF/GS/timer/INTC
+registers, poll loops, bc0/bc2 waits, cfc2/ctc2 of VPU_STAT/FBRST).
+
+### 6.1 The headline: render work costs no EE time in this runtime
+
+- **No DMA, VIF, VU, GIF or GS code touches `c.budget`** (the EE clock). `budget`/`now()` appear only in
+  `system.cpp`, `kernel.cpp:194` (run_guest refill), `kernel.cpp:268, 538` (alarms) and the `hw.cpp` timers;
+  `vu_jit.cpp`, `vif.cpp`, `dmac.cpp`, `gif.cpp` have none.
+- **Every DMA kick runs to completion inside the guest's CHCR store** (`dmac.cpp:448-455` → start 298 →
+  `run_chain` 200-296 → `finish` 117-128): STR clears and D_STAT.CIS is raised before the store returns. Vblank is on
+  a fixed EE-cycle schedule (`system.cpp:109, 302-325`).
+- **The timing shadow already exists.** With the VU1 thread on, the EE thread runs VIF1 in `shadow()` mode
+  (`vif.cpp:38`): it walks every VIF code and keeps the EE-visible VIF1 registers (DBF/TOPS/TOP/ITOP/ROW, MSKPATH3),
+  scans DIRECT packets for SIGNAL/FINISH (`gif::scan_signals`, `vif.cpp:307-309`), and posts the payloads to the VU
+  thread, which does the real unpack, VU1 and GIF work. `mksm/notes/determinism.md` S2 measured VU1-thread mode equal
+  to single-threaded full emulation over about 90k frames, also under `PS2_JITTER`.
+- **The EE never consumes VU1 output or reads rendered data.** 0 EE accesses to VU1 memory over 35,860 frames
+  (determinism.md S1; counter at `memory.cpp:55-61`), none in the static scan; VPU_STAT (`cfc2 vi29`) reads 0
+  (`cop.cpp:30`), `bc2t` is `vu0_busy()` = false (`cop.cpp:57`), FBRST writes are ignored (`cop.cpp:47`), CMSAR1 is not
+  implemented (`cop.cpp:48`). VU code has one outward path, `gif::transfer(1)` (`vu_micro.cpp:486, 693`). The VU1
+  thread already drops PATH1 SIGNAL/FINISH scans (`gif.cpp:191`); the game emits no SIGNAL/FINISH/LABEL on any path
+  (static scan, census 0); IMR = 0xFF00 masks every GS interrupt (sceGsResetGraph). 0 GS→EE downloads (TRXDIR is
+  never 1).
+
+So **skipping VU1 execution and the GS raster is free for EE state**, provided the EE side keeps doing exactly what
+it does now. The answer to "does VU1 time affect EE timing" is no: nothing reads VU1 cycles.
+
+### 6.2 Where the hash does change: render-internal sections
+
+Two hashes: `hash_frame` (`PS2_HASH_LOG`, the gate; `system.cpp:518`, called from `vblank()` at `system.cpp:305`)
+and `hash_part` (lockstep, 32 parts; `system.cpp:590-624`, from `host/lockstep.cpp:222` and `host/web.cpp:427`).
+
+| State | hash_frame | hash_part | EE-readable | Changes when VU1/GS are skipped | Handling |
+|---|---|---|---|---|---|
+| EE CPU, VU0 regs, EE RAM, SPR | yes (`system.cpp:523-528`) | parts 0-31 | yes | **only if the seam alters EE code** (§6.4) | keep |
+| scheduler, events | yes | part 0 | yes (`now()`) | no | keep |
+| INTC, D_STAT, timers (`hw.cpp:304-314`) | yes | no | yes | no, while `finish()` stays synchronous | keep |
+| DMAC channels (`dmac.cpp:474-488`) | yes | no | yes (sceDmaSend reads TADR at 0x384544/0x384554; STR polls) | no, while the tag walk runs | keep |
+| `vif`: VIF0 and the EE-side VIF1 (`vif.cpp:434-464`) | yes | no | yes (`hw.cpp:197-198` → `g_units[1]`) | no (the shadow computes it) | keep |
+| `vifvu`: the VU-side VIF1 (`vif.cpp:441-443`) | yes | no | **no** | yes in stage 6 (stays blank) | exclude, or hash `g_units[1]` in native mode (S2: equal at every vblank) |
+| VU1 regs, TOP/ITOP, code, data, pending XGKICKs (`vu_micro.cpp:1093-1117`) | yes (`vu`) | **part 24** (`system.cpp:619-622`, `vu_micro.cpp:1079-1091`) | **no** | **yes, from stage 1 replace mode** (natively drawn batches leave VU1 outputs and registers unwritten) | exclude from both hashes for all peers; keep a full-hash debug mode |
+| VU0 code and data | in `vu` | part 24 | yes (VCALLMS; VIF0 by D0 in fn_40e228) | no | keep: split `vu` into `vu0` + `vu1` |
+| GS CSR/FIELD, IMR, BUSDIR, SIGLBLID (`system.cpp:545-549`) | yes | no | yes | no (VSINT, SIGNAL, FINISH are raised on the EE thread) | keep |
+| GIF_STAT (`gif.cpp:227-230`) | yes | no | yes | no (M3P comes from the shadow's MSKPATH3) | keep |
+| GS VRAM, draw state, display regs, GIF path state | **no** (`system.cpp:472-475`) | no | no | yes | already excluded; they are in savestates (`gs.cpp:1345`) |
+
+**Gate consequence.** `remaster/golden.json`, `remaster/check.sh` and `decomp/gate.sh` compare the full hash. The
+native gate is either a `PS2_HASH_SPLIT=1` comparison of every section except `vifvu` and VU1, or a new "EE-visible"
+golden computed from emulated runs with the same exclusion. Lockstep: `hash_part` part 24 keeps VU0 and drops VU1; this
+applies to all peers (a build-id change); `mksm/notes/web-lockstep.md:56` changes with it. The existing proof that
+the VU JIT equals the AOT code (`native-lockstep.md:127`) relies on VU1 being in the lockstep hash: keep it as the
+full-hash debug mode.
+
+### 6.3 The channels by which the EE observes the render path
+
+| Channel | Runtime | Timing | Trap | Handling |
+|---|---|---|---|---|
+| **D1 (VIF1) kick** | `dmac.cpp:448-455`, `run_chain` 200-296, `finish` 117-128 | synchronous in the CHCR store, 0 cycles | the game polls STR in fn_24e680 (0x24e6a4, 0x24e710; 19 callers, fn_241410 ×7, Gs_FlipFields), sceGsSyncPath (fn_382938), WaitDma; **each poll iteration charges budget**, so deferring the DMA, finishing it on another thread, or adding a cost model changes the iteration counts → `now()` → T0 → the flip pacing | keep the synchronous tag walk and `finish()`. Intercept at the DMAC/VIF level, not in fn_241410: D1 is also kicked at 0x2414ac, 0x241c00, via sceDmaSend at 0x241ad8, by fn_24bcd0, fn_24c7f8 (Gs_FlipFields, fn_273d78), fn_25efd0 (movie), and sceGsResetPath's FIFO writes |
+| D1 register readback | `dmac.cpp:404-432` | - | sceDmaSend reads TADR; CHCR's upper half holds the last tag; TTE sends the tag's upper 64 bits as VIF codes (`dmac.cpp:237-242`) | run the walk exactly as now, TTE included |
+| DMAC interrupt, CPCOND0 | `hw.cpp:185-188`, `kernel.cpp:410-433` | CIS raised in `finish()`, interrupt at the next preempt point | CIM1 is never set; `cpcond0()` is hardwired true (`cop.cpp:61`); fn_24e680 spins on `bc0f` at 0x24e6c8, fn_25efd0 at 0x25f00c | keep `finish()` |
+| **D2 (GIF path 3)** | `dmac.cpp:167-193` → `gif.cpp:180-193` | synchronous | **fn_26d030 (TextureManager) stores its STR spin count (1 idle, 1000 busy) into a texture-queue entry at +12: EE-visible.** STR must read 0 at every kick. fn_22be18 and sceGsPutDrawEnv also poll it | keep D2 synchronous; keep the GS-memory writes for IMAGE transfers (textures stay current for a fallback and for savestates); skip only raster |
+| toSPR (D9) | `dmac.cpp` | synchronous | fn_242ff8's wait loop counts its iterations into `[0x65e450]` (0x2431a8-0x2431c0, §1.6); fn_263cf8 also uses toSPR | keep synchronous; the seam must not touch it |
+| VIF1 registers | `vif.cpp:380-402` | set by the code walk during the kick | fn_24e680 (0x24e758) and sceGsSyncPath poll VIF1_STAT & 0x1f000003 (VPS/FQC are never set in the runtime); DBF/TOPS/ITOP/TOP/ROW are EE-readable and hashed | the shadow (`vif.cpp:62-69, 144-148, 255-321`) |
+| VIF1 i-bit stall | `vif.cpp:316-320, 404-419`; `dmac.cpp:288-291, 329-339` | synchronous: INTC 5, DMA pauses until FBRST.STC | the game's INTC 5 handler (fn_24d550) is dead code; an i-bit would hang fn_24e680 | the shadow keeps it; tripwire on any INTC 5 raise |
+| VIF1 FIFO | `hw.cpp:273-277` (read), 288 (write) | - | reads would be GS downloads: 0 (census and scan); sceGsResetPath writes 2 qwords at init | route writes through the shadow; tripwire on reads |
+| VU1 status and memory | `cop.cpp:30, 47-49, 57`; `memory.cpp:29-45` | - | none today; **modelling VPU_STAT/VBS1 later would couple EE polls to VU1 time** (the game polls VBS1 at 0x24e780 and 0x38299c) | leave hardwired; tripwire on `count_vu` |
+| GIF_STAT | `gif.cpp:206-219` | - | polled for 0xc00 (0x24e798, sceGsSyncPath); APATH never set | keep MSKPATH3 in the shadow |
+| CSR SIGNAL/FINISH/LABEL | `gs.cpp:826-842`, `gif.cpp:95-151, 191`, `vif.cpp:308` | scanned on the EE thread | the game emits none; the only reader (fn_2315d8, CSR/SIGLBLID at 0x231664) is dead | keep the scan on paths 2 and 3, drop path 1 (as today) |
+| CSR VSINT/FIELD, INTC 2/3 | `system.cpp:109, 302-325`; `hw.cpp:134-138`; `gs.cpp:1026-1032`; `kernel.cpp:436-441` | fixed: every `frame_cycles()`, VBLANK_END 22 hblanks later | the vsync wait is a CSR.FIELD poll in fn_274688 (0x274790, interrupts off); the INTC 2 handler fn_26efe8 increments 0x67b79c and 0x678450 and wakes CRI | none needed |
+| **Timers T0/T1 (flip pacing)** | `hw.cpp:51-113` | from `now()`, i.e. EE budget only | **fn_274688 reads T0 (hblanks since the last flip, reset per flip by fn_224000) and T1: if (t0 − t1) < 100 or t0 > 1000 it polls FIELD, else it skips the wait. That decides how many vblanks pass per game frame**, which reaches 0x678450 (Anim2D, the async loader, Map_LoadInPlace) and CRI wakeups | **the native path must leave EE cycles unchanged everywhere**, including the packet builders and every poll loop |
+| GS downloads | `dmac.cpp:177-182`, `gs.cpp:887-913` | - | 0 in the census; the download cache is timing-dependent | tripwire |
+| host threads | `queue.cpp:89-110` (backpressure blocks wall clock only); `system.cpp:428-433` (fence only for hash/save) | wall clock | - | the renderer never feeds anything back to guest state and never blocks the EE on a GPU result; whatever it needs from guest memory it copies on the EE or VU thread at the seam |
+| cop0 | `kernel.cpp:879` (Count = `now()`), MFPC returns 0 | - | fn_24d8e8 adds PCR0 into an object at 0x24daa0 (constant 0) | never model performance counters |
+
+### 6.4 The rule for the seams
+
+- **Seam V** lives entirely behind the shadow: the EE thread keeps the full DMA tag walk (all tag ids, CALL/RET and
+  ASR, TTE, MFIFO/fromSPR continuation, `finish()`), every VIF code (`data_words` and `execute`: STCYCL, OFFSET, BASE,
+  ITOP, STMOD, MSKPATH3, MARK, STMASK, STROW, STCOL; MSCAL/MSCALF/MSCNT as DBF/TOPS/TOP/ITOP bookkeeping; FLUSH* as
+  no-ops; the i-bit), a dry unpack only under STMOD = 2 (to keep the ROW accumulation, `vif.cpp:144-148, 170`), the
+  GIF-tag walk + A+D scan of DIRECT payloads, and synchronous path 3 with its GS-memory writes. It charges 0 cycles,
+  as today. The native consumer replaces the VU thread's `run_vu` at MSCAL/MSCNT (`vif.cpp:283-287`) with "emit a
+  record"; it still applies UNPACKs to its VU1 data-memory shadow and MPGs to `g_vu1_code` (a cheap memcpy, so an
+  emulated fallback has current microcode).
+- **Seam E** is a **pure observer**: a decomp hook that records its arguments and returns false
+  (`decomp_hook.hpp`: "Returns false to run the recompiled body"), or a decompiled function that still writes the
+  chain bit-exactly. It does not change registers, memory or `c.budget`, and copies what it needs on the EE thread.
+  **Skipping the packing to save EE time** would change EE RAM, the scratchpad (toSPR in fn_242ff8, fn_263cf8), and
+  the budget, and through T0 the pacing: that is a decomp job under the `tick`/`poll` contract
+  (`decomp/README.md`), never a renderer shortcut. The EE is not the bottleneck (§5.1), so there is no reason to.
+- **Game state inside the render layer** (§1.4: the float timers at o+0x1a0 in fn_241410, the frame counter
+  `[0x4f4d64]`, model/segment fields written by fn_249060, the `[0x65e450]` spin counter) keeps running in every mode,
+  because the EE code that writes it is unchanged.
+- Any future DMA cost model must be computed from shadow-visible quantities (QWC, tag count, VIF code count) in both
+  modes, never from VU1 or GS work.
+
+**Tripwires in native mode** (log once, mark the run invalid or fall back to emulation): `count_vu` (EE access to VU
+memory), VIF1 FIFO reads (`hw.cpp:273`), D1 from-device (`dmac.cpp:177`), `gs::signal` (`gs.cpp:826`), an INTC 5
+raise, CMSAR1 (`cop.cpp:48`), any D1 that pauses, a GS download, a frame that does not start with the full-screen
+clear.
+
+### 6.5 Lockstep, savestates, web
+
+- **Build id**: it hashes `runtime/src` minus `gs/gpu` and texpack (`cmake/build_id.cmake:7-8`). The shadow switch and
+  any seam hook belong in the id; the WebGPU draw code can live under `gs/gpu`.
+- **`PS2_NATIVE` as a local-only setting** (`lockstep_id.cpp:45-52`) only after the gate proves EE-visible equality
+  and `hash_part` no longer covers VU1; otherwise mixed peers false-desync on part 24.
+- **Savestates and drop-in snapshots** carry VU1, `vifvu` and GS VRAM (`vu_micro.cpp:1093-1117`,
+  `vif.cpp:434-473`, `gs.cpp:1345`). In native mode they go stale: wrong pixels on an emulated guest or an emulated
+  fallback frame, not a desync (`vif.cpp:467-473` already reseeds a blank `vifvu` on load). Before a save, the native
+  path writes its targets back into VRAM (§4.6); run R9 decides whether VU1 state needs rebuilding.
+- **Web**: same `vif.cpp`/`dmac.cpp`, same design.
+- **A fidelity gap found on the way** (not determinism): the game sets T1_MODE = 0x9F (gated, reset at each VBLANK);
+  the runtime ignores gate bits 2-5 (`hw.cpp:51-113`), so T1 runs free and fn_274688 probably almost always takes the
+  poll branch (inference). Fixing it changes the golden hash: a separate step, not part of this work.
 
 ## 7. Runs needed on AWS
 
-TODO
+None of these were run (laptop rules). Each says what it settles. "Light" runs only read a log afterwards; all of them
+need a build on the AWS box (`decomp/README.md`, "Commands for the AWS box").
+
+| Run | What | Why |
+|---|---|---|
+| **R1 draw attribution** | Retranslate with `eerecomp --probes <file>` listing the entries and return sites of fn_24cf08, fn_246cf0, fn_23df70, fn_23fa00, fn_23fcc0, fn_23e830, fn_263428, fn_266858, fn_2670a0, fn_2659b0, packet_anti_alias_or_blur, fn_27c898, fn_241410's kick sites; extend `probe()` (`runtime/src/dispatch.cpp:176`) to print `ld32(0x65e300)`; run goro, koop, nether, foundry with `PS2_PROBE_FRAME=<capture−1>` + `PS2_TRACE_DMA1=1` + `PS2_DRAW_DUMP` for the same frame | maps chain ranges → EE function → framedbg draw group: confirms §1.3's bucket/category table and §1.6's call/ref structure, and fixes the Seam E record per category |
+| **R2 one-frame VIF/GIF trace** | `PS2_TRACE_GSFRAME=<frame>` (+ `PS2_DRAW_DUMP`) from a goro and an academy state | the vertex UNPACK formats (V4-16 vs V4-32, V4-8 colour), XYZF2 vs XYZ2, which registers mem[34..45] and in[1] set per pass, the post_fx tag layout, BASE/OFFSET values, whether the colour UNPACK lands before or after MSCNT for @3778 (§3) |
+| **R3 VU1 constants dump** | a few debug lines next to `drawdbg::vu1_start` (`vif.cpp:284`) writing mem[0..45] once per (entry, hash) per frame | confirms the 2²³ ambient bias and light units (§3.4), P vs the clip matrix (guard-band size), fog A/B/min/max, the projector spaces of mem[24..31], the hook and scroll values, mem[33]; the start of the Seam V record format |
+| **R4 coverage census** | `PS2_CENSUS=1 PS2_NO_VU_THREAD=1` over every gate scene plus boot → menus, movie (fn_25efd0), pause/save, finishers, each level; add counters for INTC 5 raises and paused D1 | the preconditions for excluding VU1 from the hash and dropping path 1: expect 0 VU1-memory accesses, GS downloads, signals |
+| **R5 alpha range** | `PS2_GS=soft PS2_RTRACE=7999,320,112` on goro (and raiden at 6199), then `python3 -I decomp/notes/tools/gs_valpha.py <out>/run.log` (light) | HIGHLIGHT As = At + Av on character_shading: decides whether the multiply pass needs the doubling (§4.4) |
+| **R6 missing registers** | add DTHE, MIPTBP1/2, COLCLAMP, PABE to drawdbg `flush_draw` (`drawdbg.cpp:92-102`), re-run `remaster/framedbg.sh` on all 12 scenes | mip-chain packing for the native texture cache; confirms COLCLAMP = 1 and PABE = 0 beyond two scenes |
+| **R7 FBMSK marking** | a draw-level skip of the 0x7f000000 trifans (code change), then an isolation diff | proves the marking invisible (§4.1.4); it shares a group with the visible blob, so framedbg isolation cannot |
+| **R8 null-sink equivalence** | a debug switch that makes `shadow()` true while the VU consumer discards kVif1/kVif1Write; `PS2_HASH_SPLIT=1` on every gate scene plus a `PS2_JITTER` seed | proves "skipping VU1 and GS is free" on today's code before any renderer exists: every section except `vifvu` and VU1 equal on every frame |
+| **R9 transience** | from each gate state, zero at load (a) VU1 data + regs, (b) + VU1 code, (c) GS VRAM; 300 frames emulated; compare images and EE sections with an untouched load | whether native-made snapshots and native → emulated fallback need VU1, microcode or VRAM rebuilt |
+| **R10 gate under the new definition** | recompute an EE-visible golden from emulated runs; `gate.sh`-style and `statecheck.sh` runs native vs emulated | the stage 1+ gate (§6.2) |
+| **R11 mixed lockstep** | native vs emulated peer (desktop, then browser), 600+ frames, new `hash_part`; a drop-in from a native host to an emulated guest | `PS2_NATIVE` as local-only (§6.5) |
+| **R12 perf baseline** | `PS2_SCALE=<1, 2x4, 3x6> remaster/perf.sh` for all 12 scenes in one recorded power profile; per-thread `perf stat` per scene; `perf record -g` of the render thread on a kept binary; three 3x6 captures per scene | the before numbers for every stage (§5.1 mixes profiles and dates) |
+| R13 pacing (optional) | log T0/T1 and the branch taken in fn_274688 over one scene | documents that pacing depends only on EE cycles; sizes the T1 gate gap |
+
+Order: R8 and R4 first (they decide whether the plan's premise holds), then R2/R3/R1 (they feed the record format),
+then R12 (baseline), R5-R7 as the categories come up, R9-R11 before stage 6.
