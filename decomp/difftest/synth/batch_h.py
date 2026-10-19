@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """Synthetic difftest contexts for the batch-h character-renderer functions that the reference scenes reach rarely or
-never (decomp/README.md): fn_246918 and fn_246258 (no scene calls them) and fn_246120's queue mode (mode 2).
+never (decomp/README.md): fn_246918 and fn_246258 (no scene calls them), fn_246120's queue mode (mode 2), and the
+modes and render settings of fn_244368 the scenes do not use (flat, one pass, no light rig, antialiasing, fog).
 
 Each context starts from a recorded call of fn_244368 (the 3-pass fighter constants), which is a real machine in the
 middle of building the frame's VIF1 chain with a real character instance in a0: fn_246918, fn_246258 and their
@@ -139,7 +140,47 @@ def texture_request(ctx, rng):  # fn_246120(inst), mostly the queue mode the sce
     ctx.mem(QUEUE_COUNTS + 4 * (1 - half), "I", rng.choice([0, 1, 50, 98, 99, 100, 101, rng.randrange(100)]))
 
 
+FLOAT_ZERO, FLOAT_HUGE = 0x00000000, 0x4E6E6B28  # 0.0, 1e9
+
+
+def fighter_constants(ctx, rng):  # fn_244368(inst, owner, flags, three_passes, flat): every mode and setting
+    owner, flags = ctx.gpr_lo32(5), ctx.gpr_lo32(6)
+    inst = scramble(ctx, rng)
+    ctx.gpr(4, arg(rng, inst))
+    ctx.gpr(5, arg(rng, owner))
+    ctx.gpr(6, arg(rng, flags ^ rng.choice([0, 0x80, 0x100, 0x180])))
+    ctx.gpr(7, arg(rng, rng.choice([0, 1, 1])))
+    ctx.gpr(8, arg(rng, rng.choice([0, 0, 1])))
+    ctx.mem(SEND_PROJECTIONS, "I", rng.choice([0, 0, 1]))
+    ctx.mem(0x004F4B2C, "I", rng.choice([0, 1, 1]))   # flat allowed
+    ctx.mem(0x004F6E44, "I", rng.choice([0, 1]))      # light alpha mode
+    ctx.mem(0x004F6E94, "I", rng.choice([0, 1, 2, 2, 3, 0xFFFFFFFF]))  # antialias mode
+    ctx.mem(0x004F4C08, "I", rng.choice([0, 1, 2]))   # fog mode
+    ctx.mem(0x0067B724, "I", ctx.rd(0x0067B724, "I") ^ rng.choice([0, 2]))
+    if owner and owner + 0x140 <= ctx.ram_size:
+        ctx.mem(owner + 0x130, "Q", rng.choice([0, 0, 1 << 61, 1 << 40, rng.getrandbits(64)]))
+        ctx.mem(owner + 0x138, "Q", rng.choice([0, 2, rng.getrandbits(64)]))
+    mesh = ctx.rd(inst + 0x2C, "I")
+    if 0 < mesh < ctx.ram_size:
+        rig = ctx.rd(mesh + 0x3C, "I")
+        if rng.random() < 0.15:
+            ctx.mem(mesh + 0x3C, "I", 0)
+        elif 0 < rig < ctx.ram_size:
+            for i in range(3):  # attenuation: as recorded, none (beyond far), full (inside near), between
+                k = rng.randrange(4)
+                if k == 1:
+                    ctx.mem(rig + 48 * i + 36, "I", FLOAT_ZERO)
+                elif k == 2:
+                    ctx.mem(rig + 48 * i + 32, "I", FLOAT_HUGE)
+                    ctx.mem(rig + 48 * i + 36, "I", FLOAT_HUGE + 0x800000)
+                elif k == 3:
+                    ctx.mem(rig + 48 * i + 32, "I", FLOAT_ZERO)
+                    ctx.mem(rig + 48 * i + 36, "I", FLOAT_HUGE)
+    chain_alignment(ctx, rng)
+
+
 SETUPS = {
+    0x00244368: fighter_constants,
     0x00246918: instance_constants,
     0x00246258: segment_constants,
     0x00246120: texture_request,

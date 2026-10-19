@@ -12,6 +12,7 @@
 00225FC0	SetCharRenderFlag	decomp/src/render/character.cpp
 00226B70	SetScreenBrightness	decomp/src/render/render_settings.cpp
 00226DF0	SetSkipModelRender	decomp/src/render/render_settings.cpp
+00244368	PackFighterConstants	decomp/src/render/character/fighter_constants.cpp
 00245168	UpdateBoneMatrices	decomp/src/render/character/bone_matrices.cpp
 00246120	RequestCharTexture	decomp/src/render/character/texture_request.cpp
 00246258	PackBoneSegmentConstants	decomp/src/render/character/segment_constants.cpp
