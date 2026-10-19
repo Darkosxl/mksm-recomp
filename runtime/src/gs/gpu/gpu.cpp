@@ -588,6 +588,25 @@ std::uint32_t snapshot_batch(std::uint32_t prims, std::uint32_t &lo, std::uint32
     return words;
 }
 
+// A sprite that maps texels 1:1 to pixels, with a wide margin around gs.wgsl shade_at's 0.1% test: it never reads a
+// render target on the fine grid, so its batch can keep the common raster pipeline (kRaster).
+bool one_to_one(const std::uint32_t *rec, const std::uint32_t *setup) {
+    float uv[6];
+    std::memcpy(uv, rec + 15, sizeof uv);
+    double du = static_cast<double>(uv[3]) - uv[0], dv = static_cast<double>(uv[4]) - uv[1];
+    if (setup[0] & 16u) {
+        du /= 16.0;
+        dv /= 16.0;
+    } else {
+        const double q = uv[5] == 0.0f ? 1.0 : uv[5];
+        du = du / q * static_cast<double>(1u << (setup[15] & 0xFFu));
+        dv = dv / q * static_cast<double>(1u << (setup[15] >> 8));
+    }
+    const double dx = std::fabs(static_cast<double>(u2f(rec[6]))), dy = std::fabs(static_cast<double>(u2f(rec[7])));
+    if (!std::isfinite(du) || !std::isfinite(dv) || !(dx > 0.0) || !(dy > 0.0) || !std::isfinite(dx) || !std::isfinite(dy)) return false;
+    return std::fabs(std::fabs(du) - dx) <= dx * 0.0005 && std::fabs(std::fabs(dv) - dy) <= dy * 0.0005;
+}
+
 void note_raster(std::uint32_t prims, std::uint32_t tiles, std::uint32_t entries, std::uint32_t snapshot) {
     if (!g_profile_out) return;
     const Batch &b = g_batch;
@@ -679,7 +698,10 @@ void flush_batch() {
     std::copy(snapshot_mask, snapshot_mask + 16, g_param_records[param].begin() + 16);
     note_raster(prims, tiles, total, snapshot);
     bool hires = false;
-    for (std::size_t i = 0; i < b.setups.size(); i += kSetupWords) hires = hires || (b.setups[i] & kRtHires);
+    for (std::uint32_t i = 0; i < prims && !hires; ++i) {
+        const std::uint32_t *rec = b.prims.data() + i * kPrimWords;
+        hires = rec[1] == 1 && (b.setups[rec[0] * kSetupWords] & kRtHires) && !one_to_one(rec, b.setups.data() + rec[0] * kSetupWords);
+    }
     g_commands.push_back({hires ? kRasterHi : kRaster, std::min(tiles, 1024u), (tiles + 1023) / 1024, param});
     mark_rendered(pages(b.fbp, b.fbw, b.fpsm, b.minx, b.miny, b.maxx, b.maxy));
     if (b.zwrite) mark_rendered(pages(b.zbp, b.fbw, b.zpsm, b.minx, b.miny, b.maxx, b.maxy));
