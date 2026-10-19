@@ -1,4 +1,12 @@
 #include "units.hpp"
+#include "ps2/decomp_hook.hpp"
+
+namespace decomp {
+extern ps2::DecompFn hook_0022C308;
+extern ps2::DecompFn hook_0022C620;
+extern ps2::DecompFn hook_0022C630;
+extern ps2::DecompFn hook_0022C838;
+}
 
 namespace gen {
 
@@ -475,6 +483,7 @@ L_0022C2D8:
     c.budget -= 10;
     { const std::uint32_t t = c.r[31].w[0];  c.pc = t; return; }
 L_0022C308:
+    if (::decomp::hook_0022C308.on) [[unlikely]] { if (decomp_enter(c, ::decomp::hook_0022C308, depth)) return; }
     set32(c.r[29], c.r[29].w[0] - 16u);
     c.vu0.vf[2] = c.r[5];
     ld128((c.r[4].w[0] + 80u) & ~15u, c.vu0.vf[1]);
@@ -692,10 +701,12 @@ L_0022C610:
     c.budget -= 3;
     { const std::uint32_t t = c.r[31].w[0];  c.pc = t; return; }
 L_0022C620:
+    if (::decomp::hook_0022C620.on) [[unlikely]] { if (decomp_enter(c, ::decomp::hook_0022C620, depth)) return; }
     st32((c.r[4].w[0] + 256u), c.f[12]);
     c.budget -= 3;
     { const std::uint32_t t = c.r[31].w[0];  c.pc = t; return; }
 L_0022C630:
+    if (::decomp::hook_0022C630.on) [[unlikely]] { if (decomp_enter(c, ::decomp::hook_0022C630, depth)) return; }
     ld128((c.r[5].w[0]) & ~15u, c.vu0.vf[18]);
     set32(c.r[9], c.r[4].w[0] + 128u);
     ld128((c.r[5].w[0] + 16u) & ~15u, c.vu0.vf[17]);
@@ -828,6 +839,7 @@ L_0022C828:
     c.budget -= 4;
     { const std::uint32_t t = c.r[31].w[0];  c.pc = t; return; }
 L_0022C838:
+    if (::decomp::hook_0022C838.on) [[unlikely]] { if (decomp_enter(c, ::decomp::hook_0022C838, depth)) return; }
     c.r[2].sd[0] = static_cast<std::int32_t>(0x004F0000u);
     set32(c.r[29], c.r[29].w[0] - 16u);
     set32(c.r[3], ld32((c.r[2].w[0] + 16816u)));
