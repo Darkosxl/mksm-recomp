@@ -5,7 +5,8 @@
 #   3. record real call contexts (boot, charsel, koop in parallel), replay them recompiled vs decompiled
 #   4. scene gate (decomp/gate.sh: off vs all, every frame), state hashes vs golden.json with off and with all
 # Contexts are scratch (regenerated each time) and are deleted at the end; reports go to <outdir>.
-# usage: decomp/ci.sh <outdir>
+# usage: [RECORD=<hex,...>] decomp/ci.sh <outdir>   (RECORD limits recording + replay to those functions; the gates
+#        always run every hooked function)
 set -euo pipefail
 here=$(cd "$(dirname "$0")/.." && pwd)
 P=$(cd "$here/../.." && pwd)
@@ -34,7 +35,9 @@ step record
 # Contexts go to disk, not /tmp: /tmp is a tmpfs on the boxes, and tmpfs pages count against run.sh's MemoryMax=3G,
 # so the recording ps2run gets OOM-killed once a run has written ~3 GB of contexts (~32 MB each).
 count=32
-nfuncs=$(grep -cE '^[0-9A-Fa-f]{8}' decomp/overrides.txt)
+# RECORD=<hex,hex,...> records only those functions (the ones a change touches); default: every hooked function
+funcs=${RECORD:-all}
+if [ "$funcs" = all ]; then nfuncs=$(grep -cE '^[0-9A-Fa-f]{8}' decomp/overrides.txt); else nfuncs=$(tr ',' '\n' <<< "$funcs" | grep -c .); fi
 need_mb=$((nfuncs * 3 * count * 33))
 free_mb=$(df -Pm "$P" | awk 'NR == 2 {print $4}')
 echo "contexts: up to $nfuncs functions x 3 runs x $count, ~$((need_mb / 1024)) GB of $((free_mb / 1024)) GB free"
@@ -43,7 +46,7 @@ mkdir -p "$P/logs"; ctx=$(mktemp -d "$P/logs/difftest-ctx.XXXXXX")
 trap 'rm -rf "$ctx"' EXIT
 rec() {  # rec <name> <frames> <state|-> [args...]; fails unless the run reached its frame limit
   local n=$1; shift
-  PS2_DIFFTEST_RECORD=$ctx/$n PS2_DIFFTEST_COUNT=$count PS2_DIFFTEST_EVERY=7 PS2_LOCK=$out/.lock-$n \
+  PS2_DIFFTEST_RECORD=$ctx/$n PS2_DIFFTEST_FUNCS=$funcs PS2_DIFFTEST_COUNT=$count PS2_DIFFTEST_EVERY=7 PS2_LOCK=$out/.lock-$n \
     remaster/run.sh "$out/rec-$n" "$@" > /dev/null || true
   grep -q 'frame limit reached' "$out/rec-$n/run.log" || { echo "recording $n did not finish:"; tail -3 "$out/rec-$n/run.log"; return 1; }
 }
