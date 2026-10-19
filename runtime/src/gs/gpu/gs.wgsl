@@ -245,13 +245,6 @@ fn write_sample(psm: u32, bp: u32, bw: u32, x: u32, y: u32, k: u32, value: u32) 
     store(locate(psm, bp, bw, x, y), k, value);
 }
 
-fn write_pixel(psm: u32, bp: u32, bw: u32, x: u32, y: u32, value: u32) {
-    let l = locate(psm, bp, bw, x, y);
-    for (var k = 0u; k < SCALE * SCALE_Y; k = k + 1u) {
-        store(l, k, value);
-    }
-}
-
 fn bits_at(offset: u32, bit: u32, count: u32) -> u32 {
     let w = offset + bit / 32u;
     let s = bit % 32u;
@@ -279,12 +272,15 @@ fn cache_bits_at(offset: u32, bit: u32, count: u32) -> u32 {
 }
 
 
+// One thread per sample (prm(2) pixels x SCALE x SCALE_Y): the samples of a word sit side by side in vram, so a warp's
+// stores land together.
 @compute @workgroup_size(64)
 fn upload(@builtin(global_invocation_id) gid: vec3<u32>) {
-    let i = gid.x + gid.y * 64u * 1024u;
-    if (i >= prm(2u)) {
+    let j = gid.x + gid.y * 64u * 1024u;
+    if (j >= prm(2u) * SCALE * SCALE_Y) {
         return;
     }
+    let i = j / (SCALE * SCALE_Y);
     let records = prm(0u);
     var lo = 0u;
     var hi = prm(1u);
@@ -309,7 +305,7 @@ fn upload(@builtin(global_invocation_id) gid: vec3<u32>) {
     } else {
         v = bits_at(data[r + 8u], data[r + 9u] + k * bpp, bpp);
     }
-    write_pixel(data[r + 2u], data[r], data[r + 1u], x, y, v);
+    write_sample(data[r + 2u], data[r], data[r + 1u], x, y, j % (SCALE * SCALE_Y), v);
 }
 
 @compute @workgroup_size(64)

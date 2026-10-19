@@ -681,7 +681,7 @@ void emit_pre() {
             }
         }
         if (clut) g_commands.push_back({kLoadClut, count, 1, push_params({offset, count})});  // one workgroup per load
-        else dispatch_linear(kUpload, total, push_params({offset, count, total}));
+        else dispatch_linear(kUpload, total * g_samples, push_params({offset, count, total}));  // one thread per sample
         i = j;
     }
     g_pre.clear();
