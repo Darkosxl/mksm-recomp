@@ -1,4 +1,14 @@
 #include "units.hpp"
+#include "ps2/decomp_hook.hpp"
+
+namespace decomp {
+extern ps2::DecompFn hook_0026DDD0;
+extern ps2::DecompFn hook_0026DE10;
+extern ps2::DecompFn hook_0026DE50;
+extern ps2::DecompFn hook_0026DE88;
+extern ps2::DecompFn hook_0026DEC0;
+extern ps2::DecompFn hook_0026DF80;
+}
 
 namespace gen {
 
@@ -2689,6 +2699,7 @@ L_0026DD90:
     c.budget -= 16;
     { const std::uint32_t t = c.r[31].w[0];  c.pc = t; return; }
 L_0026DDD0:
+    if (::decomp::hook_0026DDD0.on) [[unlikely]] { if (decomp_enter(c, ::decomp::hook_0026DDD0, depth)) return; }
     set32(c.r[8], 0u + 1072u);
     set32(c.r[7], ld32((c.r[4].w[0] + 32u)));
     mmi::mult(c, 0, c.r[6].w[0], c.r[8].w[0]);
@@ -2707,6 +2718,7 @@ L_0026DDD0:
     c.budget -= 15;
     { const std::uint32_t t = c.r[31].w[0];  c.pc = t; return; }
 L_0026DE10:
+    if (::decomp::hook_0026DE10.on) [[unlikely]] { if (decomp_enter(c, ::decomp::hook_0026DE10, depth)) return; }
     set32(c.r[8], 0u + 1072u);
     set32(c.r[7], ld32((c.r[4].w[0] + 32u)));
     mmi::mult(c, 0, c.r[5].w[0], c.r[8].w[0]);
@@ -2726,6 +2738,7 @@ L_0026DE10:
     c.budget -= 16;
     { const std::uint32_t t = c.r[31].w[0];  c.pc = t; return; }
 L_0026DE50:
+    if (::decomp::hook_0026DE50.on) [[unlikely]] { if (decomp_enter(c, ::decomp::hook_0026DE50, depth)) return; }
     set32(c.r[2], 0u + 1072u);
     set32(c.r[3], ld32((c.r[4].w[0] + 32u)));
     mmi::mult(c, 0, c.r[5].w[0], c.r[2].w[0]);
@@ -2743,6 +2756,7 @@ L_0026DE7C:
     c.budget -= 3;
     { const std::uint32_t t = c.r[31].w[0];  c.pc = t; return; }
 L_0026DE88:
+    if (::decomp::hook_0026DE88.on) [[unlikely]] { if (decomp_enter(c, ::decomp::hook_0026DE88, depth)) return; }
     set32(c.r[2], 0u + 1072u);
     set32(c.r[3], ld32((c.r[4].w[0] + 32u)));
     mmi::mult(c, 0, c.r[5].w[0], c.r[2].w[0]);
@@ -2760,6 +2774,7 @@ L_0026DEB4:
     c.budget -= 3;
     { const std::uint32_t t = c.r[31].w[0];  c.pc = t; return; }
 L_0026DEC0:
+    if (::decomp::hook_0026DEC0.on) [[unlikely]] { if (decomp_enter(c, ::decomp::hook_0026DEC0, depth)) return; }
     set32(c.r[2], 0u + 1072u);
     set32(c.r[3], ld32((c.r[4].w[0] + 32u)));
     mmi::mult(c, 0, c.r[5].w[0], c.r[2].w[0]);
@@ -2815,6 +2830,7 @@ L_0026DF48:
     c.budget -= 14;
     { const std::uint32_t t = c.r[31].w[0];  c.pc = t; return; }
 L_0026DF80:
+    if (::decomp::hook_0026DF80.on) [[unlikely]] { if (decomp_enter(c, ::decomp::hook_0026DF80, depth)) return; }
     set32(c.r[3], 0u + 1072u);
     set32(c.r[2], ld32((c.r[4].w[0] + 32u)));
     mmi::mult(c, 0, c.r[5].w[0], c.r[3].w[0]);

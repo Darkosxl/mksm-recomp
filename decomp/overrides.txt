@@ -1,3 +1,9 @@
 # EE functions whose entry gets the decomp hook (decomp/README.md): address, then anything (name, notes).
 # Each needs a PS2_DECOMP(<address>, name) in decomp/src; retranslate after editing (mksm/build.sh --retranslate).
 00474EDC	strlen	decomp/src/libc/strlen.cpp
+0026DDD0	texture_set_link_c	decomp/src/renderer/texture_manager/texture_set_link_c.cpp
+0026DE10	texture_set_link_b	decomp/src/renderer/texture_manager/texture_set_link_b.cpp
+0026DE50	texture_get_link_a	decomp/src/renderer/texture_manager/texture_get_link_a.cpp
+0026DE88	texture_get_link_b	decomp/src/renderer/texture_manager/texture_get_link_b.cpp
+0026DEC0	texture_get_link_c	decomp/src/renderer/texture_manager/texture_get_link_c.cpp
+0026DF80	texture_set_link_c_params	decomp/src/renderer/texture_manager/texture_set_link_c_params.cpp
