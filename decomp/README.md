@@ -83,7 +83,7 @@ The tools for this:
    (`mksm/build.sh --retranslate` does the same). Only the hooked unit should change.
 4. Build. Record contexts, replay them with `difftest`, then run the scene gate (commands below).
 
-## Commands for the AWS box (w1)
+## Commands for the AWS box
 
 Never run these on the laptop. They assume the laptop's layout, with `P` the folder that holds `wt/`:
 
@@ -120,9 +120,9 @@ ls $D/difftest/ctx-* | head; grep -h difftest $D/difftest/run-*/run.log
 build/native-mksm/difftest --keep-going $D/difftest/ctx-boot $D/difftest/ctx-charsel $D/difftest/ctx-koop
 
 # 3. scene gate: every reference scene with PS2_DECOMP=off and =all, the state hash of every frame must match
-decomp/gate.sh
-remaster/check.sh                          # PS2_DECOMP unset (= off): the hooked build still matches golden.json
-PS2_DECOMP=all remaster/check.sh           # and with the decompiled code on
+decomp/gate.sh $D/gate                    # all scenes, off and all, in parallel (PS2_GS=soft): every frame's state hash
+remaster/statecheck.sh $D/sc-off           # PS2_DECOMP unset (= off): the hooked build still matches golden.json
+PS2_DECOMP=all remaster/statecheck.sh $D/sc-all   # and with the decompiled code on
 
 # 4. lockstep co-op with the decompiled code on both peers: expect "identical N/N ... first divergent frame None"
 remaster/coop/test.sh pair $D/decomp-coop 3000 $D/states/koop.state PS2_DECOMP=all -- PS2_DECOMP=all
