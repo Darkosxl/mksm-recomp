@@ -2,6 +2,11 @@
 #include "ps2/decomp_hook.hpp"
 
 namespace decomp {
+extern ps2::DecompFn hook_0026CD50;
+extern ps2::DecompFn hook_0026D2E8;
+extern ps2::DecompFn hook_0026D308;
+extern ps2::DecompFn hook_0026D590;
+extern ps2::DecompFn hook_0026DD90;
 extern ps2::DecompFn hook_0026DDD0;
 extern ps2::DecompFn hook_0026DE10;
 extern ps2::DecompFn hook_0026DE50;
@@ -1529,6 +1534,7 @@ L_0026CD38:
     c.budget -= 5;
     { const std::uint32_t t = c.r[31].w[0];  c.pc = t; return; }
 L_0026CD50:
+    if (::decomp::hook_0026CD50.on) [[unlikely]] { if (decomp_enter(c, ::decomp::hook_0026CD50, depth)) return; }
     c.r[6].d[0] = c.r[5].d[0] + 0ull;
     set32(c.r[3], 0u - 1u);
     c.r[2].d[0] = ld16((c.r[6].w[0] + 8u));
@@ -1923,6 +1929,7 @@ L_0026D2CC:
     c.budget -= 6;
     { const std::uint32_t t = c.r[31].w[0];  c.pc = t; return; }
 L_0026D2E8:
+    if (::decomp::hook_0026D2E8.on) [[unlikely]] { if (decomp_enter(c, ::decomp::hook_0026D2E8, depth)) return; }
     set32(c.r[2], 0u + 1072u);
     set32(c.r[3], ld32((c.r[4].w[0] + 32u)));
     mmi::mult(c, 0, c.r[5].w[0], c.r[2].w[0]);
@@ -1932,6 +1939,7 @@ L_0026D2E8:
     c.budget -= 7;
     { const std::uint32_t t = c.r[31].w[0];  c.pc = t; return; }
 L_0026D308:
+    if (::decomp::hook_0026D308.on) [[unlikely]] { if (decomp_enter(c, ::decomp::hook_0026D308, depth)) return; }
     set32(c.r[2], 0u + 1072u);
     set32(c.r[3], ld32((c.r[4].w[0] + 32u)));
     mmi::mult(c, 0, c.r[5].w[0], c.r[2].w[0]);
@@ -2105,6 +2113,7 @@ L_0026D560:
     c.budget -= 12;
     { const std::uint32_t t = c.r[31].w[0];  c.pc = t; return; }
 L_0026D590:
+    if (::decomp::hook_0026D590.on) [[unlikely]] { if (decomp_enter(c, ::decomp::hook_0026D590, depth)) return; }
     c.r[2].d[0] = c.r[5].d[0] < static_cast<std::uint64_t>(321ll) ? 1ull : 0ull;
     c.budget -= 3;
     { const bool t = c.r[2].d[0] == 0ull;  if (t) { goto L_0026D5B4; } }
@@ -2681,6 +2690,7 @@ L_0026DD80:
     c.budget -= 3;
     { const std::uint32_t t = c.r[31].w[0];  c.pc = t; return; }
 L_0026DD90:
+    if (::decomp::hook_0026DD90.on) [[unlikely]] { if (decomp_enter(c, ::decomp::hook_0026DD90, depth)) return; }
     set32(c.r[8], 0u + 1072u);
     set32(c.r[7], ld32((c.r[4].w[0] + 32u)));
     mmi::mult(c, 0, c.r[5].w[0], c.r[8].w[0]);

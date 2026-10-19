@@ -10,6 +10,16 @@
 00214688	CopyVector	decomp/src/math/vu0math.cpp
 0021F618	MemCardStateSetFlag	decomp/src/memcard/syncmemcard.cpp
 00225FC0	SetCharRenderFlag	decomp/src/render/character.cpp
+00226B70	SetScreenBrightness	decomp/src/render/render_settings.cpp
+00226DF0	SetSkipModelRender	decomp/src/render/render_settings.cpp
+0024C238	RadiansToAngle	decomp/src/render/ps2render.cpp
+00260B40	GetAssetObject	decomp/src/setup/ps2setup.cpp
+002655C0	GuardBandOutcode	decomp/src/render/guard_band.cpp
+0026CD50	TextureManager::ComputeBufferWidth	decomp/src/texture/texture_manager.cpp
+0026D2E8	TextureManager::GetTex0	decomp/src/texture/texture_manager.cpp
+0026D308	TextureManager::GetMipTbp1	decomp/src/texture/texture_manager.cpp
+0026D590	TextureManager::GetSlot	decomp/src/texture/texture_manager.cpp
+0026DD90	TextureManager::SetLinkedTexture	decomp/src/texture/texture_manager.cpp
 0026DDD0	texture_set_link_c	decomp/src/renderer/texture_manager/texture_set_link_c.cpp
 0026DE10	texture_set_link_b	decomp/src/renderer/texture_manager/texture_set_link_b.cpp
 0026DE50	texture_get_link_a	decomp/src/renderer/texture_manager/texture_get_link_a.cpp
