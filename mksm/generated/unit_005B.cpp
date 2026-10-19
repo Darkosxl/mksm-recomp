@@ -8,6 +8,7 @@ extern ps2::DecompFn hook_0026DE50;
 extern ps2::DecompFn hook_0026DE88;
 extern ps2::DecompFn hook_0026DEC0;
 extern ps2::DecompFn hook_0026DF80;
+extern ps2::DecompFn hook_0026F068;
 }
 
 namespace gen {
@@ -4062,6 +4063,7 @@ L_0026F04C:
     c.budget -= 7;
     { const std::uint32_t t = c.r[31].w[0];  c.pc = t; return; }
 L_0026F068:
+    if (::decomp::hook_0026F068.on) [[unlikely]] { if (decomp_enter(c, ::decomp::hook_0026F068, depth)) return; }
     c.r[2].sd[0] = static_cast<std::int32_t>(0x00500000u);
     st32((c.r[2].w[0] - 21008u), c.r[5].w[0]);
     c.budget -= 4;
