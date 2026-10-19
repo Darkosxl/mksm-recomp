@@ -119,7 +119,7 @@ contexts (decomp/difftest/synth/batch_j.py).
 
 ## The chain bytes it writes
 
-All through `[0x65E300]` (decomp/src/render/dma_chain.hpp). Each packet is a DMA `call` to the static packet:
+All through `[0x65E300]` (decomp/src/render/vif.hpp's `Chain`). Each packet is a DMA `call` to the static packet:
 
 ```
 pad with zero words to a qword            (VIF NOPs in the open tag's data)

@@ -65,6 +65,7 @@ struct TextureSlot {
 
 struct TextureManager {
     static constexpr std::uint32_t kSlotCount = 321;
+    static constexpr std::uint32_t kInstance = 0x004efe94u;  // TextureManager *: the game's one instance
 
     std::uint32_t addr;
     ps2::Field<std::uint32_t> slots{addr + 0x20};  // the TextureSlot array

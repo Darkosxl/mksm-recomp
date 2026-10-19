@@ -93,14 +93,6 @@ constexpr u32 kCameraVec = 0x90;     // the camera position, w = 0
 constexpr u32 kSkyTempPtr = 0xA0;    // u32: sp + kSkyTemp
 constexpr u32 kCentreSave = 0xB0;    // the sphere centre across the first test
 
-// The compiler's quadword from four GPR words (pextlw t0, y, x; pextlw t1, w, z; pcpyld t0, t1, t0): the vector in
-// t0, t1 keeps the z/w interleave.
-void pack_xyzw(Cpu &c, unsigned x, unsigned y, unsigned z, unsigned w) {
-    mmi::pextlw(c.r[t0], c.r[y], c.r[x]);
-    mmi::pextlw(c.r[t1], c.r[w], c.r[z]);
-    mmi::pcpyld(c.r[t0], c.r[t1], c.r[t0]);
-}
-
 // Camera-centred segment (0x242d68-0x242ea4): local-to-world = scale 10 around the camera position; its screen
 // matrix and kSkyMatrix go through a sway rotation about x of sin(xf.LocalToWorld[0][1]) * pi / 10, an element this
 // has just set to 0, so the rotation is the identity.
@@ -227,7 +219,7 @@ bool cull_segment(Cpu &c, const StackFrame &f) {
         set32(c.r[v0], c.f[1]);
         set32(c.r[a0], c.f[0]);
         set32(c.r[a1], c.f[2]);
-        pack_xyzw(c, t2, v0, a0, a1);
+        gather4(c, t2, v0, a0, a1);
         qmtc2(c, t0, vf1);
         tick(c, 21);
         const psf radius = psf::from_bits(ld32(seg + Segment::kRadius));
@@ -429,7 +421,7 @@ PS2_DECOMP(00242AD0, CullModelSegments) {
     set32(c.r[a2], c.f[1]);
     set32(c.r[a3], c.f[3]);
     set32(c.r[t2], c.f[0]);
-    pack_xyzw(c, v1, a2, a3, t2);
+    gather4(c, v1, a2, a3, t2);
     qmtc2(c, t0, vf1);
     sqc2(c, vf1, f.at(kCameraVec));
     tick(c, 38);

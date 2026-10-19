@@ -28,9 +28,7 @@ constexpr psf kMinusOne(-1.0f), kHalf(0.5f);
 // pcpyld t0, t1, t0, so t0 = (v[0], v[1], v[2], v[3]) and t1 keeps the upper interleave.
 void gather(Cpu &c, const unsigned (&r)[4], const std::uint32_t (&v)[4]) {
     for (int i = 0; i < 4; ++i) set32(c.r[r[i]], v[i]);
-    mmi::pextlw(c.r[t0], c.r[r[1]], c.r[r[0]]);
-    mmi::pextlw(c.r[t1], c.r[r[3]], c.r[r[2]]);
-    mmi::pcpyld(c.r[t0], c.r[t1], c.r[t0]);
+    gather4(c, r[0], r[1], r[2], r[3]);
 }
 
 // fd.xyz = fs.xyz / |fs.xyz|, fd.w = fs.w (times vf0.w = 1): the inline normalise, with vf5 as scratch

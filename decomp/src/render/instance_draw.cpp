@@ -7,7 +7,7 @@
 // original writes, in the original's registers. The work itself is named: culling into the draw list, skin
 // matrices, the instance's lights, the chain FLUSH, the segment draw.
 #include "instance.hpp"
-#include "vif_chain.hpp"
+#include "vif.hpp"
 
 #include "ps2/decomp_vu0.hpp"
 
@@ -63,14 +63,6 @@ constexpr std::uint32_t kCountAt = 0xc8;        // draw-list length
 constexpr std::uint32_t kAreaMaskAt = 0xcc;     // 1 << area, or 0
 
 enum class Flow { next, stage, nodraw, unwound };
-
-// The compiler's way of building a qword from four floats held in GPRs (pextlw, pextlw, pcpyld): t0 = (x, y, z, w),
-// t1 = (z, w, and their sign words).
-void pack4(Cpu &c, unsigned x, unsigned y, unsigned z, unsigned w) {
-    mmi::pextlw(c.r[t0], c.r[y], c.r[x]);
-    mmi::pextlw(c.r[t1], c.r[w], c.r[z]);
-    mmi::pcpyld(c.r[t0], c.r[t1], c.r[t0]);
-}
 
 void restore_frame(Cpu &c, const StackFrame &f) {
     f.lq(s0, 0x160);
@@ -184,7 +176,7 @@ Flow test_segments(Cpu &c, Model model) {
             c.r[v0].d[0] = c.lo.d[0];
             c.f[12] = seg.radius;
             set32(c.r[v1], c.r[v1].w[0] + c.r[v0].w[0]);
-            ld128(Bone{c.r[v1].w[0]}.sphere() & ~15u, c.r[a1]);
+            ld128(Bone{c.r[v1].w[0]}.position() & ~15u, c.r[a1]);
             tick(c, 9);
             if (!call(c, kFrustumTest, Ra{0x00249348u})) return Flow::unwound;
             seg.clip = c.r[v0].w[0];
@@ -239,7 +231,7 @@ Flow cull_into_draw_list(Cpu &c, const StackFrame &f, Model model) {
         set32(c.r[v0], model.bones);
         set32(c.r[a0], kModelFrustum);
         c.f[12] = model.radius;
-        ld128(Bone{c.r[v0].w[0]}.sphere() & ~15u, c.r[a1]);
+        ld128(Bone{c.r[v0].w[0]}.position() & ~15u, c.r[a1]);
         tick(c, 7);
         if (!call(c, kFrustumTest, Ra{0x002491C4u})) return Flow::unwound;
         c.r[a0].d[0] = c.r[v0].d[0];
@@ -269,7 +261,7 @@ Flow cull_into_draw_list(Cpu &c, const StackFrame &f, Model model) {
 
 // ---- skin matrices ----
 
-// For each bone: skin = [R; pivot - position * R] (R the 3x4 world rotation rows), at Bone::skin_matrix(), the
+// For each bone: skin = [R; translation - pivot * R] (R the 3x4 world rotation rows), at Bone::skin_matrix(), the
 // matrix palette VU1 gets. Two inlined copies of the loop hold the bone's last row in different GPRs; `which`
 // lists, for each copy, the GPR that ends up with each word 0x60-0x7c of the bone (the floats pass through FPRs
 // into GPRs to be packed into VF registers).
@@ -294,7 +286,7 @@ Flow compute_skin_matrices(Cpu &c, Model model) {
     tick(c, 2);
     if (c.r[gpr::fp].d[0]) return Flow::stage;
 
-    set32(c.r[v0], settings.anchor_free_lights);  // also picks the inlined copy of the loop
+    set32(c.r[v0], settings.image_b);  // also picks the inlined copy of the loop
     set32(c.r[a0], model.bone_count);
     set32(c.r[v1], model.bones);
     tick(c, 5);
@@ -319,13 +311,13 @@ Flow compute_skin_matrices(Cpu &c, Model model) {
         };
         set32(c.r[v0], c.r[v0].w[0] - 1);
 
-        // vf4 = -position; the -1 reaches vf5.x through t0, whose upper half still holds the packed position
+        // vf4 = -pivot; the -1 reaches vf5.x through t0, whose upper half still holds the packed pivot
         row(vf4, 0x90);
         c.r[t0] = c.vu0.vf[vf4];
         set32(c.r[t0], c.f[7]);
         qmtc2(c, t0, vf5);
         vmulbc(c, XYZW, vf4, vf4, vf5, Lane::x);
-        row(vf5, 0x80);  // pivot
+        row(vf5, 0x80);  // the world translation
         row(vf2, 0x50);  // rotation rows
         row(vf3, 0x60);
         row(vf1, 0x70);
@@ -333,7 +325,7 @@ Flow compute_skin_matrices(Cpu &c, Model model) {
         vmulabc(c, XYZW, vf2, vf4, Lane::x);
         vmaddabc(c, XYZW, vf3, vf4, Lane::y);
         vmaddabc(c, XYZW, vf1, vf4, Lane::z);
-        vmaddbc(c, XYZW, vf2, vf5, vf0, Lane::w);  // pivot - position * R
+        vmaddbc(c, XYZW, vf2, vf5, vf0, Lane::w);  // translation - pivot * R
         sqc2(c, vf3, bone.skin_matrix() + 0x10);
         sqc2(c, vf1, bone.skin_matrix() + 0x20);
         sqc2(c, vf2, bone.skin_matrix() + 0x30);
@@ -470,10 +462,10 @@ Flow collect_pass1_segments(Cpu &c, const StackFrame &f) {
 // ---- the instance's lights ----
 
 // For each of the rig's three lights: its colour scaled by a linear distance falloff (near..far) from the anchor's
-// sphere centre, and the unit direction from the light to that point. The colours go to the light colour matrix,
-// the negated directions to the light direction matrix, whose fourth row is the specular half vector between
-// direction 2 and the view (scaled by specular_scale); both are moved into the anchor's frame unless
-// anchor_free_lights, and transposed for VU1. A rig without lights leaves the previous matrices.
+// position, and the unit direction from the light to that point. The colours go to the light colour matrix, the
+// negated directions to the light direction matrix, whose fourth row is the specular half vector between direction 2
+// and the view (scaled by specular_scale); both are moved into the anchor's frame unless image_b, and transposed for
+// VU1. A rig without lights leaves the previous matrices.
 Flow compute_lights(Cpu &c, const StackFrame &f, Model model) {
     const RenderSettings settings;
     const LightRig rig{model.light_rig};
@@ -499,7 +491,7 @@ Flow compute_lights(Cpu &c, const StackFrame &f, Model model) {
         for (;;) {
             const Light light{rig.lights + c.r[a1].w[0]};
             set32(c.r[v0], light.addr);
-            lqc2(c, vf2, Bone{c.r[s5].w[0]}.sphere());
+            lqc2(c, vf2, Bone{c.r[s5].w[0]}.position());
             lqc2(c, vf1, light.position());
             vsub(c, XYZW, vf2, vf2, vf1);  // light -> lit point
             vmul(c, XYZ, vf5, vf2, vf2);
@@ -558,7 +550,7 @@ Flow compute_lights(Cpu &c, const StackFrame &f, Model model) {
                 set32(c.r[v0], c.f[1]);
                 set32(c.r[v1], c.f[0]);
                 set32(c.r[t5], c.f[2]);
-                pack4(c, t6, v0, v1, t5);
+                gather4(c, t6, v0, v1, t5);
                 tick(c, 17);
             } else {
                 c.f[2] = scaled(0);
@@ -567,7 +559,7 @@ Flow compute_lights(Cpu &c, const StackFrame &f, Model model) {
                 set32(c.r[t6], c.f[2]);
                 set32(c.r[v0], c.f[1]);
                 set32(c.r[v1], c.f[0]);
-                pack4(c, t6, v0, v1, t3);  // w = 25
+                gather4(c, t6, v0, v1, t3);  // w = 25
                 tick(c, 13);
             }
             qmtc2(c, t0, vf1);
@@ -674,7 +666,7 @@ Flow compute_lights(Cpu &c, const StackFrame &f, Model model) {
             if (!call(c, kFastMemcpy, Ra{row_ra[i]})) return Flow::unwound;
         }
 
-        set32(c.r[v1], settings.anchor_free_lights);
+        set32(c.r[v1], settings.image_b);
         tick(c, 3);
         if (!c.r[v1].d[0]) {
             // the anchor's rotation as a 4x4 (translation 0, w = its word 0x8c), inverted, applied to the rows
@@ -801,7 +793,7 @@ bool draw_list(Cpu &c, const StackFrame &f, Model model) {
     st32(f.at(kCountAt), c.r[a3].w[0]);
     tick(c, 8);
     if (!stage) {
-        set32(c.r[v1], model.sort_by_texture);
+        set32(c.r[v1], model.texture_mode);
         set32(c.r[v0], 2);
         tick(c, 4);
         if (c.r[v1].d[0] == c.r[v0].d[0]) {

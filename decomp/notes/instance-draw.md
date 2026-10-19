@@ -2,7 +2,7 @@
 
 Status: decompiled (batch K, 2026-10-19). Code: `decomp/src/render/instance_draw.cpp` (fn_24cf08, fn_249060),
 `decomp/src/render/fighter_draw.cpp` (fn_246cf0). Struct model: `decomp/src/render/instance.hpp`. Chain helpers:
-`decomp/src/render/vif_chain.hpp`. These are the top of Seam E (`native-renderer.md` §2.2). Names marked
+`decomp/src/render/vif.hpp`. These are the top of Seam E (`native-renderer.md` §2.2). Names marked
 "(inferred)" come from how the code uses a value, not from a symbol or string.
 
 ## 1. What an instance is
@@ -14,11 +14,11 @@ a draw as the triple **(object, node.arg, model)** plus the pass:
 |---|---|---|
 | `RenderNode` | 0x668720 + object.instance_index · 0x18 | next, arg (+4, not read), model (+8), object (+0xc), list type (+0x10) |
 | `GameObject` | node+0xc | `instance_index` +0x68 (0 = the stage), `hidden` +0x70 (s8). Fighters also have `effect_now` +0x84 and `effect_end` +0xf4 (floats, effect pass only) |
-| `Model` | node+8 | `bones` +0x18, `segments` +0x20, `light_rig` +0x2c, `bone_count` +0x30, `segment_count` +0x38, `visibility` +0x4c, `always_crossing` +0xdc8, `layer_mask` +0xe18, `radius` +0xf68, texture set +0x1008/+0x100c/+0x101c, `sort_by_texture` +0x1018 |
-| `Bone` (0x1c0) | model.bones[i] | world rotation rows +0x50/+0x60/+0x70 (3×4), `pivot` +0x80, `position` +0x90, bounding-sphere centre +0xa0, **skin matrix** +0x170 (4×4, written here) |
+| `Model` | node+8 | `bones` +0x18, `segments` +0x20, `light_rig` +0x2c, `bone_count` +0x30, `segment_count` +0x38, `visibility` +0x4c, `always_crossing` +0xdc8, `layer_mask` +0xe18, `radius` +0xf68, texture set +0x1008/+0x100c/+0x101c, `texture_mode` +0x1018 |
+| `Bone` (0x1c0) | model.bones[i] | `world` +0x50 (4×4: rotation rows +0x50/+0x60/+0x70, `translation` +0x80), bind `pivot` +0x90, `position` +0xa0 (a copy of the translation: the frustum tests' centre and the lit point), **skin matrix** +0x170 (4×4, written here) |
 | `Segment` (0x1d0) | model.segments[i] | `bone`/`bone1`/`bone2` +0/+4/+8, `kind` +0x10 (2 rigid, 3 two-bone, 4 three-bone), `layers` +0x14, `clip` +0x18 (written), `texture` +0x1c, `radius` +0x78, `depth` +0x128, `packet` +0x13c (the prebuilt VIF program for its vertices) |
 | `LightRig` | model.light_rig | `anchor` +0x20 (a Bone: the lit point and the frame lights are expressed in), `lights` +0x3c → 3 × `Light` (0x30: position, colour, near +0x20, far +0x24), then the ambient colour at +0x90 |
-| `RenderSettings` | 0x4f4b40 | the switches below (`per_area_lists` +0x14, `skinning` +0x18, `no_pass1_segments` +0x44, `area_mask_off` +0x48, `cull_mode` +0xa0, `segments_drawn` +0xbc, `cull` +0xc4, `glow_scale` +0xd8, `specular_scale` +0xdc, `anchor_free_lights` +0x108) |
+| `RenderSettings` | 0x4f4b40 | the switches below (`per_area_lists` +0x14, `skinning` +0x18, `no_pass1_segments` +0x44, `area_mask_off` +0x48, `cull_mode` +0xa0, `segments_drawn` +0xbc, `cull` +0xc4, `glow_scale` +0xd8, `specular_scale` +0xdc, `image_b` +0x108) |
 
 The render code keeps state in game RAM: fn_249060 writes `model.visibility`, every `segment.clip` it looks at, and
 every bone's skin matrix. fn_24cf08 saves `model.segments` and `model.segment_count` around fn_249060 and puts them
@@ -35,7 +35,7 @@ back afterwards, so something below it (fn_242ff8's segment loop, not decompiled
    `1 << [0x65e394]` (the current area as a bit, set by GameMain.cpp) unless `area_mask_off` is set.
 2. **The draw list** at 0x65e460 (Segment pointers; its length is kept in s3, then at stack +0xc8):
    - *Pass 0, not the stage:* if `skinning` is set, fn_2457d0(model) runs first (it updates the bones; inferred).
-     - **Whole-model test.** `visibility = fn_22c838(0x77f920, bones[0].sphere, model.radius)`, or 2 when
+     - **Whole-model test.** `visibility = fn_22c838(0x77f920, bones[0].position, model.radius)`, or 2 when
        `always_crossing` is 1. fn_22c838 tests a sphere against six planes with VU0 CLIP: 0 outside, 1 inside,
        2 crossing.
      - `cull == 0`: every segment goes into the list.
@@ -44,7 +44,7 @@ back afterwards, so something below it (fn_242ff8's segment loop, not decompiled
        - visibility 0: nothing is drawn.
        - visibility 1: every segment goes in.
        - visibility 2: segments with `layers & model.layer_mask` are tested one by one,
-         `clip = fn_22c838(0x77fe80, bones[seg.bone].sphere, seg.radius)`. Only the inside ones (1) go in; the
+         `clip = fn_22c838(0x77fe80, bones[seg.bone].position, seg.radius)`. Only the inside ones (1) go in; the
          others get `clip = 0`.
    - *Pass 0, the stage:* fn_242ad0 culls a prebuilt list. The lists live in the 16-byte entry
      `0x6662a8 + 16·[0x642814]` (current area): {opaque list, blended list, opaque count, blended count}. When
@@ -54,13 +54,13 @@ back afterwards, so something below it (fn_242ff8's segment loop, not decompiled
      `seg.depth` (qsort with comparator 0x24c7b0). Unless `[0x4f50cc]` is set, the segments set aside in pass 0 are
      appended unsorted, and [0x666098] gets the sorted count. `cull_mode` 2 becomes 3.
 3. **Skin matrices** (pass 0, not the stage, `skinning` set). For every bone, the skin matrix is
-   `[R0; R1; R2; pivot − (pos.x R0 + pos.y R1 + pos.z R2)]` (VU0: one `vmulx` by −1, then `vmulax`, `vmadday`,
+   `[R0; R1; R2; translation − (pivot.x R0 + pivot.y R1 + pivot.z R2)]` (VU0: one `vmulx` by −1, then `vmulax`, `vmadday`,
    `vmaddaz`, `vmaddw`). This is the palette the world VU1 programs and fn_23a280 read. The two inlined copies,
-   picked by `anchor_free_lights`, compute the same values and differ only in registers.
+   picked by `image_b`, compute the same values and differ only in registers.
 4. **Textures.** fn_246120(model) uploads the model's texture set through TextureManager when its id differs from
    the last one uploaded (0x6618ec). This step is skipped for the stage.
 5. **Lights** (pass 0, not the stage, rig has lights). For each of the 3 lights:
-   - `d = anchor.sphere − light.position` and `dist = |d|` (VU0 `vsqrt`).
+   - `d = anchor.position − light.position` and `dist = |d|` (VU0 `vsqrt`).
    - `falloff` is 0 from `far` on, 1 up to `near`, and `(far − dist) / (far − near)` in between (COP1 `div.s`).
    - colour_i = (light.colour.rgb · falloff, w). w is 25.0, or, when `[0x4f6e44]` is set, `glow_scale` for
      light 0 and 0 for the others.
@@ -70,7 +70,7 @@ back afterwards, so something below it (fn_242ff8's segment loop, not decompiled
    - The **light direction matrix** at 0x661920 is −dir0, −dir1, −dir2 and a fourth row, the specular half vector:
      `−normalise(normalise(dir2) + fn_23cae8()) · specular_scale`, w = 1. fn_23cae8 returns a direction computed
      from 0x6cba50 (inferred: the view direction).
-   - The rows are copied to 0x661960. Unless `anchor_free_lights` is set, they are multiplied by the inverse
+   - The rows are copied to 0x661960. Unless `image_b` is set, they are multiplied by the inverse
      (fn_214058, rigid) of the anchor's rotation (fn_213ce8), which puts them in the model's frame. They are then
      transposed for VU1 and copied to 0x6619e0.
    - The packers read both matrices: fn_23a280, fn_239268/fn_239578/fn_239748, fn_244368 and fn_246258
@@ -79,7 +79,7 @@ back afterwards, so something below it (fn_242ff8's segment loop, not decompiled
    GIF A+D packet (FBA_1 = 0, TEX1_1 = 0x60 linear filtering, CLAMP_1 = 5 clamp/clamp), fn_23db48, and UNPACKs of
    matrices from 0x660f20, model+0x1060 and 0x6634a0. Steps 5 and 6 run for pass 0, non-stage instances only.
 7. **Draw.** The stage adds the list length to `segments_drawn`. When `no_pass1_segments` is set, a pass-1 draw
-   stops here. The length is capped at `[0x4f507c]`. A non-stage model with `sort_by_texture == 2` and at least 2
+   stops here. The length is capped at `[0x4f507c]`. A non-stage model with `texture_mode == 2` and at least 2
    segments has its list sorted by `texture_get_link_a(seg.texture)` (comparator 0x24cf58). Then
    **`fn_242ff8(model, is_stage, pass, count)`** draws the list. It DMAs each segment record to the scratchpad and
    calls the segment packer fn_23a280.
@@ -105,7 +105,7 @@ three_pass, effect_pass, visibility, segments, next index) that it passes to fn_
    - `open_flush_tag` (§4).
    - fn_246120(model) uploads the textures, unless the effect pass draws with its own program family
      (`[0x4f4b2c]`).
-   - With `sort_by_texture == 2` and three_pass, the segments are listed into [0x6660ac] and sorted by texture
+   - With `texture_mode == 2` and three_pass, the segments are listed into [0x6660ac] and sorted by texture
      (fn_24cff8).
    - **fn_244368(model, segments, 0x10402, three_pass, effect_pass)** writes the character constants: BASE/OFFSET
      and UNPACK to VU 0x2d.
@@ -130,7 +130,7 @@ three_pass, effect_pass, visibility, segments, next index) that it passes to fn_
 family, image A or B, three_pass/effect_pass) plus fn_244368's per-model constants and the light matrices from §2.5.
 The vertex data is the static packet at `segment.packet`.
 
-## 4. The shared FLUSH tag (`vif_chain.hpp`)
+## 4. The shared FLUSH tag (`vif.hpp`: `open_flush_tag`)
 
 Both draws inline the same sequence (fn_249060 at 0x249c64, fn_246cf0 at 0x246e08):
 
@@ -169,7 +169,7 @@ all) and the golden hashes with off and with all.
 - fn_249060 draws only the stage (instance 0) in every reference scene:
   - pass 0 uses the per-area list;
   - pass 1 runs both with and without segments deferred from pass 0.
-- In those scenes `RenderSettings` is skinning 1, cull 1, cull_mode 1, anchor_free_lights 1, and `[0x4f6e44]` is 1.
+- In those scenes `RenderSettings` is skinning 1, cull 1, cull_mode 1, image_b 1, and `[0x4f6e44]` is 1.
 - fn_246cf0 runs with three_pass 0 and 1 but never with effect_pass, and `[0x6660c0]` is always 0.
 
 So the instance paths of fn_249060 (culling, skin matrices, lights) and fn_246cf0's effect and alternative families

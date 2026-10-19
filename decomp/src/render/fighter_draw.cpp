@@ -17,7 +17,7 @@
 // Register-exact with the recompiled code: each block leaves the registers the original's code leaves, so calls
 // that unwind, loop polls and the final state all see the original's machine.
 #include "instance.hpp"
-#include "vif_chain.hpp"
+#include "vif.hpp"
 
 namespace {
 
@@ -32,20 +32,7 @@ using namespace decomp::render::fighter;
 void upload_bone(Cpu &c, unsigned addr_reg, std::uint32_t palette, std::uint32_t bone, unsigned vu_reg,
                  std::uint32_t dst) {
     set32(c.r[addr_reg], (bone << 6) + palette);
-    const std::uint32_t m = c.r[addr_reg].w[0];
-    ld128(c.r[s1].w[0] & ~15u, c.r[a1]);
-    ld128(m & ~15u, c.r[a2]);
-    ld128((m + 16) & ~15u, c.r[a3]);
-    ld128((m + 32) & ~15u, c.r[t0]);
-    ld128((m + 48) & ~15u, c.r[t1]);
-    mmi::pextlw(c.r[a0], c.r[vu_reg], c.r[zero]);
-    mmi::pextlw(c.r[a0], c.r[a0], c.r[zero]);
-    mmi::por(c.r[a1], c.r[a1], c.r[a0]);
-    st128(dst & ~15u, c.r[a1]);
-    st128((dst + 16) & ~15u, c.r[a2]);
-    st128((dst + 32) & ~15u, c.r[a3]);
-    st128((dst + 48) & ~15u, c.r[t0]);
-    st128((dst + 64) & ~15u, c.r[t1]);
+    unpack_matrix(c, dst, c.r[addr_reg].w[0], c.r[vu_reg].w[0], c.r[s1].w[0]);  // s1 = kMatrixUnpack
 }
 
 void advance(Cpu &c, unsigned reg, std::uint32_t bytes) { set32(c.r[reg], c.r[reg].w[0] + bytes); }
@@ -75,27 +62,18 @@ void set_program(Cpu &c, std::uint32_t label, std::uint32_t image) { set32(c.r[s
 // tag (QWC += qwords since it), writes call(QWC 0) -> packet (t0) with VIF NOP NOP and pads again. The pointer stays
 // in t3/t4; [0x65e300] is not updated. False when a loop poll unwound.
 bool open_call_tag(Cpu &c) {
+    const Chain ch;
     c.r[a0].d[0] = c.r[t3].d[0];
     set32(c.r[v1], 0x00660000u);
-    set32(c.r[a3], Chain::kPtr);
+    set32(c.r[a3], ch.ptr.address());
     c.r[v0].d[0] = c.r[a0].d[0] & 12u;
     tick(c, 6);
-    if (c.r[v0].d[0]) {
-        for (;;) {
-            st32(c.r[a0].w[0], 0);
-            advance(c, a0, 4);
-            c.r[v0].d[0] = c.r[a0].d[0] & 12u;
-            tick(c, 6);
-            if (!c.r[v0].d[0]) break;
-            if (poll(c, 0x00247088u)) return false;
-        }
-    }
+    if (c.r[v0].d[0] && !pad_register_to_qword(c, 0x00247088u, a0)) return false;
 
-    set32(c.r[a1], ld32(Chain::kOpenTag));
+    set32(c.r[a1], ch.tag);
     tick(c, 3);
     if (const std::uint32_t open = c.r[a1].w[0]) {
-        set32(c.r[v0], c.r[a0].w[0] - open);
-        set32(c.r[v0], static_cast<std::uint32_t>(c.r[v0].sw[0] >> 4) - 1u);  // qwords after the open tag
+        set32(c.r[v0], dma::qwords_after(open, c.r[a0].w[0]));
         set32(c.r[v1], ld32(open) + c.r[v0].w[0]);
         st32(open, c.r[v1].w[0]);
         tick(c, 6);
@@ -103,16 +81,16 @@ bool open_call_tag(Cpu &c) {
 
     const std::uint32_t tag = c.r[a0].w[0];
     c.r[v1].d[0] = c.r[a0].d[0];
-    st32(Chain::kOpenTag, tag);
-    set32(c.r[a0], dma::tag(dma::call));
-    st32(tag, dma::tag(dma::call));
-    c.r[v0].sd[0] = static_cast<std::int32_t>(0x9FFFFFFFu);  // the dma::tag_addr mask, sign-extended
+    ch.tag = tag;
+    set32(c.r[a0], dma::TagWord(dma::CALL));
+    st32(tag, dma::TagWord(dma::CALL));
+    c.r[v0].sd[0] = static_cast<std::int32_t>(dma::Addr(0xffffffffu));  // the ADDR mask, sign-extended
     c.r[v0].d[0] &= c.r[t0].d[0];
     st32(tag + 4, c.r[v0].w[0]);
     set32(c.r[v1], tag + 4);
     set32(c.r[t3], tag + 8);
     c.r[t4].d[0] = c.r[t3].d[0];
-    st32(Chain::kOpenVif, 0);
+    ch.code = 0;
     // pad target: t4 rounded up to a qword (`and -16`, `sltu`, `movn`)
     set32(c.r[a1], 0xFFFFFFF0u);
     c.r[a1].d[0] &= c.r[t4].d[0];
@@ -143,14 +121,14 @@ void bones_three_pass(Cpu &c, int kind, const Segment &seg) {
     const std::uint32_t t3_at = c.r[t3].w[0];
     switch (kind) {
     case 0:
-        set_program(c, kThreePass.label[0], kImageA);
+        set_program(c, kThreePass.label[0], vu1::kImageA);
         set32(c.r[v1], palette);
         upload_bone(c, v0, palette, seg.bone, s3, t3_at);
         advance(c, t3, 80);
         tick(c, 25);
         break;
     case 1:
-        set_program(c, kThreePass.label[1], kImageA);
+        set_program(c, kThreePass.label[1], vu1::kImageA);
         set32(c.r[t2], palette);
         upload_bone(c, v0, palette, seg.bone, s3, t3_at);
         upload_bone(c, v1, palette, seg.bone1, s5, t3_at + 80);
@@ -158,7 +136,7 @@ void bones_three_pass(Cpu &c, int kind, const Segment &seg) {
         tick(c, 42);
         break;
     case 2:
-        set_program(c, kThreePass.label[2], kImageA);
+        set_program(c, kThreePass.label[2], vu1::kImageA);
         set32(c.r[t2], palette);
         upload_bone(c, v1, palette, seg.bone, s3, t3_at);
         upload_bone(c, v0, palette, seg.bone1, s5, t3_at + 80);
@@ -257,7 +235,7 @@ bool draw_segment(Cpu &c, const FighterDrawArgs &args) {
 
     // the segment: from the texture-sorted list, or the model's array in order (indexed with MADD, so HI/LO
     // keep the address)
-    set32(c.r[v0], model.sort_by_texture);
+    set32(c.r[v0], model.texture_mode);
     tick(c, 3);
     bool sorted = false;
     if (c.r[v0].d[0] == c.r[s7].d[0]) {
@@ -316,7 +294,7 @@ bool draw_segment(Cpu &c, const FighterDrawArgs &args) {
         bones_three_pass(c, kind_index(c), seg);
         set32(c.r[v0], 0x00660000u);
         st128((c.r[sp].w[0] + 0x20) & ~15u, c.r[t6]);
-        st32(Chain::kPtr, c.r[t3].w[0]);
+        Chain{}.ptr = c.r[t3].w[0];
         c.r[a1].d[0] = c.r[t5].d[0];
         st128((c.r[sp].w[0] + 0x30) & ~15u, c.r[t7]);
         c.r[a0].d[0] = c.r[s6].d[0];
@@ -326,7 +304,7 @@ bool draw_segment(Cpu &c, const FighterDrawArgs &args) {
         if (!call(c, 0x00239C48u, Ra{0x00247398u})) return false;
         set32(c.r[v1], 0x00660000u);
         ld128((c.r[sp].w[0] + 0x20) & ~15u, c.r[t6]);
-        set32(c.r[t3], ld32(Chain::kPtr));
+        set32(c.r[t3], Chain{}.ptr);
         ld128((c.r[sp].w[0] + 0x30) & ~15u, c.r[t7]);
         ld128((c.r[sp].w[0] + 0x40) & ~15u, c.r[t9]);
         tick(c, 7);
@@ -353,8 +331,8 @@ bool draw_segment(Cpu &c, const FighterDrawArgs &args) {
     }
 
     // start the segment's program; the vertex packet's MSCNTs continue it
-    set32(c.r[v1], vif::code(vif::MSCALF));
-    set32(c.r[v0], static_cast<std::uint32_t>(c.r[s0].sw[0] >> 3) | vif::code(vif::MSCALF));
+    set32(c.r[v1], vif::Mscalf(0));
+    set32(c.r[v0], static_cast<std::uint32_t>(c.r[s0].sw[0] >> 3) | vif::Mscalf(0));
     st32(c.r[t3].w[0], c.r[v0].w[0]);
     advance(c, t3, 4);
     tick(c, 5);
@@ -481,7 +459,7 @@ PS2_DECOMP(00246CF0, DrawFighterInstance) {
     }
 
     // the three-pass draw of a texture-sorted model: list its segments and sort them by texture (fn_24cff8)
-    set32(c.r[v1], static_cast<std::uint32_t>(static_cast<std::int32_t>(model.sort_by_texture)));
+    set32(c.r[v1], static_cast<std::uint32_t>(static_cast<std::int32_t>(model.texture_mode)));
     set32(c.r[v0], 2);
     tick(c, 4);
     bool sort = false;
@@ -530,14 +508,14 @@ PS2_DECOMP(00246CF0, DrawFighterInstance) {
     // one draw per segment; the write pointer lives in t3 until the end
     set32(c.r[v1], 0x00660000u);
     c.r[a0].d[0] = 0;
-    set32(c.r[t3], ld32(Chain::kPtr));
+    set32(c.r[t3], Chain{}.ptr);
     tick(c, 5);
     if (c.r[gpr::fp].sw[0] > 0) {
         set32(c.r[s7], 2);
         set32(c.r[s1], kMatrixUnpack);
         set32(c.r[t9], 3);
         set32(c.r[t7], 4);
-        set32(c.r[s4], kImageB);
+        set32(c.r[s4], vu1::kImageB);
         set32(c.r[v0], 0x004A0000u);
         set32(c.r[s3], kBoneVuAddr[0]);
         set32(c.r[s2], 0x00660000u);
@@ -554,7 +532,7 @@ PS2_DECOMP(00246CF0, DrawFighterInstance) {
         }
     }
     set32(c.r[v0], 0x00660000u);
-    st32(Chain::kPtr, c.r[t3].w[0]);
+    Chain{}.ptr = c.r[t3].w[0];
     tick(c, 2);
     finish();
 }

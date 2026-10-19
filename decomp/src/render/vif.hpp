@@ -139,6 +139,10 @@ constexpr std::uint32_t Unpack(Format f, std::uint32_t addr, std::uint32_t num =
 // the NUM field of a code as a number to add to the code word
 constexpr std::uint32_t num_field(std::uint32_t num) { return num << 16; }
 
+// How an open UNPACK of format f counts its NUM (the sceVif1Packet's numlen, Chain::code_unit): the NUM step in the
+// high half, the bits of one element in the low half (0x10080 for V4-32)
+constexpr std::uint32_t unpack_unit(Format f) { return num_field(1) | element_bits(f); }
+
 }
 
 // ---- DMA tags (source chain mode: 64 bits, then 64 bits the VIF sees as two VIFcodes) ----
@@ -165,6 +169,47 @@ constexpr std::uint64_t Tag(Id id, std::uint32_t qwc, std::uint32_t addr = 0, st
 constexpr std::uint32_t tag_id(std::uint64_t tag) { return static_cast<std::uint32_t>(tag >> 28) & 7u; }
 constexpr std::uint32_t tag_qwc(std::uint64_t tag) { return static_cast<std::uint32_t>(tag) & 0xffffu; }
 
+// The tag's first word (QWC, ID), for the writers that store a tag one word at a time; its QWC is often patched when
+// the tag is closed (qwords_after)
+constexpr std::uint32_t TagWord(Id id, std::uint32_t qwc = 0) { return static_cast<std::uint32_t>(Tag(id, qwc)); }
+// The ADDR word as the writers store it: bits 29-30 cleared (the original's `and 0x9fffffff`: the uncached views of
+// RAM map to the physical address, the scratchpad bit 31 stays)
+constexpr std::uint32_t Addr(std::uint32_t addr) { return addr & 0x9fffffffu; }
+// The QWC an open tag at `tag` gets when the chain has reached ptr: the qwords after the tag's own (the original
+// shifts the signed byte distance arithmetically)
+constexpr std::uint32_t qwords_after(std::uint32_t tag, std::uint32_t ptr) {
+    return static_cast<std::uint32_t>(static_cast<std::int32_t>(ptr - tag) >> 4) - 1u;
+}
+
+}
+
+// ---- EE address segments and the DMA controller registers the chain writers use ----
+
+inline constexpr std::uint32_t kPhysMask = 0x0fffffffu;
+inline constexpr std::uint32_t kUncached = 0x20000000u;       // kseg uncached
+inline constexpr std::uint32_t kUncachedAccel = 0x30000000u;  // uncached accelerated
+
+namespace dmac {
+// channel 9 (toSPR: main RAM to the scratchpad) and the shared registers
+inline constexpr std::uint32_t kToSprChcr = 0x1000d400u;
+inline constexpr std::uint32_t kToSprMadr = 0x1000d410u;
+inline constexpr std::uint32_t kToSprQwc = 0x1000d420u;
+inline constexpr std::uint32_t kToSprSadr = 0x1000d480u;
+inline constexpr std::uint32_t kStat = 0x1000e010u;
+inline constexpr std::uint32_t kPcr = 0x1000e020u;
+inline constexpr std::uint32_t kChcrStart = 0x101u;  // CHCR: STR | DIR (normal mode)
+inline constexpr std::uint32_t kChcrBusy = 0x100u;   // CHCR.STR: the transfer is still running
+inline constexpr std::uint32_t kChannel9 = 0x200u;   // D_STAT CIS9 (write 1 clears) / D_PCR CPC9
+}
+
+// ---- the VU1 microcode images (decomp/notes/native-renderer.md §1.5) ----
+
+// fn_23de10 uploads a whole image; MSCAL/MSCALF take a program's offset in its image, in doublewords.
+namespace vu1 {
+inline constexpr std::uint32_t kImageA = 0x0049e430u;  // 3-pass characters
+inline constexpr std::uint32_t kImageB = 0x0049f900u;  // 1-pass characters
+inline constexpr std::uint32_t kImageC = 0x004a20b0u;  // world, props, sky, shadows
+constexpr std::uint32_t program(std::uint32_t image, std::uint32_t label) { return (label - image) / 8; }
 }
 
 // ---- GS registers (as GIF A+D addresses) and register values ----
@@ -228,6 +273,20 @@ enum Reg : std::uint32_t {
     SIGNAL = 0x60,
     FINISH = 0x61,
     LABEL = 0x62,
+};
+
+// PRIM: the primitive type (bits 0-2) and the shading switches
+enum Prim : std::uint32_t {
+    kTriangle = 3,
+    kTriStrip = 4,
+    kTriFan = 5,
+    kSprite = 6,
+    kIip = 1u << 3,  // Gouraud
+    kTme = 1u << 4,  // textured
+    kFge = 1u << 5,  // fogged
+    kAbe = 1u << 6,  // alpha blended
+    kAa1 = 1u << 7,  // antialiased edges
+    kFst = 1u << 8,  // UV instead of STQ
 };
 
 // RGBAQ: RGBA in bits 0-31, Q (a float's bits) in 32-63
@@ -391,16 +450,19 @@ struct Packet {
 // packet at 0x6783e0 (Chain{0x006783E0u}).
 struct Chain {
     static constexpr std::uint32_t kAddr = 0x0065E300u;
+    // the members' offsets, for the writers that address them through a register holding kAddr
+    static constexpr std::uint32_t kPtr = 0x00, kStart = 0x04, kTag = 0x08, kCode = 0x0c, kCodeUnit = 0x10,
+                                   kGifTag = 0x14;
 
     std::uint32_t addr = kAddr;
-    ps2::Field<std::uint32_t> ptr{addr + 0x00};    // pCurrent: where the next word goes
-    ps2::Field<std::uint32_t> start{addr + 0x04};  // pBase: the chain's first tag (D1_TADR at the kick)
-    ps2::Field<std::uint32_t> tag{addr + 0x08};    // pDmaTag: the open DMA tag, QWC patched at its close (0: none)
-    ps2::Field<std::uint32_t> code{addr + 0x0c};   // pVifCode: the open UNPACK/DIRECT, size patched at its close
+    ps2::Field<std::uint32_t> ptr{addr + kPtr};      // pCurrent: where the next word goes
+    ps2::Field<std::uint32_t> start{addr + kStart};  // pBase: the chain's first tag (D1_TADR at the kick)
+    ps2::Field<std::uint32_t> tag{addr + kTag};      // pDmaTag: the open DMA tag, QWC patched at its close (0: none)
+    ps2::Field<std::uint32_t> code{addr + kCode};    // pVifCode: the open UNPACK/DIRECT, size patched at its close
     // numlen: how the open code counts its size, the step of its size field (1: NUM, bit 16) << 16 | bits per element
     // (0x80 for V4-32): the close adds (data bits / element bits) * (code_unit & 0xffff0000) to the code
-    ps2::Field<std::uint32_t> code_unit{addr + 0x10};
-    ps2::Field<std::uint32_t> gif_tag{addr + 0x14};  // pGifTag: the open GIF tag, NLOOP patched at its close
+    ps2::Field<std::uint32_t> code_unit{addr + kCodeUnit};
+    ps2::Field<std::uint32_t> gif_tag{addr + kGifTag};  // pGifTag: the open GIF tag, NLOOP patched at its close
 
     // Appends one word through the write pointer (loaded, stored to, advanced and stored back for each word, as the
     // inlined sceVif1PkAddCode does). Returns where it went.
@@ -419,13 +481,13 @@ struct Chain {
     // An UNPACK with NUM 0, left open (code, code_unit): through the write pointer ...
     void open_unpack(vif::Format format, std::uint32_t vu_addr) const {
         code = put(vif::Unpack(format, vu_addr));
-        code_unit = vif::num_field(1) | vif::element_bits(format);
+        code_unit = vif::unpack_unit(format);
     }
     // ... or at a cursor
     void open_unpack(Packet &pk, vif::Format format, std::uint32_t vu_addr) const {
         code = pk.p;
         pk.w32(vif::Unpack(format, vu_addr));
-        code_unit = vif::num_field(1) | vif::element_bits(format);
+        code_unit = vif::unpack_unit(format);
     }
 
     // What a close leaves in the original's registers.
@@ -467,5 +529,168 @@ struct Chain {
         return close_unpack(c);
     }
 };
+
+// ---- packet templates in ps2render's data ----
+
+// The GIF tag the character constant packers' A+D blocks start from: NLOOP 0 (filled in at the close), EOP, PACKED,
+// NREG 1, REGS = A+D. (TextureManager and the segment packer copy theirs from other copies, at 0x5857c0 and 0x5850f8.)
+inline constexpr std::uint32_t kCharAdGifTag = 0x00585280u;
+// The header of a 4-qword UNPACK (one matrix): NOP, NOP, STCYCL 4,4, UNPACK V4-32 NUM 4 to VU address 0. The writers
+// OR the VU1 address into its last word and append the four rows (unpack_matrix).
+inline constexpr std::uint32_t kMatrixUnpack = 0x004f4d90u;
+
+// ---- the packet-library sequences the writers inline, with the registers they leave ----
+
+// The inlined copies differ per call site in the registers they use, so these take the registers as parameters and
+// leave them as the original does. The ones with a loop poll at its head (loop_pc) and return false when the machine
+// unwound: the caller returns at once.
+
+// Pads with VIF NOPs (zero words) from the pointer in ptr_reg to the next qword: v0 = ptr & 12 after each word, 6
+// cycles a word. The caller has made the entry check (ptr & 12 nonzero).
+inline bool pad_register_to_qword(ps2::Cpu &c, std::uint32_t loop_pc, unsigned ptr_reg) {
+    using namespace ps2;
+    using namespace ps2::gpr;
+    do {
+        st32(c.r[ptr_reg].w[0], vif::Nop());
+        set32(c.r[ptr_reg], c.r[ptr_reg].w[0] + 4);
+        c.r[v0].d[0] = c.r[ptr_reg].d[0] & 12u;
+        tick(c, 6);
+        if (c.r[v0].d[0] == 0) return true;
+    } while (!poll(c, loop_pc));
+    return false;
+}
+
+// Pads with VIF NOPs up to the target in target_reg, keeping the pointer in memory: each word re-reads the chain
+// pointer into v0, stores a NOP there, advances it and writes it back; v1 = v0 < target (SLTU). 7 cycles a word. The
+// caller has made the entry check and set the registers the loop reads.
+inline bool pad_through_pointer(ps2::Cpu &c, std::uint32_t loop_pc, unsigned target_reg) {
+    using namespace ps2;
+    using namespace ps2::gpr;
+    const Chain ch;
+    do {
+        set32(c.r[v0], ch.ptr);
+        st32(c.r[v0].w[0], vif::Nop());
+        set32(c.r[v0], c.r[v0].w[0] + 4);
+        c.r[v1].d[0] = c.r[v0].d[0] < c.r[target_reg].d[0] ? 1 : 0;
+        ch.ptr = c.r[v0].w[0];
+        tick(c, 7);
+        if (c.r[v1].d[0] == 0) return true;
+    } while (!poll(c, loop_pc));
+    return false;
+}
+
+// The size a DIRECT code gets at its close, with the chain pointer at end: the qwords after the code (the original
+// computes ((end - 4 - code) >> 2) >> 2, arithmetic then logical shift).
+constexpr std::uint32_t direct_size(std::uint32_t end, std::uint32_t code) {
+    return static_cast<std::uint32_t>(static_cast<std::int32_t>(end - 4 - code) >> 2) >> 2;
+}
+
+// Closes the GIF tag at tag_addr with the chain pointer at end (the inlined sceVif1PkCloseGifTag): NLOOP = the bytes
+// after the tag in qwords (PACKED, IMAGE) or doublewords (REGLIST), divided by NREG unless IMAGE. The original's
+// registers: v1 = FLG (then the rounded-up count in the non-IMAGE case), a0 = the halved count (then 16), v0 = FLG ^ 1
+// (then NREG, then the new tag); tag_reg the tag, count_reg the result. HI/LO keep the DIVU. Returns the cycles of the
+// conditional part (the caller charges the straight-line part around it).
+inline std::int32_t close_gif_tag_regs(ps2::Cpu &c, std::uint32_t tag_addr, std::uint32_t end, unsigned tag_reg,
+                                       unsigned count_reg) {
+    using namespace ps2;
+    using namespace ps2::gpr;
+    const std::uint64_t tag = ld64(tag_addr);
+    c.r[tag_reg].d[0] = tag;
+    set32(c.r[count_reg], static_cast<std::uint32_t>(static_cast<std::int32_t>(end - tag_addr) >> 3) - 2u);
+    c.r[v1].d[0] = gif::flg(tag);
+    set32(c.r[a0], c.r[count_reg].w[0] >> 1);
+    c.r[v0].d[0] = c.r[v1].d[0] ^ 1u;
+    if (c.r[v0].d[0] != 0) c.r[count_reg].d[0] = c.r[a0].d[0];
+    std::int32_t cycles = 0;
+    if (c.r[v1].d[0] != gif::IMAGE) {
+        c.r[v0].d[0] = gif::nreg(tag);
+        set32(c.r[a0], 16);
+        if (c.r[v0].d[0] == 0) c.r[v0].d[0] = c.r[a0].d[0];
+        set32(c.r[v1], c.r[count_reg].w[0] + c.r[v0].w[0] - 1u);
+        mmi::divu(c, 0, c.r[v1].w[0], c.r[v0].w[0]);
+        c.r[v1].d[0] = c.lo.d[0];
+        c.r[count_reg].d[0] = c.r[v1].d[0];
+        cycles = 6 + 4;
+    }
+    c.r[v0].d[0] = tag + (c.r[count_reg].d[0] & 0xffffffffu);
+    st64(tag_addr, c.r[v0].d[0]);
+    return cycles;
+}
+
+// One matrix as a 4-qword UNPACK block at dst: the header template (kMatrixUnpack, or the copy at `header`) with the
+// VU1 address in its last word, then the 16-byte-aligned rows at src. As the writers inline it: a1 = header, a2-t1 =
+// the rows, a0 = the address lane (PEXTLW twice: (0, 0, 0, vu_addr)), a1 |= a0 (POR), five sq. The caller charges the
+// cycles.
+inline void unpack_matrix(ps2::Cpu &c, std::uint32_t dst, std::uint32_t src, std::uint32_t vu_addr,
+                          std::uint32_t header = kMatrixUnpack) {
+    using namespace ps2;
+    using namespace ps2::gpr;
+    ld128(header & ~15u, c.r[a1]);
+    for (unsigned i = 0; i < 4; ++i) ld128((src + 16 * i) & ~15u, c.r[a2 + i]);
+    c.r[a0].d[0] = 0;
+    c.r[a0].d[1] = static_cast<std::uint64_t>(vu_addr) << 32;
+    c.r[a1].d[0] |= c.r[a0].d[0];
+    c.r[a1].d[1] |= c.r[a0].d[1];
+    for (unsigned i = 0; i < 5; ++i) st128((dst + 16 * i) & ~15u, c.r[a1 + i]);
+}
+
+// The registers the compiler picked for one inlined copy of open_flush_tag, and its loop heads.
+struct FlushTagRegs {
+    unsigned base;           // `lui 0x66` for the first load of the write pointer
+    unsigned pad_test;       // the first `andi ptr, 0xc` (the loop's own test is v0)
+    unsigned base2;          // `lui 0x66` for the second load
+    std::int32_t pad_extra;  // cycles of the nop some copies have before the pad loop
+    std::uint32_t pad_loop;  // loop heads: where a preempted loop resumes in the recompiled code
+    std::uint32_t fill_loop;
+};
+
+// Opens a new DMA CNT tag whose upper half is VIF FLUSH | VIF NOP (wait for VU1 and the GIF before what follows): pads
+// the chain to a qword with zero words, closes the open tag (QWC += the qwords written after it), writes the tag, makes
+// it the open tag, clears the open VIF code and pads again. Inlined in the per-instance draws (fn_249060 at 0x249c64,
+// fn_246cf0 at 0x246e08); this reproduces the inlined code's registers (a0-a3, v0, v1 and r's) and cycles.
+inline bool open_flush_tag(ps2::Cpu &c, const FlushTagRegs &r) {
+    using namespace ps2;
+    using namespace ps2::gpr;
+    const Chain ch;
+    set32(c.r[r.base], 0x00660000u);
+    set32(c.r[a2], ch.ptr);
+    set32(c.r[a3], ch.ptr.address());
+    c.r[r.pad_test].d[0] = c.r[a2].d[0] & 12u;
+    tick(c, 6);
+    if (c.r[a2].w[0] & 12u) {
+        tick(c, r.pad_extra);
+        if (!pad_register_to_qword(c, r.pad_loop, a2)) return false;
+    }
+    const std::uint32_t ptr = c.r[a2].w[0];
+
+    const std::uint32_t open = ch.tag;
+    set32(c.r[a0], open);
+    tick(c, 3);
+    if (open) {
+        set32(c.r[v0], dma::qwords_after(open, ptr));
+        set32(c.r[v1], ld32(open) + c.r[v0].w[0]);
+        st32(open, c.r[v1].w[0]);
+        tick(c, 6);
+    }
+
+    st32(ptr, dma::TagWord(dma::CNT));
+    st32(ptr + 4, 0);
+    ch.tag = ptr;
+    ch.code = 0;
+    st32(ptr + 8, vif::Flush());
+    ch.ptr = ptr + 12;
+    set32(c.r[v0], ptr + 12);
+    set32(c.r[r.base2], 0x00660000u);
+    set32(c.r[a2], ch.ptr.address());
+    // the pad target: ptr rounded up to a qword, through `and -16`, `sltu`, `movn`
+    set32(c.r[v1], 0xfffffff0u);
+    c.r[a1].d[0] = c.r[v0].d[0] & c.r[v1].d[0];
+    c.r[a0].d[0] = c.r[a1].d[0] < c.r[v0].d[0];
+    set32(c.r[v1], c.r[a1].w[0] + 16u);
+    if (c.r[a0].d[0]) c.r[a1].d[0] = c.r[v1].d[0];
+    c.r[v0].d[0] = c.r[v0].d[0] < c.r[a1].d[0];
+    tick(c, 25);
+    return !c.r[v0].d[0] || pad_through_pointer(c, r.fill_loop, a1);
+}
 
 }

@@ -60,6 +60,16 @@ inline void qmtc2_i(Cpu &c, unsigned rt, Vf fd) {
     qmtc2(c, rt, fd);
 }
 
+// The compiler's float4 gather before a QMTC2: the four words in GPRs x, y, z, w (MFC1'd floats) packed into t0 by
+// PEXTLW t0, y, x; PEXTLW t1, w, z; PCPYLD t0, t1, t0. t0 = (x, y, z, w); t1 keeps (z, w, z.hi, w.hi) as the
+// original leaves it.
+inline void gather4(Cpu &c, unsigned x, unsigned y, unsigned z, unsigned w) {
+    constexpr unsigned t0 = 8, t1 = 9;
+    mmi::pextlw(c.r[t0], c.r[y], c.r[x]);
+    mmi::pextlw(c.r[t1], c.r[w], c.r[z]);
+    mmi::pcpyld(c.r[t0], c.r[t1], c.r[t0]);
+}
+
 // ---- arithmetic: fd = fs op ft, fs op ft.lane, fs op Q, fs op I ----
 
 #define PS2_VU0_VEC(name, impl)                                                                                         \

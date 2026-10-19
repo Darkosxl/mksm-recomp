@@ -92,13 +92,6 @@ void lw(Cpu &c, unsigned r, std::uint32_t addr) { set32(c.r[r], ld32(addr)); }
 void mov(Cpu &c, unsigned d, unsigned s) { c.r[d].d[0] = c.r[s].d[0]; }
 std::uint32_t w(const Cpu &c, unsigned r) { return c.r[r].w[0]; }
 
-// The compiler's way to build a vector from four floats in GPRs: t0 = (x, y, z, w), t1 = (z, w, ...)
-void pack_vector(Cpu &c, unsigned x, unsigned y, unsigned z, unsigned w) {
-    mmi::pextlw(c.r[t0], c.r[y], c.r[x]);
-    mmi::pextlw(c.r[t1], c.r[w], c.r[z]);
-    mmi::pcpyld(c.r[t0], c.r[t1], c.r[t0]);
-}
-
 // lwc1 of a vector's four words in the order the original loads them: f2 = x, f1 = y, f0 = z, f3 = w
 void load_fprs(Cpu &c, std::uint32_t v) {
     c.f[2] = ld32(v);
@@ -276,7 +269,7 @@ PS2_DECOMP(002459F8, CullCharacterSegments) {
         li(c, v0, c.f[2]);
         li(c, a2, c.f[0]);
         li(c, a3, c.f[3]);
-        pack_vector(c, v0, a1, a2, a3);
+        gather4(c, v0, a1, a2, a3);
         qmtc2(c, t0, vf2);
         lqc2(c, vf1, w(c, v1) + node::kWorldPosition);
         vadd(c, XYZW, vf3, vf1, vf2);  // the sphere's centre in the world
@@ -532,7 +525,7 @@ PS2_DECOMP(00245D48, CullCharacterSegmentsProjected) {
             li(c, v0, c.f[1]);
             li(c, a1, c.f[3]);
             li(c, a2, c.f[2]);
-            pack_vector(c, a2, v0, v1, a1);
+            gather4(c, a2, v0, v1, a1);
             qmtc2(c, t0, vf1);
             lqc2(c, vf4, f.at(0x60));
             transform_vf1(c);

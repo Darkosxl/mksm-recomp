@@ -11,7 +11,8 @@
 // in their order, on the original's registers: the register-level code is the specification, the comments and the
 // helper names say what each step builds. Ticks are the recompiled blocks' charges, at the same points; every loop
 // polls where the original's backward branch does, and every call is made from the original's state at that jal.
-#include "packer_codes.hpp"
+#include "vif.hpp"
+
 #include "ps2/decomp.hpp"
 #include "ps2/decomp_vu0.hpp"
 
@@ -20,6 +21,7 @@ namespace {
 using namespace ps2;
 using namespace ps2::gpr;
 using namespace decomp::render;
+using ps2::vu0::gather4;
 
 using u32 = std::uint32_t;
 using u64 = std::uint64_t;
@@ -28,18 +30,17 @@ using s64 = std::int64_t;
 
 // ---- globals the packer reads and writes ----
 
-// The VIF1 chain writer (ps2render): the frame's one write pointer and the open packets whose sizes are patched when
-// they are closed.
-constexpr u32 kChain = 0x65E300;         // +0x00 write pointer
-constexpr u32 kChainTag = 0x08;          // +0x08 the open DMA tag (its QWC grows when the next one is opened)
-constexpr u32 kChainVifCode = 0x0C;      // +0x0c the open DIRECT or UNPACK code (its size is patched when closed)
-constexpr u32 kChainUnpackUnit = 0x10;   // +0x10 how an open UNPACK's NUM grows (vif::kUnpackV4_32Unit)
-constexpr u32 kChainGifTag = 0x14;       // +0x14 the open GIF tag (its NLOOP is patched when closed)
+// The VIF1 chain writer (ps2render, vif.hpp's Chain): the frame's one write pointer and the open packets whose sizes
+// are patched when they are closed. The packer addresses the members through a register holding the chain's address.
+constexpr u32 kChain = Chain::kAddr;              // +0x00 write pointer
+constexpr u32 kChainTag = Chain::kTag;            // the open DMA tag (its QWC grows when the next one is opened)
+constexpr u32 kChainVifCode = Chain::kCode;       // the open DIRECT or UNPACK code (its size is patched when closed)
+constexpr u32 kChainUnpackUnit = Chain::kCodeUnit;  // how an open UNPACK's NUM grows (vif::unpack_unit)
+constexpr u32 kChainGifTag = Chain::kGifTag;      // the open GIF tag (its NLOOP is patched when closed)
 
 constexpr u32 kLastFlags = 0x65E458;     // the flags of the last segment whose GS state was sent (-1: none)
 constexpr u32 kLastMaterial = 0x661900;  // with +4: the material words (seg+0x158/+0x15c) of that GS state
 constexpr u32 kGifTemplate = 0x5850F8;   // GIF tag {NLOOP 0, EOP, PACKED, NREG 1, A+D}
-constexpr u32 kUnpackHeader = 0x4F4D90;  // {NOP, NOP, STCYCL 4/4, UNPACK V4-32 NUM 4} | VU address in word 3
 
 constexpr u32 kFrame = 0x1B0;
 
@@ -61,12 +62,6 @@ inline void hi32(Cpu &c, unsigned d, unsigned s) { D(c, d) = static_cast<u64>(st
 inline u32 sp_at(const Cpu &c, u32 off) { return W(c, sp) + off; }
 // mfc1: a GPR gets an FPR's bits
 inline void mfc1(Cpu &c, unsigned r, unsigned f) { set32(c.r[r], c.f[f]); }
-// the 128-bit value {x, y, z, w} from four GPR words, as pextlw t0, y, x; pextlw t1, w, z; pcpyld t0, t1, t0
-inline void pack4(Cpu &c, unsigned x, unsigned y, unsigned z, unsigned w) {
-    mmi::pextlw(c.r[t0], c.r[y], c.r[x]);
-    mmi::pextlw(c.r[t1], c.r[w], c.r[z]);
-    mmi::pcpyld(c.r[t0], c.r[t1], c.r[t0]);
-}
 
 // ---- the packet library's inline steps ----
 
@@ -196,16 +191,11 @@ void close_gif_tag(Cpu &c, GifCloseRegs r, int head) {
     tick(c, 9);
 }
 
-// One UNPACK block of a 4x4 matrix: the header template with the VU address (register `vu`) in its UNPACK code, then
-// the four rows from `src`, at the chain pointer held in `p` (not advanced here). Leaves the header in a1, the rows in
-// a2-t1 and the address word in a0, as the original's lq/pextlw/por/sq sequence does.
-void unpack_matrix(Cpu &c, unsigned header, unsigned src, unsigned vu, unsigned p) {
-    ld128(W(c, header) & ~15u, c.r[a1]);
-    for (unsigned i = 0; i < 4; ++i) ld128((W(c, src) + 16 * i) & ~15u, c.r[a2 + i]);
-    mmi::pextlw(c.r[a0], c.r[vu], c.r[zero]);
-    mmi::pextlw(c.r[a0], c.r[a0], c.r[zero]);
-    mmi::por(c.r[a1], c.r[a1], c.r[a0]);
-    for (unsigned i = 0; i < 5; ++i) st128((W(c, p) + 16 * i) & ~15u, c.r[a1 + i]);
+// One UNPACK block of a 4x4 matrix (vif.hpp's unpack_matrix) with every operand in a register: the header template
+// (register `header`) with the VU address (`vu`) in its UNPACK code, then the four rows from `src`, at the chain
+// pointer held in `p` (not advanced here). None of the four is one of a0-t1, which the sequence overwrites.
+void unpack_matrix_regs(Cpu &c, unsigned header, unsigned src, unsigned vu, unsigned p) {
+    unpack_matrix(c, W(c, p), W(c, src), W(c, vu), W(c, header));
 }
 
 // The A+D pair for PRIM at the pointer in `p`: the value's low and high words go through `lo` and `hi`.
@@ -323,13 +313,13 @@ bool open_stream_call(Cpu &c) {
     if (!zero_to_qword(c, a1, v0, v0, 0x23A300, 1)) return false;
     close_dma_tag(c, t3, a1);
     st32(W(c, t3), W(c, a1));
-    li(c, a0, dma::tag(dma::call));
+    li(c, a0, dma::TagWord(dma::CALL));
     st32(W(c, t3) + kChainTag, W(c, a1));
     li(c, v0, 0x9FFFFFFF);
     st32(W(c, a1), W(c, a0));
     li(c, v1, W(c, a1) + 4);
     st32(W(c, t3), W(c, v1));
-    D(c, v0) = D(c, a3) & D(c, v0);  // dma::addr(stream)
+    D(c, v0) = D(c, a3) & D(c, v0);  // dma::Addr(stream)
     li(c, v1, W(c, a1) + 8);
     st32(W(c, a1) + 4, W(c, v0));
     li(c, a2, kChain);
@@ -391,7 +381,7 @@ bool pack_by_constants_writer(Cpu &c) {
         tick(c, 12);
         if (!zero_until(c, a3, a1, v0, 0x23A438, 1)) return false;
         lw(c, v0, W(c, a3));
-        li(c, a0, vif::direct());
+        li(c, a0, vif::Direct(0));
         li(c, a1, kChain);
         li(c, a2, W(c, s8) + 0x4B40);
         li(c, v1, W(c, v0) + 4);
@@ -419,7 +409,7 @@ bool pack_by_constants_writer(Cpu &c) {
         write_prim(c, v0, a3, v1, a1);
         li(c, t1, kChain);
         li(c, a0, W(c, v0) + 16);
-        li(c, a2, gif::image);
+        li(c, a2, gif::IMAGE);
         st32(kChain, W(c, a0));
         close_gif_tag(c, {t1, a3, a0, a1, a2}, 24);
         if (!zero_to_qword(c, v1, v0, v0, 0x23A630, 0)) return false;
@@ -442,11 +432,11 @@ bool pack_by_constants_writer(Cpu &c) {
     if (!call(c, 0x246258, Ra{0x23A6A0})) return false;
     // BASE 0x2e, OFFSET 0x1e9, MSCAL program; the GS state cache is invalid now
     lw(c, v1, kChain);
-    li(c, v0, vif::base(0x2E));
-    li(c, a0, vif::offset(0x1E9));
+    li(c, v0, vif::Base(0x2E));
+    li(c, a0, vif::Offset(0x1E9));
     st32(W(c, v1), W(c, v0));
     li(c, v1, W(c, v1) + 4);
-    li(c, v0, vif::mscal(0));
+    li(c, v0, vif::Mscal(0));
     st32(kChain, W(c, v1));
     li(c, a1, W(c, v1) + 4);
     st32(W(c, v1), W(c, a0));
@@ -491,12 +481,12 @@ bool pack_uv_scroll(Cpu &c) {
     c.f[0] = ld32(W(c, s3) + 0x164);
     li(c, v1, 0x4F0000);
     c.f[1] = ld32(W(c, s3) + 0x168);
-    li(c, v1, kUnpackHeader);
+    li(c, v1, kMatrixUnpack);
     st32(sp_at(c, 0x20), c.f[0]);
     li(c, t2, 0x10);
     st32(sp_at(c, 0x24), c.f[1]);
     lw(c, v0, kChain);
-    unpack_matrix(c, v1, s0, t2, v0);
+    unpack_matrix_regs(c, v1, s0, t2, v0);
     li(c, v0, W(c, v0) + 0x50);
     D(c, a0) = 0 | 0x8000ull;
     D(c, a0) <<= 31;
@@ -515,13 +505,13 @@ bool pack_uv_scroll(Cpu &c) {
 // through sp+`stage` and sp+`stage`+0x10; then closes the UNPACK (NUM = 2).
 void unpack_fog(Cpu &c, u32 stage) {
     lw(c, a0, kChain);
-    li(c, v0, vif::stcycl(4, 4));
+    li(c, v0, vif::Stcycl(4, 4));
     li(c, t1, kChain);
     st32(W(c, a0), W(c, v0));
-    li(c, v1, vif::unpack_v4_32(4));
+    li(c, v1, vif::Unpack(vif::V4_32, 4));
     li(c, a0, W(c, a0) + 4);
     st32(kChain, W(c, a0));
-    li(c, v0, vif::kUnpackV4_32Unit);
+    li(c, v0, vif::unpack_unit(vif::V4_32));
     st32(W(c, t1) + kChainVifCode, W(c, a0));
     st32(W(c, a0), W(c, v1));
     li(c, a2, W(c, a0) + 4);
@@ -619,10 +609,10 @@ bool pack_fog(Cpu &c) {
     c.f[0] = fp::add(c.f[0], c.f[4]);
     mfc1(c, t3, 1);
     c.f[0] = fp::mul(c.f[0], c.f[8]);
-    pack4(c, v0, v0, v0, t3);
+    gather4(c, v0, v0, v0, t3);
     c.vu0.vf[2] = c.r[t0];
     mfc1(c, v1, 0);
-    pack4(c, t7, s0, v0, v1);
+    gather4(c, t7, s0, v0, v1);
     c.vu0.vf[1] = c.r[t0];
     tick(c, 57);
     // pad so STCYCL and UNPACK are the last two words of a qword
@@ -665,10 +655,10 @@ bool pack_fog_mode3(Cpu &c) {
     c.f[0] = fp::add(c.f[0], c.f[5]);
     mfc1(c, v1, 1);
     c.f[0] = fp::mul(c.f[0], c.f[6]);
-    pack4(c, v0, v0, v0, v1);
+    gather4(c, v0, v0, v0, v1);
     c.vu0.vf[2] = c.r[t0];
     mfc1(c, t3, 0);
-    pack4(c, v0, a3, v0, t3);
+    gather4(c, v0, a3, v0, t3);
     c.vu0.vf[1] = c.r[t0];
     tick(c, 52);
     if (!zero_until(c, a2, a0, a1, 0x23ABA0, 0)) return false;
@@ -687,10 +677,10 @@ void pack_lights(Cpu &c) {
         li(c, v0, 0x660000);
         li(c, t4, 0x4F0000);
         li(c, v0, W(c, v0) + 0x19E0);
-        li(c, t4, kUnpackHeader);
+        li(c, t4, kMatrixUnpack);
         li(c, v1, 4);
         lw(c, t3, kChain);
-        unpack_matrix(c, t4, v0, v1, t3);
+        unpack_matrix_regs(c, t4, v0, v1, t3);
         li(c, t2, 0x660000);
         li(c, t5, W(c, t3) + 0x50);
         li(c, v0, W(c, t2) + 0x19A0);
@@ -712,7 +702,7 @@ void pack_lights(Cpu &c) {
         c.f[1] = ld32(W(c, v1) + 4);
         mfc1(c, a3, 2);
         c.f[5] = ld32(W(c, v1) + 0xC);
-        pack4(c, a2, a3, t7, s0);
+        gather4(c, a2, a3, t7, s0);
         c.vu0.vf[4] = c.r[t0];
         c.f[8] = ld32(W(c, v0) + 0x30);
         c.f[4] = ld32(W(c, v0) + 0x20);
@@ -726,19 +716,19 @@ void pack_lights(Cpu &c) {
         c.f[0] = ld32(W(c, a1) + 8);
         c.f[3] = ld32(W(c, a1) + 4);
         mfc1(c, a3, 5);
-        pack4(c, v0, v1, a2, a3);
+        gather4(c, v0, v1, a2, a3);
         c.vu0.vf[3] = c.r[t0];
         mfc1(c, t7, 4);
         mfc1(c, s0, 2);
         mfc1(c, v0, 1);
         mfc1(c, v1, 6);
         mfc1(c, a0, 8);
-        pack4(c, t7, s0, v0, v1);
+        gather4(c, t7, s0, v0, v1);
         c.vu0.vf[2] = c.r[t0];
         mfc1(c, a1, 3);
         mfc1(c, a2, 0);
         mfc1(c, a3, 7);
-        pack4(c, a0, a1, a2, a3);
+        gather4(c, a0, a1, a2, a3);
         c.vu0.vf[1] = c.r[t0];
         vu0::sqc2(c, vu0::vf4, sp_at(c, 0x10));
         vu0::sqc2(c, vu0::vf3, sp_at(c, 0x20));
@@ -746,7 +736,7 @@ void pack_lights(Cpu &c) {
         vu0::sqc2(c, vu0::vf1, sp_at(c, 0x40));
         st32(kChain, W(c, t5));
         st32(sp_at(c, 0x1C), 0);
-        unpack_matrix(c, t4, t2, t6, t5);
+        unpack_matrix_regs(c, t4, t2, t6, t5);
         li(c, t3, W(c, t3) + 0xA0);
         st32(kChain, W(c, t3));
         tick(c, 98);
@@ -754,16 +744,16 @@ void pack_lights(Cpu &c) {
         li(c, v0, 0x660000);
         li(c, t3, 0x4F0000);
         li(c, v0, W(c, v0) + 0x19E0);
-        li(c, t3, kUnpackHeader);
+        li(c, t3, kMatrixUnpack);
         li(c, v1, 4);
         lw(c, t2, kChain);
-        unpack_matrix(c, t3, v0, v1, t2);
+        unpack_matrix_regs(c, t3, v0, v1, t2);
         li(c, t4, W(c, t2) + 0x50);
         li(c, v0, 0x660000);
         li(c, v0, W(c, v0) + 0x19A0);
         st32(kChain, W(c, t4));
         li(c, v1, 8);
-        unpack_matrix(c, t3, v0, v1, t4);
+        unpack_matrix_regs(c, t3, v0, v1, t4);
         li(c, t2, W(c, t2) + 0xA0);
         st32(kChain, W(c, t2));
         tick(c, 39);
@@ -819,7 +809,7 @@ bool pack_point_light(Cpu &c) {
     c.f[4] = ld32(sp_at(c, 0x1C));
     li(c, v0, 0x4F0000);
     c.f[0] = ld32(sp_at(c, 0x18));
-    li(c, v1, vif::stcycl(4, 4));
+    li(c, v1, vif::Stcycl(4, 4));
     c.f[3] = ld32(sp_at(c, 0x10));
     c.f[2] = ld32(sp_at(c, 0x14));
     li(c, a2, kChain);
@@ -835,7 +825,7 @@ bool pack_point_light(Cpu &c) {
     mov(c, t3, a2);
     mfc1(c, t2, 4);
     c.f[0] = fp::mul(c.f[0], c.f[0]);
-    pack4(c, a0, a1, a3, t2);
+    gather4(c, a0, a1, a3, t2);
     c.vu0.vf[1] = c.r[t0];
     // vf1 = the inverse matrix (vf5..vf2) times the light position (vf1)
     vu0::vmulabc(c, vu0::XYZW, vu0::vf5, vu0::vf1, vu0::Lane::x);
@@ -844,9 +834,9 @@ bool pack_point_light(Cpu &c) {
     vu0::vmaddbc(c, vu0::XYZW, vu0::vf1, vu0::vf2, vu0::vf1, vu0::Lane::w);
     lw(c, v0, kChain);
     vu0::sqc2(c, vu0::vf1, sp_at(c, 0x10));
-    li(c, a1, vif::unpack_v4_32(6));
+    li(c, a1, vif::Unpack(vif::V4_32, 6));
     fpu_div(c, 1, c.f[1], c.f[0]);
-    li(c, a0, vif::kUnpackV4_32Unit);
+    li(c, a0, vif::unpack_unit(vif::V4_32));
     li(c, t1, 0xFFFFFFFF);
     li(c, t0, sp_at(c, 0x10));
     li(c, t2, 1);
@@ -914,7 +904,7 @@ bool pack_point_light(Cpu &c) {
 // Leaves v0 = seg+0x138 & 0x100 (the linked-texture pass test).
 bool pack_gs_state_and_kick(Cpu &c) {
     lw(c, v0, kChain);
-    li(c, v1, vif::flush());
+    li(c, v1, vif::Flush());
     li(c, a0, 0u - 16);
     li(c, t0, kChain);
     st32(W(c, v0), W(c, v1));
@@ -930,7 +920,7 @@ bool pack_gs_state_and_kick(Cpu &c) {
     if (!zero_until(c, t0, a1, v0, 0x23B210, 0)) return false;
     // DIRECT and the GIF tag
     lw(c, v0, W(c, t0));
-    li(c, a1, vif::direct());
+    li(c, a1, vif::Direct(0));
     li(c, a2, kChain);
     li(c, a3, W(c, s6) - 0x48E0);
     li(c, v1, W(c, v0) + 4);
@@ -1009,17 +999,17 @@ bool pack_gs_state_and_kick(Cpu &c) {
     // close the GIF tag and the DIRECT
     li(c, t1, kChain);
     lw(c, v0, kChain);
-    li(c, a1, gif::image);
+    li(c, a1, gif::IMAGE);
     close_gif_tag(c, {t1, a3, v0, a2, a1}, 15);
     if (!zero_to_qword(c, v1, v0, v0, 0x23B498, 0)) return false;
     st32(W(c, t1), W(c, v1));
-    li(c, t0, vif::flush());
+    li(c, t0, vif::Flush());
     li(c, t1, kChain);
-    li(c, a2, vif::base(0x18));
+    li(c, a2, vif::Base(0x18));
     close_direct(c, t1);
-    li(c, a3, vif::offset(0x1F4));
+    li(c, a3, vif::Offset(0x1F4));
     lw(c, t2, sp_at(c, 0xF4));
-    li(c, a1, vif::mscal(0));
+    li(c, a1, vif::Mscal(0));
     D(c, a1) = D(c, t2) | D(c, a1);
     // FLUSH, BASE, OFFSET, MSCAL
     lw(c, v0, kChain);
@@ -1044,16 +1034,16 @@ bool pack_gs_state_and_kick(Cpu &c) {
 // MSCALF `prog` in the tag's first VIF slot. `chain` holds the chain's address, `p` the aligned write pointer.
 void open_stream_call_mscalf(Cpu &c, unsigned chain, unsigned p, unsigned stream, unsigned prog) {
     st32(W(c, chain), W(c, p));
-    li(c, a0, dma::tag(dma::call));
+    li(c, a0, dma::TagWord(dma::CALL));
     st32(W(c, chain) + kChainTag, W(c, p));
     li(c, v0, 0x9FFFFFFF);
     st32(W(c, p), W(c, a0));
     li(c, v1, W(c, p) + 4);
     st32(W(c, chain), W(c, v1));
-    D(c, v0) = D(c, stream) & D(c, v0);  // dma::addr(stream)
+    D(c, v0) = D(c, stream) & D(c, v0);  // dma::Addr(stream)
     li(c, a0, W(c, p) + 8);
     st32(W(c, p) + 4, W(c, v0));
-    li(c, v1, vif::mscalf(0));
+    li(c, v1, vif::Mscalf(0));
     st32(W(c, chain), W(c, a0));
     D(c, v1) = D(c, prog) | D(c, v1);
     st32(W(c, chain) + kChainVifCode, 0);
@@ -1105,13 +1095,13 @@ bool pack_linked_pass(Cpu &c) {
     close_dma_tag(c, t1, a2);
     // DMA cnt, then FLUSH and pad to a qword
     st32(W(c, t1), W(c, a2));
-    li(c, v0, dma::tag(dma::cnt));
+    li(c, v0, dma::TagWord(dma::CNT));
     st32(W(c, t1) + kChainTag, W(c, a2));
     li(c, v1, W(c, a2) + 4);
     st32(W(c, a2), W(c, v0));
     li(c, a0, W(c, a2) + 8);
     st32(W(c, t1), W(c, v1));
-    li(c, a1, vif::flush());
+    li(c, a1, vif::Flush());
     st32(W(c, a2) + 4, 0);
     li(c, v1, 0u - 16);
     st32(W(c, t1), W(c, a0));
@@ -1168,7 +1158,7 @@ bool pack_linked_pass(Cpu &c) {
 
     li(c, s6, kChain);
     c.f[4] = ld32(sp_at(c, 0xE8));
-    li(c, s1, kUnpackHeader);
+    li(c, s1, kMatrixUnpack);
     c.f[0] = ld32(sp_at(c, 0xEC));
     li(c, v1, 0x10);
     c.f[1] = ld32(sp_at(c, 0xE0));
@@ -1181,7 +1171,7 @@ bool pack_linked_pass(Cpu &c) {
     st32(sp_at(c, 0x48), c.f[3]);
     st32(sp_at(c, 0x4C), 0);
     lw(c, v0, kChain);
-    unpack_matrix(c, s1, s5, v1, v0);
+    unpack_matrix_regs(c, s1, s5, v1, v0);
     li(c, s0, 0x660000);
     li(c, v0, W(c, v0) + 0x50);
     li(c, s0, W(c, s0) + 0x1A70);
@@ -1195,13 +1185,13 @@ bool pack_linked_pass(Cpu &c) {
 
     li(c, v0, 0xC);
     lw(c, t4, kChain);
-    unpack_matrix(c, s1, s0, v0, t4);
+    unpack_matrix_regs(c, s1, s0, v0, t4);
     li(c, t3, W(c, t4) + 0x50);
     li(c, v0, 0x660000);
     li(c, v0, W(c, v0) + 0x19E0);
     st32(kChain, W(c, t3));
     li(c, v1, 4);
-    unpack_matrix(c, s1, v0, v1, t3);
+    unpack_matrix_regs(c, s1, v0, v1, t3);
     // the light colour matrix through the FPRs into sp+0x10 (row 3 first, its w + 128)
     li(c, a3, 0x660000);
     fconst(c, 6, 0x43000000);  // 128
@@ -1220,7 +1210,7 @@ bool pack_linked_pass(Cpu &c) {
     mfc1(c, s0, 1);
     mfc1(c, v0, 0);
     mfc1(c, a1, 2);
-    pack4(c, t7, s0, v0, a1);
+    gather4(c, t7, s0, v0, a1);
     c.vu0.vf[1] = c.r[t0];
     mfc1(c, a2, 4);
     vu0::sqc2(c, vu0::vf1, sp_at(c, 0x40));
@@ -1235,7 +1225,7 @@ bool pack_linked_pass(Cpu &c) {
     c.f[3] = ld32(W(c, t2) + 0x10);
     mfc1(c, t7, 1);
     mfc1(c, a1, 0);
-    pack4(c, a2, a3, t7, s0);
+    gather4(c, a2, a3, t7, s0);
     c.vu0.vf[3] = c.r[t0];
     c.f[6] = ld32(W(c, v1) + 0xC);
     c.f[4] = ld32(W(c, t2) + 0x20);
@@ -1247,12 +1237,12 @@ bool pack_linked_pass(Cpu &c) {
     mfc1(c, v1, 2);
     mfc1(c, a2, 6);
     mfc1(c, a3, 4);
-    pack4(c, v0, v1, a1, a2);
+    gather4(c, v0, v1, a1, a2);
     c.vu0.vf[2] = c.r[t0];
     mfc1(c, t2, 1);
     mfc1(c, t7, 0);
     mfc1(c, s0, 7);
-    pack4(c, a3, t2, t7, s0);
+    gather4(c, a3, t2, t7, s0);
     c.vu0.vf[1] = c.r[t0];
     vu0::sqc2(c, vu0::vf3, sp_at(c, 0x10));
     vu0::sqc2(c, vu0::vf2, sp_at(c, 0x20));
@@ -1260,7 +1250,7 @@ bool pack_linked_pass(Cpu &c) {
     st32(sp_at(c, 0x4C), c.f[5]);
     st32(kChain, W(c, t3));
     st32(sp_at(c, 0x1C), 0);
-    unpack_matrix(c, s1, s5, t5, t3);
+    unpack_matrix_regs(c, s1, s5, t5, t3);
     // the GIF tag template to sp+0x50; FLUSH; pad to a qword
     li(c, v1, 0x580000);
     li(c, a2, 0x580000);
@@ -1273,7 +1263,7 @@ bool pack_linked_pass(Cpu &c) {
     st64(sp_at(c, 0x58), D(c, a1));
     D(c, a2) = D(c, a0) & D(c, v1);
     st32(kChain, W(c, t4));
-    li(c, a1, vif::flush());
+    li(c, a1, vif::Flush());
     st64(sp_at(c, 0x50), D(c, v0));
     sltu(c, v1, a2, a0);
     li(c, v0, W(c, a2) + 16);
@@ -1292,7 +1282,7 @@ bool pack_linked_pass(Cpu &c) {
     tick(c, 11);
     if (!zero_until(c, a3, a1, v0, 0x23B9D8, 0)) return false;
     lw(c, v0, W(c, a3));
-    li(c, a1, vif::direct());
+    li(c, a1, vif::Direct(0));
     li(c, s0, kChain);
     li(c, a2, gs::FBA_1);
     li(c, v1, W(c, v0) + 4);
@@ -1360,7 +1350,7 @@ bool pack_linked_pass(Cpu &c) {
     st32(W(c, a0) + 12, 0);
     li(c, v0, W(c, v1) + 64);
     st32(W(c, a0) + 4, 0);
-    li(c, a3, gif::image);
+    li(c, a3, gif::IMAGE);
     st32(kChain, W(c, a1));
     st32(W(c, v1) + 32, 0);
     st32(W(c, a1) + 8, W(c, t0));
@@ -1385,8 +1375,8 @@ bool pack_linked_pass(Cpu &c) {
 
     // BASE 0x18, OFFSET 0x1f4 into the open call (the main pass's stream runs with them)
     lw(c, v1, kChain);
-    li(c, v0, vif::base(0x18));
-    li(c, a0, vif::offset(0x1F4));
+    li(c, v0, vif::Base(0x18));
+    li(c, a0, vif::Offset(0x1F4));
     st32(W(c, v1), W(c, v0));
     li(c, v1, W(c, v1) + 4);
     li(c, a3, kChain);
@@ -1418,18 +1408,18 @@ bool pack_linked_pass(Cpu &c) {
         close_dma_tag(c, a3, a2);
         // DMA cnt { FLUSHA, BASE 0x18 | OFFSET 0x1f4 }
         st32(W(c, a3), W(c, a2));
-        li(c, v0, dma::tag(dma::cnt));
+        li(c, v0, dma::TagWord(dma::CNT));
         st32(W(c, a3) + kChainTag, W(c, a2));
         li(c, v1, W(c, a2) + 4);
         st32(W(c, a2), W(c, v0));
         li(c, a0, W(c, a2) + 8);
         st32(W(c, a3), W(c, v1));
-        li(c, a1, vif::flusha());
+        li(c, a1, vif::Flusha());
         st32(W(c, a2) + 4, 0);
-        li(c, v1, vif::base(0x18));
+        li(c, v1, vif::Base(0x18));
         st32(W(c, a3), W(c, a0));
         st32(W(c, a3) + kChainVifCode, 0);
-        li(c, a0, vif::offset(0x1F4));
+        li(c, a0, vif::Offset(0x1F4));
         li(c, a3, kChain);
         lw(c, v0, kChain);
         st32(W(c, v0), W(c, a1));
@@ -1469,9 +1459,9 @@ bool pack_additive_pass(Cpu &c) {
     identity_rows(c, t2);
     li(c, v1, 0x4F0000);
     li(c, t3, 4);
-    li(c, v1, kUnpackHeader);
+    li(c, v1, kMatrixUnpack);
     lw(c, v0, kChain);
-    unpack_matrix(c, v1, t2, t3, v0);
+    unpack_matrix_regs(c, v1, t2, t3, v0);
     li(c, v0, W(c, v0) + 0x50);
     li(c, v1, 0x660000);
     st32(kChain, W(c, v0));
@@ -1511,7 +1501,7 @@ bool pack_additive_pass(Cpu &c) {
 
     // the GIF tag template to sp+0x10; FLUSH; DIRECT
     li(c, a2, 0x580000);
-    li(c, a1, vif::flush());
+    li(c, a1, vif::Flush());
     li(c, v0, W(c, a2) + 0x50F8);
     D(c, a0) = ld64(W(c, a2) + 0x50F8);
     D(c, v1) = ld64(W(c, v0) + 8);
@@ -1535,7 +1525,7 @@ bool pack_additive_pass(Cpu &c) {
     tick(c, 11);
     if (!zero_until(c, t0, a1, v0, 0x23C018, 0)) return false;
     lw(c, v0, W(c, t0));
-    li(c, a1, vif::direct());
+    li(c, a1, vif::Direct(0));
     li(c, a2, kChain);
     li(c, a3, gs::FBA_1);
     li(c, v1, W(c, v0) + 4);
@@ -1639,7 +1629,7 @@ bool pack_additive_pass(Cpu &c) {
     st32(W(c, v0), 0);
     li(c, a0, W(c, v0) + 32);
     st32(W(c, v0) + 4, 0);
-    li(c, a2, gif::image);
+    li(c, a2, gif::IMAGE);
     st32(W(c, v0) + 12, 0);
     st32(kChain, W(c, v1));
     st32(W(c, v0) + 16, W(c, a1));  // PRIM
@@ -1660,8 +1650,8 @@ bool pack_additive_pass(Cpu &c) {
 
     // BASE 0x2e, OFFSET 0x1e9 into the open packet
     lw(c, v1, kChain);
-    li(c, v0, vif::base(0x2E));
-    li(c, a0, vif::offset(0x1E9));
+    li(c, v0, vif::Base(0x2E));
+    li(c, a0, vif::Offset(0x1E9));
     st32(W(c, v1), W(c, v0));
     li(c, v1, W(c, v1) + 4);
     li(c, a3, kChain);
@@ -1691,18 +1681,18 @@ bool pack_additive_pass(Cpu &c) {
         if (!zero_to_qword(c, a2, v0, v0, 0x23C3B8, 1)) return false;
         close_dma_tag(c, a3, a2);
         st32(W(c, a3), W(c, a2));
-        li(c, v0, dma::tag(dma::cnt));
+        li(c, v0, dma::TagWord(dma::CNT));
         st32(W(c, a3) + kChainTag, W(c, a2));
         li(c, v1, W(c, a2) + 4);
         st32(W(c, a2), W(c, v0));
         li(c, a0, W(c, a2) + 8);
         st32(W(c, a3), W(c, v1));
-        li(c, a1, vif::flusha());
+        li(c, a1, vif::Flusha());
         st32(W(c, a2) + 4, 0);
-        li(c, v1, vif::base(0x18));
+        li(c, v1, vif::Base(0x18));
         st32(W(c, a3), W(c, a0));
         st32(W(c, a3) + kChainVifCode, 0);
-        li(c, a0, vif::offset(0x1F4));
+        li(c, a0, vif::Offset(0x1F4));
         li(c, t0, kChain);
         lw(c, v0, kChain);
         st32(W(c, v0), W(c, a1));
@@ -1777,10 +1767,10 @@ bool pack_segment(Cpu &c) {
         lw(c, a2, sp_at(c, 0xF0));
         li(c, v1, 0x4F0000);
         D(c, t3) = 0;
-        li(c, v1, kUnpackHeader);
+        li(c, v1, kMatrixUnpack);
         li(c, t2, W(c, a2) + 0x110);
         lw(c, v0, kChain);
-        unpack_matrix(c, v1, t2, t3, v0);
+        unpack_matrix_regs(c, v1, t2, t3, v0);
         li(c, v0, W(c, v0) + 0x50);
         st32(kChain, W(c, v0));
         tick(c, 21);
@@ -1820,10 +1810,10 @@ bool pack_segment(Cpu &c) {
         li(c, t2, 0x660000);
         li(c, v1, 0x4F0000);
         li(c, t2, W(c, t2) + 0x1A70);
-        li(c, v1, kUnpackHeader);
+        li(c, v1, kMatrixUnpack);
         li(c, t3, 0xC);
         lw(c, v0, kChain);
-        unpack_matrix(c, v1, t2, t3, v0);
+        unpack_matrix_regs(c, v1, t2, t3, v0);
         li(c, v0, W(c, v0) + 0x50);
         st32(kChain, W(c, v0));
         tick(c, 21);

@@ -1,15 +1,16 @@
 // Ps2/Renderer/Character/ps2render.cpp: the per-frame bone matrices of a skinned model.
+#include "../instance.hpp"
+
 #include "ps2/decomp.hpp"
 #include "ps2/decomp_vu0.hpp"
-
-#include "../../texture/texture_manager.hpp"  // Field
 
 namespace {
 
 using namespace ps2;
 using namespace ps2::gpr;
 using namespace ps2::vu0;
-using decomp::texture::Field;
+using decomp::render::Bone;
+using decomp::render::Model;
 
 // The two matrix palettes the character draw uploads to VU1 (64 bytes per bone, allocated on the first update from
 // the pool at [0x4e5114], tag "Allocate_Spad_Addrs_For_Update"), and the update counter.
@@ -25,31 +26,6 @@ constexpr std::uint32_t kMatrixSetTranslation = 0x00213c78u, kPreUpdate = 0x0024
 
 // How a bone got its world matrix: from the model's node, its own (no parent / mode -1), or its parent bone's.
 enum class Path { kNone, kNodeChild, kRoot, kDetached, kBoneChild };
-
-// One bone (0x1c0 bytes; the model holds an array of them, and a record of the same shape for the model's own node).
-// Matrices are row-major for row vectors: rows 0-2 the rotation, row 3 the translation.
-struct Bone {
-    static constexpr std::uint32_t kSize = 0x1c0;
-
-    std::uint32_t addr;
-    std::uint32_t local() const { return addr + 0x00; }     // relative to the parent
-    Field<std::uint32_t> parent{addr + 0x40};                // a bone, the model's node, or 0 (world matrix given)
-    std::uint32_t world() const { return addr + 0x50; }     // 0x50-0x8f
-    std::uint32_t pivot() const { return addr + 0x90; }     // bind position, removed in the skinning matrix
-    std::uint32_t position() const { return addr + 0xa0; }  // copy of the world translation
-    std::uint32_t local_position() const { return addr + 0xb0; }  // restored into the local translation
-    Field<std::int8_t> mode{addr + 0x150};                   // -1: keeps its own world matrix like a root
-};
-
-// The model fields this reads (a0).
-struct Model {
-    std::uint32_t addr;
-    Field<std::uint32_t> pre_update{addr + 0xdc8};  // nonzero: fn_2457d0 runs first
-    Field<std::uint32_t> bones{addr + 0x18};
-    Field<std::uint32_t> bone_count{addr + 0x30};
-    Bone node() const { return {addr + 0x50}; }      // the model's own node: bones whose parent it is hang off it
-    Field<std::uint32_t> updated{addr + 0x1000};
-};
 
 // The locals of the original's frame: the per-bone done flags at sp+0 (FastMemset over the bone count), then words.
 constexpr std::uint32_t kNode = 128, kBones = 132, kNext = 136;
@@ -89,9 +65,7 @@ void load_negated_pivot(Cpu &c, const Bone &bone, unsigned base, unsigned x, uns
     set32(c.r[y], c.f[1]);
     set32(c.r[z], c.f[0]);
     set32(c.r[w], c.f[2]);
-    mmi::pextlw(c.r[t0], c.r[y], c.r[x]);
-    mmi::pextlw(c.r[t1], c.r[w], c.r[z]);
-    mmi::pcpyld(c.r[t0], c.r[t1], c.r[t0]);
+    gather4(c, x, y, z, w);
     qmtc2(c, t0, vf1);
     set32(c.r[t0], c.f[20]);
     qmtc2(c, t0, vf5);
@@ -163,7 +137,7 @@ PS2_DECOMP(00245168, UpdateBoneMatrices) {
     const Model model{c.r[a0].w[0]};
     const std::uint32_t frame = f.at(0);
 
-    set32(c.r[v0], model.pre_update);
+    set32(c.r[v0], model.always_crossing);  // nonzero: fn_2457d0 first
     tick(c, 18);
     if (c.r[v0].d[0] != 0) {
         tick(c, 2);
