@@ -65,6 +65,11 @@ add_library(ps2runtime STATIC
     runtime/src/iop/cdvdfsv.cpp)
 target_include_directories(ps2runtime PUBLIC runtime/include)
 target_compile_options(ps2runtime PRIVATE -Wall -Wextra)
+# SSE4.1 (every x86-64 CPU since 2008): floor/ceil inline as roundss instead of libm calls; the render thread's binning
+# called them per primitive. Same results (IEEE, FP contraction stays off).
+if(CMAKE_SYSTEM_PROCESSOR MATCHES "x86_64|AMD64" AND NOT EMSCRIPTEN)
+    target_compile_options(ps2runtime PRIVATE -msse4.1)
+endif()
 
 set(PS2_WGPU_DIR "${CMAKE_SOURCE_DIR}/third_party/wgpu-native" CACHE PATH "wgpu-native release folder")
 if(EMSCRIPTEN OR EXISTS "${PS2_WGPU_DIR}/lib/libwgpu_native.a")
