@@ -1,6 +1,11 @@
 # EE functions whose entry gets the decomp hook (decomp/README.md): address, then anything (name, notes).
 # Each needs a PS2_DECOMP(<address>, name) in decomp/src; retranslate after editing (mksm/build.sh --retranslate).
 00474EDC	strlen	decomp/src/libc/strlen.cpp
+00226B70	SetScreenBrightness	decomp/src/render/render_settings.cpp
+00226DF0	SetSkipModelRender	decomp/src/render/render_settings.cpp
+0024C238	RadiansToAngle	decomp/src/render/ps2render.cpp
+00260B40	GetAssetObject	decomp/src/setup/ps2setup.cpp
+002655C0	GuardBandOutcode	decomp/src/render/guard_band.cpp
 0026CD50	TextureManager::ComputeBufferWidth	decomp/src/texture/texture_manager.cpp
 0026D2E8	TextureManager::GetTex0	decomp/src/texture/texture_manager.cpp
 0026D308	TextureManager::GetMipTbp1	decomp/src/texture/texture_manager.cpp
