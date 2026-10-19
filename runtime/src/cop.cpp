@@ -1,3 +1,4 @@
+#include "debug.hpp"
 #include "hw.hpp"
 #include "ps2/generated.hpp"
 #include "ps2/system.hpp"
@@ -46,6 +47,7 @@ void ctc2(Cpu &c, std::uint32_t reg, std::uint32_t value) {
     case 27: v.cmsar0 = value & 0xFFFFu; break;
     case 28: break;
     case 31:
+        debug::count(debug::kCmsar1);
         std::fprintf(stderr, "[vu1] start at 0x%X through CMSAR1 (not implemented)\n", value);
         break;
     default:

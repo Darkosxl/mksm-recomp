@@ -17,6 +17,8 @@ namespace ps2::vu {
 void state(ps2::state::Stream &s);
 // lockstep hash: VU0/VU1 code and data memory, TOP/ITOP and pending XGKICK packets (VU1 registers: regs(1))
 void hash(ps2::Hash64 &h);
+// debug (PS2_HASH_SPLIT=2): VU0 code + data, and VU1 registers, TOP/ITOP, pending XGKICKs, code + data, separately
+void hash_units(ps2::Hash64 &vu0, ps2::Hash64 &vu1);
 
 void reset();
 void run(int unit, std::uint32_t address);

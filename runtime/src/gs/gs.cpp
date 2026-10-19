@@ -8,6 +8,7 @@
 #include "texpack.hpp"
 #include "../debug.hpp"
 #include "../hw.hpp"
+#include "../seamv.hpp"
 #include "../vu_micro.hpp"
 #ifdef PS2_GPU
 #include "gpu/gpu.hpp"
@@ -816,7 +817,10 @@ void write(std::uint32_t reg, std::uint64_t value) {
         feed_image(reinterpret_cast<const std::uint8_t *>(&value), 8);
         break;
     case 0x60: case 0x61: case 0x62:
-        if (!queue::active()) signal(reg, value);
+        if (!queue::active()) {
+            if (g_render_path >= 1 && g_render_path <= 3) debug::count(static_cast<debug::Census>(debug::kGsSignalPath1 + g_render_path - 1));
+            signal(reg, value);
+        }
         break;
     default:
         break;
@@ -825,6 +829,8 @@ void write(std::uint32_t reg, std::uint64_t value) {
 
 void signal(std::uint32_t reg, std::uint64_t value) {
     debug::count(debug::kGsSignal);
+    if (reg == 0x61) debug::count(debug::kGsFinish);
+    if (reg == 0x62) debug::count(debug::kGsLabel);
     const std::uint32_t mask = static_cast<std::uint32_t>(value >> 32), id = static_cast<std::uint32_t>(value);
     switch (reg) {
     case 0x60:
@@ -1026,6 +1032,7 @@ void write_privileged(std::uint32_t address, std::uint64_t value) {
 void vblank(bool start) {
     if (start) {
         vu::flush_kicks();
+        if (seamv::on() && !queue::vu_active()) seamv::vblank(static_cast<std::uint32_t>(frame_count()));
         g_odd_field = !g_odd_field;
         raise(8);
         if (queue::active()) queue::post(queue::kVblank, static_cast<std::uint32_t>(frame_count()), 0, nullptr, 0);

@@ -24,6 +24,14 @@ enum Census : int {
     kVu0MemRead,
     kRtcRead,           // the guest reads the wall clock (sceCdReadClock, IOP or EE side)
     kGsSignal,          // SIGNAL/FINISH/LABEL raised (the VU1 thread drops PATH1 ones: gif.cpp transfer())
+    kGsSignalPath1,     // SIGNAL/FINISH/LABEL written on GIF path 1 (VU1 XGKICK output), path 2 (VIF1 DIRECT), path 3
+    kGsSignalPath2,
+    kGsSignalPath3,
+    kGsFinish,          // of kGsSignal: FINISH
+    kGsLabel,           // of kGsSignal: LABEL
+    kIntcVif1,          // INTC 5 raised (VIF1 i-bit)
+    kDmaVif1Pause,      // DMA channel 1 paused on a VIF1 stall
+    kCmsar1,            // the EE starts VU1 through CMSAR1 (ctc2 vi31; not implemented)
     kCensusCount
 };
 

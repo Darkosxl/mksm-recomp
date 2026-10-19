@@ -5,6 +5,7 @@
 #include "gs/gif.hpp"
 #include "gs/queue.hpp"
 #include "hw.hpp"
+#include "seamv.hpp"
 #include "vu_micro.hpp"
 
 #include "ps2/state.hpp"
@@ -34,8 +35,12 @@ Unit g_vu_side;
 std::uint64_t g_commands[2][128];
 std::uint8_t g_dry_run[16384];
 
+// Seam V records (seamv.hpp): the VIF1 payload being run on the VU1 side and the guest address it was DMA'd from
+thread_local const std::uint8_t *t_payload = nullptr, *t_payload_end = nullptr;
+thread_local std::uint32_t t_source = ~0u, t_posted_source = ~0u;
+
 bool on_vu_thread() { return gs::queue::role() == gs::queue::Role::Vu; }
-bool shadow(int unit) { return unit == 1 && gs::queue::vu_active() && !on_vu_thread(); }
+bool shadow(int unit) { return unit == 1 && (gs::queue::vu_active() || null_sink()) && !on_vu_thread(); }
 Unit &state(int unit) { return unit == 1 && on_vu_thread() ? g_vu_side : g_units[unit]; }
 
 std::uint8_t *vu_data(int unit) { return unit ? g_vu1_mem : g_vu0_mem; }
@@ -59,7 +64,8 @@ std::uint32_t unpack_words(std::uint32_t cmd, const Unit &u, std::uint32_t num) 
     return (data * bits + 31) / 32;
 }
 
-void run_vu(int unit, std::uint32_t address) {
+// kind: 0 MSCAL, 1 MSCALF, 2 MSCNT
+void run_vu(int unit, std::uint32_t address, int kind) {
     Unit &u = state(unit);
     if (unit == 1) {
         u.top = u.tops;
@@ -67,6 +73,7 @@ void run_vu(int unit, std::uint32_t address) {
         u.dbf = !u.dbf;
         u.tops = u.base + (u.dbf ? u.ofst : 0);
         if (shadow(unit)) return;
+        if (seamv::on()) seamv::program(kind, address, u.base, u.ofst, u.tops, u.top, u.itop, u.dbf);
         vu::flush_kicks();
         vu::set_tops(u.top, u.itop);
     } else {
@@ -153,6 +160,11 @@ void unpack(int unit, std::uint32_t cmd, const std::uint32_t *data, std::uint32_
     if (!num) num = 256;
     std::uint32_t addr = cmd & 0x3FFu;
     if (unit == 1 && ((cmd >> 15) & 1u)) addr += u.tops;
+    if (unit == 1 && !dry && seamv::on()) {
+        const auto *at = reinterpret_cast<const std::uint8_t *>(data);
+        const std::uint32_t source = t_source != ~0u && at >= t_payload && at < t_payload_end ? t_source + static_cast<std::uint32_t>(at - t_payload) : ~0u;
+        seamv::unpack(cmd, source, addr, num, u.cycle, u.mode, u.mask, u.tops);
+    }
     const std::uint32_t cl = u.cycle & 0xFFu, wl = (u.cycle >> 8) & 0xFFu;
     const std::uint32_t components = vn + 1;
     const std::uint32_t bits = element_bits(vl);
@@ -282,9 +294,9 @@ void execute(int unit, std::uint32_t cmd, const std::uint32_t *data, std::uint32
         break;
     case 0x14: case 0x15:
         if (unit == 1 && !shadow(unit) && gs::drawdbg::enabled()) gs::drawdbg::vu1_start(imm * 8u, g_vu1_code);
-        run_vu(unit, imm * 8u);
+        run_vu(unit, imm * 8u, op == 0x15 ? 1 : 0);
         break;
-    case 0x17: run_vu(unit, shadow(unit) ? 0u : vu::tpc(unit)); break;
+    case 0x17: run_vu(unit, shadow(unit) ? 0u : vu::tpc(unit), 2); break;
     case 0x20: u.mask = data[0]; break;
     case 0x30: std::memcpy(u.row, data, 16); break;
     case 0x31: std::memcpy(u.col, data, 16); break;
@@ -343,6 +355,18 @@ void process(int unit) {
 
 }
 
+bool null_sink() {
+    static const bool on = [] {
+        const char *e = std::getenv("PS2_VU1_NULL");
+        if (!e || !*e || *e == '0') return false;
+        std::fprintf(stderr, "[vif] PS2_VU1_NULL: VIF1 is walked as a shadow only; VU1 and GIF paths 1/2 never run\n");
+        return true;
+    }();
+    return on;
+}
+
+void posted_source(std::uint32_t guest) { t_posted_source = guest; }
+
 void reset() {
     for (Unit &u : g_units) u = Unit{};
 }
@@ -359,7 +383,14 @@ void stats() {
 }
 
 void transfer(int unit, const std::uint8_t *data, std::uint32_t qwc) {
-    if (shadow(unit)) gs::queue::vu().post(gs::queue::kVif1, qwc, gs::drawdbg::enabled() ? gs::drawdbg::vif1_ra() : 0, data, qwc * 16);
+    if (shadow(unit) && gs::queue::vu_active())
+        gs::queue::vu().post(gs::queue::kVif1, qwc,
+                             gs::drawdbg::enabled() ? gs::drawdbg::vif1_ra() : seamv::on() ? seamv::guest_address(data) : 0u, data, qwc * 16);
+    if (unit == 1 && seamv::on() && !shadow(unit)) {
+        t_payload = data;
+        t_payload_end = data + static_cast<std::size_t>(qwc) * 16;
+        t_source = !on_vu_thread() ? seamv::guest_address(data) : gs::drawdbg::enabled() ? ~0u : t_posted_source;
+    }
     Unit &u = state(unit);
     if (u.pending.empty() && !u.stalled) {
         const auto *words = reinterpret_cast<const std::uint32_t *>(data);
@@ -402,7 +433,7 @@ std::uint32_t read(int unit, std::uint32_t reg) {
 }
 
 void write(int unit, std::uint32_t reg, std::uint32_t value) {
-    if (shadow(unit)) gs::queue::vu().post(gs::queue::kVif1Write, reg, value, nullptr, 0);
+    if (shadow(unit) && gs::queue::vu_active()) gs::queue::vu().post(gs::queue::kVif1Write, reg, value, nullptr, 0);
     Unit &u = state(unit);
     switch (reg) {
     case 0x10:
