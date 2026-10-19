@@ -42,7 +42,8 @@ push)
   echo "pushed $tree" ;;
 run)
   job=${1:?job} tree=${2:?tree}; shift 2
-  ssh "$box" "mkdir -p ~/w/out/$job && cd ~/w/wt/$tree && rm -f ~/w/out/$job/rc &&
+  # the backgrounded command must be a plain command with all three fds redirected, or ssh waits for it
+  ssh "$box" "mkdir -p ~/w/out/$job && cd ~/w/wt/$tree || exit 1; rm -f ~/w/out/$job/rc
     setsid nohup bash -c $(printf '%q' "$* > ~/w/out/$job/log 2>&1; echo \$? > ~/w/out/$job/rc") > /dev/null 2>&1 < /dev/null &"
   echo "started $job on $box" ;;
 wait)
