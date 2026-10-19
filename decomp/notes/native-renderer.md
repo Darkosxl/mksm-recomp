@@ -1,6 +1,6 @@
 # Native renderer for MK:SM: design
 
-Status: sections 1-4 written; the rest is in progress (sections marked TODO are not filled yet).
+Status: sections 1-5 written; the rest is in progress (sections marked TODO are not filled yet).
 
 Scope: replace the VIF1 → VU1 → GIF → GS emulation path for the game's 3D with native WebGPU draw calls, keeping
 the approved look and leaving game state bit-identical. Design only; no code is changed by this document.
@@ -620,7 +620,121 @@ import pair around it; the frame shape makes that rare.
 
 ## 5. Staged plan
 
-TODO
+### 5.1 Where the frame time goes today (inputs to the estimates)
+
+All laptop numbers (RTX 4050 Laptop GPU, i7-12700H); power profiles differ between sources, so compare within a row.
+
+| Source | Foundry (worst scene) | Others |
+|---|---|---|
+| CPU threads, 1× (`D/perf-cpu/*/stat.txt`, 10-19, perf stat) | render thread **11.34 ms, 100 % busy → 88 fps**; VU1 thread 8.11 ms (123 fps); EE 7.49 ms (133 fps) | - |
+| CPU threads, 3x6 + pack + widescreen, with the submit worker | render 29.1 ms at 88 %; **gpusubmit 31.0 ms at 93 % (GPU-bound)**; VU1 13.4; EE 13.9 → 30 fps | academy: gpusubmit 100 % |
+| GPU stages, 1× (`D/check/<scene>/gpu.txt`) | 11.02 ms: raster 7.98, load_clut 1.63, snapshot 0.46, decode 0.46, upload 0.49 | academy 7.38, nether 6.43, raiden 4.50, goro 4.53 |
+| GPU stages, 3× (`D/check-s3/<scene>/gpu.txt`) | 18.28 ms (raster 14.61) | 10.3-17.1 ms (raster 8.2-13.7) |
+| GPU stages, 3x6 (`D/gpuwork/{gfinal,s0}-<scene>/gpu.txt`) | 20.9-21.3 ms (raster 17.0-17.4) | academy 16.9-18.5, raiden 19.1-20.8 |
+| fps 3x6, latest (commit 1bd1d52) | **49.2** | academy 63.0, nether 62.9, raiden 59.9 |
+| front-end split (drawdbg, single-threaded, inflated: ratios only) | GIF parse 17.49 ms, draw 7.45 ms (`remaster.md:99`); draw-ms by category: character 3.98, highlight 1.81, world 1.21, post_fx 0.35 → **3D ≈ 95 %** | parse 1.4-2.6, draw 2.1-4.5 |
+| raster breakdown, Foundry 3x6 (`remaster.md:212-215`) | list walk + setup ~4.7, edge/interp/per-pixel ~7.8, texture sampling ~6, frame/Z traffic ~2.7 ms: no single hotspot | - |
+
+So: at 1× the render thread (GIF front end) binds; at 1440p (3x6) the compute raster binds. Both scale with the
+**primitive count of the 3D run**, which is ≥ 96 % of every gameplay frame (§4.1.2). The VU1 thread (8-13 ms; the
+hottest program is the character body stub C824…, `remaster.md:220-222`) and the EE (7.5-14 ms, part of it spinning on
+GS CSR reads) are the next ceilings at 110-133 fps. 60 fps at 1440p needs ≤ 16.7 ms on every thread.
+
+A native draw of the whole 3D run is small work for the GPU: 20-60k triangles with one or two texture fetches per
+pixel at 2560×1344 is well under 2 ms on this GPU (estimate; measured in stage 1).
+
+### 5.2 Stages
+
+Each stage is behind a runtime switch (`PS2_NATIVE=off|<categories>|all`, default off), is a rendering-only switch
+(never part of the lockstep identity, because it must not change state: verified, not assumed), and keeps the
+emulated path as the reference.
+
+**Stage 0: tooling and exact wins (no native rendering yet).**
+- Drop ATST NEVER + AFAIL KEEP primitives at the GIF tag in today's `gpu::draw` and `raster.cpp` (§4.1.5): exact by
+  construction, 25 % of Foundry's primitives, 5k in academy, kahn, nether. Optionally drop the dead shadow-prep chain
+  (0 px, §4.1.3; GS memory is not hashed) behind its own switch.
+- The record capture for Seam V (§2.1): on the VU thread at MSCAL/MSCALF/MSCNT (`vif.cpp:283-287`), write (image key,
+  entry, VU1 mem[0..45], the batch at TOP, BASE/OFFSET/TOPS, the A+D state) per batch to a file. Run R2/R3 (§7).
+- An offline harness (`remaster/natrec.py` + a headless wgpu test binary) that replays records through the WGSL
+  shaders and through `vu_micro.cpp` and compares per vertex: XYZ (12.4), Z, Q, STQ, RGBA, fog, ADC. This is the
+  oracle for §3's "must be exact" list, before anything is drawn.
+- **The per-category diff tool**: `remaster/natdiff.sh <scene> <category>` runs the scene twice to the capture frame
+  (state from `remaster/scenes.tsv`): (a) emulated, with every other category skipped by group (the framedbg isolation
+  mechanism, `PS2_DRAW_SKIP`), and (b) native for that category only on a cleared target; then `natdiff.py` compares
+  colour and depth inside the category's mask (`D/framedbg/categories/<cat>.png`), writing a heatmap PNG and a JSON
+  line: max |Δ| per channel, % of pixels with |Δ| > 2, PSNR, depth-tie mismatches. Thresholds per category from §4.5:
+  exact categories must be 0; perceptual ones get a threshold Cem approves from the heatmaps (the approved look is the
+  reference, not a metric).
+- fps effect: the no-op drop alone, Foundry: render thread −15-25 % (its share of character draw time), GPU raster
+  −10-20 % (they are binned and walked today). Estimate 49 → 53-56 fps at 3x6. Exact, so the gate is `check.sh` 12/12.
+- Risk: none for state; the record files are large (cap per frame).
+
+**Stage 1 (first milestone): world opaque, native, side by side.**
+- Category: world, programs 567ce7d8 and 002c80ed (plus 50bda0e2 in goro), opaque only (blend 0101 with As ≥ 0x80 and
+  the AFAIL split). One shader W (§3.6) with fog and the point light, trilinear sampling from a decoded T4/T8 cache,
+  depth32float.
+- Mode **side**: the emulated path renders everything as today; the native path renders the world records into a
+  second target at the output resolution, shown in a split view (`PS2_NATIVE_VIEW=split|native|emulated|diff`). No
+  hand-off yet, so this costs fps (both paths run).
+- Mode **replace**: the world batches skip VU1 + GIF + compute raster; the native pass draws into the frame target
+  first (the world run is the first 3D block after the clear: §1.3, §4.1.2), then writes back into VRAM before the
+  first emulated draw that follows (characters). This is the full hybrid machinery of §4.6 with one hand-off.
+- fps effect (replace): world is 15-25 % of the 3D primitives in Foundry/academy (more in koop, nether), so roughly
+  −15-20 % render-thread and raster time, minus 0.1-0.3 ms of write-back. Estimate +8-15 % fps at 3x6. Small; the
+  point of stage 1 is to prove the seam, the shader, the hand-off and the gate.
+- Risks: AFAIL split order at foliage edges; trilinear LOD mismatch (K values down to −36); depth ties between native
+  world and emulated characters (both write Z24; the native depth is exact Z/2²⁴, the interpolation differs) →
+  characters could z-fight against the floor. Mitigation: the write-back also writes Z for the hand-off until stage 2.
+- Verification: state hash of every frame identical with `PS2_NATIVE=world` vs off (the `decomp/gate.sh` pattern,
+  all reference scenes); `natdiff` world within the approved threshold in all 12 scenes; lockstep co-op with mixed
+  peers (one native, one not) identical (`remaster/coop/test.sh pair … PS2_NATIVE=world -- PS2_NATIVE=off`).
+
+**Stage 2: characters (3-pass set A, 1-pass set B).**
+- Shader C with 1/2/3-bone switches and the three pass modes; positions computed once per batch (a compute pass into
+  a storage buffer, then three draws) so the passes tie exactly in depth; the dead third pass (ATST NEVER) dropped;
+  highlight 0211 with DstAlpha under the A/128 storage; shading 1202 multiply (doubling only if R5 shows As > 0x80).
+  Affine texturing (Q = 1) kept in faithful mode.
+- fps effect: characters are about 78 % of Foundry's draw time (3.98 + 1.81 of 7.45 ms) and the hottest VU1 program;
+  with world + characters native, the render thread loses most of its GIF work and the compute raster most of its
+  primitives. Estimate: Foundry 1× render thread 11.3 → 3-4 ms, GPU 3x6 21 → 5-7 ms; the frame becomes EE/VU-thread
+  bound (§5.1): 3x6 ~49 → 70-90 fps (estimate). This is the stage that reaches 1440p/60 in every gameplay scene.
+- Risks: the 2²³ ambient bias and the raw-float colour write (§3.4; confirm with R3), bone-group batching (one MSCAL
+  per bone group means hundreds of small draws: batch consecutive records with one storage buffer and an instanced
+  draw per group), the 0x3C RGB_ONLY pass in academy/nether.
+- Verification: as stage 1, plus the per-vertex record oracle for all six programs, and natdiff for the three
+  character categories separately.
+
+**Stage 3: the rest of the 3D run (world_alpha, sky, shadow, effects).**
+- world_alpha and sky are shader W with CLIP cull; shadow is the untextured 8a4e53a2 path with a static RGB mask;
+  effects mix VU1 (c372c643) and path-2 sprites/strips (the sprites go through the same vertex-pulling path from GIF
+  packets). The DATE strip in raiden effects (142 prims) stays on compute.
+- After this stage the hand-off is once per frame: native clear → 3D run → shadow → effects, one colour write-back.
+- fps effect: small (these are ~10 % of primitives); the gain is structural (one hand-off, no Z write-back).
+- Risks: As up to 1.9 in effect sprites (lerp clamps: perceptual gate), the guard-band cull for sky boxes.
+
+**Stage 4: post FX (glow chain).**
+- Native ping-pong at the output resolution's 320×112 equivalent, mirroring today's texcache runs for exactness, or
+  accept a perceptual gate. Skip the shadow-prep chain (0 px). The write-back moves after the glow.
+- fps effect: small (1,020 sprites, ~0.35 ms render thread plus their raster); the value is a resolution-correct glow
+  and a base for the modern mode's bloom.
+- Risks: the 18 self-reads; the 1:2 bilinear upsample at scale; FBP 0x8c aliasing Z (safe because of the draw-0 clear).
+
+**Stage 5: HUD and UI.** Path 3 (0x37e578) and path-2 strips. Keep them on compute unless the HUD re-anchoring for
+16:9 (`remaster.md` step 5) needs native quads; DATE stays on compute. fps effect: negligible.
+
+**Stage 6: switch off VIF1/VU1/GS emulation for natively drawn frames.**
+- For a frame whose draws are all in the native set, the VU thread stops executing VU1 programs (it still parses the
+  VIF stream into records and keeps the VU1-memory shadow) and the compute GS draws only the leftovers (HUD/DATE, or
+  nothing). VRAM is still kept current where a later reader needs it (savestates, menus, the FMV, texture uploads).
+- fps effect: the VU1 thread drops from 8-13 ms to the VIF parse (~1-2 ms, estimate), removing the last
+  render-related ceiling; the EE becomes the limit (~133 fps at 1× in Foundry).
+- Risks and verification: everything in §6; this is the stage where the exactness traps bite, because the VU1 and GS
+  no longer run. Gate: every frame's state hash in all reference scenes, `remaster/statecheck.sh`, lockstep co-op
+  3000 frames with mixed peers, and a 30-minute soak per scene class (gameplay, menus, FMV transitions, pause, load).
+
+**Then Seam E** (§2.2), category by category where it pays: whole-mesh static vertex buffers keyed by the model
+pointer, a real bone palette (one draw per mesh instead of one per bone group), per-pixel lighting from the source
+normals (the modern mode). Gated the same way, plus the decomp's own difftest for every decompiled function.
 
 ## 6. Exactness
 

@@ -6,6 +6,10 @@ usage: python3 -I decomp/notes/tools/io_access_scan.py [--all] [--ptr] [--data] 
   --all   : also SIO/IPU/other 0x1000xxxx regs (default shows only the render-relevant ones + timers + INTC)
   --ptr   : also report in-range constants passed as call args (a0-a3 at jal/jalr), stored to memory, or returned
   --data  : also report .data/.rodata words that hold in-range addresses (pointer tables)
+  --cop   : also report coprocessor-side observers: bc0f/bc0t (CPCOND0 = D_STAT.CIS vs D_PCR.CPC, i.e. DMA-end
+            waits), bc2f/bc2t (VU1 busy), cfc2/ctc2 of vi28 FBRST / vi29 VPU_STAT, mfc0/mtc0 of Count($9),
+            Compare($11) and the perf counters ($25), ei/di
+  --window: print up to 24 instructions after each read (shows the bit test of poll loops)
   --fn    : only functions starting at <hex>
 Run from anywhere; paths are relative to the repo root.
 
@@ -13,9 +17,9 @@ Constant tracking: one linear pass per function (functions.tsv); lui/addiu/daddi
 32-bit values; any other GPR write kills the register; jal/jalr kill caller-saved regs after the delay slot;
 after an unconditional transfer (j/jr/b) the state restarts from what forward branches recorded for that address
 (intersection of all recorded states). kseg0/kseg1 aliases (0x9xxx/0xbxxx) are folded to physical addresses.
-A load is marked POLL when a branch within the next 16 instructions jumps back to an address <= the load.
+A load is marked POLL when a branch within the next 24 instructions jumps back to an address <= the load.
 """
-import argparse, bisect, os, struct, sys
+import argparse, bisect, os, sys
 
 ROOT = os.path.abspath(os.path.join(os.path.dirname(os.path.abspath(__file__)), '..', '..', '..'))
 sys.path.insert(0, os.path.join(ROOT, 'decomp', 'tools'))
@@ -177,7 +181,7 @@ def dis(pc, w, fname=None):
             return '%s %s,%s' % (BR_RI[rt], GPR[rs], t)
         if op in (2, 3):
             return '%s %s' % ('jal' if op == 3 else 'j', t + (' <%s>' % fname(bt[0]) if fname else ''))
-        return 'bc%d%s %s' % (op - 0x10, 'tf'[rt & 1], t)
+        return 'bc%d%s %s' % (op - 0x10, 'ft'[rt & 1], t)
     if op == 0x10:
         if rs == 0:
             return 'mfc0 %s,$%d' % (GPR[rt], rd)
@@ -319,7 +323,7 @@ def scan_fn(elf, s, e, opts, emit):
 def poll_info(elf, pc, e, fname):
     """Is the access at pc inside a short loop? Return (is_poll, window lines)."""
     lines, poll = [], None
-    for k in range(1, 17):
+    for k in range(1, 25):
         q = pc + 4 * k
         if q >= e:
             break
@@ -341,6 +345,7 @@ def main():
     ap.add_argument('--all', action='store_true')
     ap.add_argument('--ptr', action='store_true')
     ap.add_argument('--data', action='store_true')
+    ap.add_argument('--cop', action='store_true')
     ap.add_argument('--fn')
     ap.add_argument('--window', action='store_true', help='print the instruction window after each read')
     opts = ap.parse_args()
@@ -381,6 +386,31 @@ def main():
         if opts.window and lines and kind == 'mem' and is_load:
             for ln in lines:
                 print('\t\t' + ln)
+
+    if opts.cop:
+        print('\n# coprocessor observers (kind\tpc\tfunction\tmodule\twhat\tinsn)')
+        for s, e, n, mod in funcs:
+            if opts.fn and s != int(opts.fn, 16):
+                continue
+            if not (elf.T0 <= s < elf.T1):
+                continue
+            nm = names.get(s, n)
+            for pc in range(s, min(e, elf.T1), 4):
+                w = elf.w(pc)
+                op, rs, rt, rd = w >> 26, (w >> 21) & 31, (w >> 16) & 31, (w >> 11) & 31
+                what = None
+                if op in (0x10, 0x12) and rs == 8:
+                    what = ('CPCOND0 (DMAC CIS&CPC)' if op == 0x10 else 'CPCOND2 (VU1 busy)')
+                    what += ' loops-while-%s' % ('true' if rt & 1 else 'false') if branch_target(pc, w)[0] <= pc else ''
+                elif op == 0x12 and rs in (2, 6) and rd in (28, 29):
+                    what = '%s vi%d %s' % ('cfc2' if rs == 2 else 'ctc2', rd, 'FBRST' if rd == 28 else 'VPU_STAT')
+                elif op == 0x10 and rs in (0, 4) and rd in (9, 11, 25):
+                    what = '%s $%d %s' % ('mfc0' if rs == 0 else 'mtc0', rd,
+                                          {9: 'Count', 11: 'Compare', 25: 'PerfCounter'}[rd])
+                elif op == 0x10 and rs == 0x10 and (w & 63) in (0x38, 0x39):
+                    what = 'ei' if (w & 63) == 0x38 else 'di'
+                if what and (opts.all or what not in ('ei', 'di')):
+                    print('cop\t%x\t%s\t%s\t%s\t%08x' % (pc, nm, mod, what, w))
 
     if opts.data:
         print('\n# data words holding in-range addresses')
