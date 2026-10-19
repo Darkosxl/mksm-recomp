@@ -316,4 +316,39 @@ struct Packet {
     }
 };
 
+// ---- sceVif1PkOpenUnpack / sceVif1PkCloseUnpack, as the game inlines them ----
+
+// Writes an UNPACK with NUM 0 at the cursor and leaves it open (Chain::code, Chain::code_unit).
+inline void OpenUnpack(const Chain &chain, Packet &pk, vif::Format format, std::uint32_t vu_addr) {
+    chain.code = pk.p;
+    pk.w32(vif::Unpack(format, vu_addr));
+    chain.code_unit = vif::num_field(1) | vif::element_bits(format);
+}
+
+// What a close leaves in the original's registers.
+struct Closed {
+    std::uint32_t at;         // the code's address
+    std::uint32_t word;       // the code with its NUM
+    std::uint32_t elem_bits;  // code_unit & 0xffff (zero-extended)
+    std::uint32_t num;        // the quotient (divu's LO)
+    std::uint32_t step;       // num * the NUM step (mult's LO)
+};
+
+// Closes the open code at end (the address after its data): NUM = (words after the code) * 32 / element bits, added
+// in units of the NUM step, with the original's DIVU then MULT (HI/LO are the MULT's). break_pc: the address of the
+// zero-divisor BREAK where the original has one (the game has one only on some of its closes), 0 for none.
+inline Closed CloseUnpack(ps2::Cpu &c, const Chain &chain, std::uint32_t end, std::uint32_t break_pc) {
+    const std::uint32_t unit = chain.code_unit, at = chain.code;
+    const std::uint32_t elem_bits = unit & 0xffffu, step = unit & 0xffff0000u;
+    const std::uint32_t bits = static_cast<std::uint32_t>(static_cast<std::int32_t>(end - 4u - at) >> 2) << 5;
+    if (break_pc && elem_bits == 0) ps2::breakpoint(c, break_pc);
+    ps2::mmi::divu(c, 0, bits, elem_bits);
+    const std::uint32_t num = c.lo.w[0];
+    ps2::mmi::mult(c, 0, step, num);
+    const std::uint32_t word = ps2::rd<std::uint32_t>(at) + c.lo.w[0];
+    ps2::wr<std::uint32_t>(at, word);
+    chain.code = 0;
+    return {at, word, elem_bits, num, c.lo.w[0]};
+}
+
 }

@@ -10,8 +10,8 @@ using namespace ps2;
 using namespace ps2::gpr;
 using namespace decomp::render;
 
-// The draw flags (fn_237660's a2, which keeps the previous draw's flags at 0x65e458 to compute what changed). Only
-// the bits read here; the names say what each bit selects below.
+// The segment's draw flags (fn_237660's a2; it keeps the previous segment's flags at 0x65e458 to compute what changed).
+// Only the bits read here; the names say what each bit selects below.
 enum DrawFlags : std::uint64_t {
     kFog = 0x00000080,          // FOGCOL from the fog colour
     kAlphaTest = 0x00000100,    // cut-out: TEST_1 with an alpha test, and a fixed-alpha blend
@@ -33,7 +33,7 @@ inline constexpr std::uint64_t kBlendBits = kPass2Shade | kFixedAlpha | kAdditiv
 inline constexpr std::uint32_t kChainPage = 0x00660000u;  // lui page of the chain packet (0x65e300 = page - 0x1d00)
 inline constexpr std::uint32_t kScreen = 0x0067b758u;     // the screen: z buffer base / format (fn_275300, fn_2753a0)
 inline constexpr std::uint32_t kFogColor = 0x0065e380u;   // -> fog colour as three words r, g, b
-inline constexpr std::uint32_t kDebugView = 0x004f4be0u;  // render debug view; 3 tints objects by type through FOGCOL
+inline constexpr std::uint32_t kDebugView = 0x004f4be0u;  // render debug view; 3 tints segments by type through FOGCOL
 inline constexpr std::uint32_t kRgbOnlyCutout = 0x00663458u;  // cut-outs write colour only (alpha test NEVER, RGB_ONLY)
 inline constexpr std::uint32_t kFixedAlphaValue = 0x0065e454u;  // ALPHA FIX for kFixedAlpha and cut-outs
 inline constexpr std::uint32_t kFrameIndex = 0x004f4d68u;  // which of the two frame buffers is the back buffer
@@ -90,7 +90,7 @@ std::uint64_t fixed_alpha_blend(std::uint64_t flags) {
 // The body after the TEX1_1 call. False when a callee did not come back.
 bool emit_state(Cpu &c) {
     const std::uint64_t flags = c.r[s2].d[0], changed = c.r[s4].d[0];
-    const std::uint32_t object = c.r[s5].w[0];
+    const std::uint32_t segment = c.r[s5].w[0];
     c.r[s3].sd[0] = kChainPage;
 
     // ZBUF_1, z writes off: when kNoZWrite is set and changed
@@ -159,14 +159,14 @@ bool emit_state(Cpu &c) {
         tick(c, 20);
     }
 
-    // FOGCOL as a debug tint: green for objects of type 0, red for type 2
+    // FOGCOL as a debug tint: green for segments of type 0, red for type 2
     const std::uint32_t view = rd<std::uint32_t>(kDebugView);
     c.r[v0].sd[0] = 0x004F0000;
     set32(c.r[v1], view);
     c.r[a0].d[0] = 3;
     tick(c, 5);
     if (view == 3) {
-        const std::uint32_t type = rd<std::uint32_t>(object + 0x20);
+        const std::uint32_t type = rd<std::uint32_t>(segment + 0x20);
         set32(c.r[a0], type);
         tick(c, 3);
         std::uint64_t tint = 0;
@@ -360,10 +360,11 @@ bool emit_state(Cpu &c) {
 
 }
 
-// Writes the GS state of a draw's material into the open A+D packet of the frame chain, as GIF A+D pairs: TEX1_1
-// (fn_236db0), then the z write, alpha test, blend, fog colour and texture wrap of context 1, and the second pass's
-// context 2 when the flags ask for one. a0 = the object drawn, a1 = its draw flags, a2 = the flags that changed since
-// the previous draw (all ones for the first). Called by fn_237660 when the flags have bit 0x200.
+// Writes the GS state of a mesh segment's material into the open A+D packet of the frame chain, as GIF A+D pairs:
+// TEX1_1 (fn_236db0, from the segment's LOD values), then the z write, alpha test, blend, fog colour and texture wrap of
+// context 1, and the second pass's context 2 when the flags ask for one. a0 = the segment record (fn_23a280's), a1 =
+// its draw flags, a2 = the flags that changed since the previous segment (all ones for the first). Called through
+// fn_237660 by the segment packer fn_23a280, for segments whose flags have bit 0x200, when the GS state may change.
 PS2_DECOMP(00236F30, SetDrawGsState) {
     StackFrame f(c, 0x70);
     f.sq(s2, 0x40);
@@ -375,9 +376,9 @@ PS2_DECOMP(00236F30, SetDrawGsState) {
     f.sd(ra, 0x00);
     c.r[s2].d[0] = c.r[a1].d[0];  // flags
     c.r[s4].d[0] = c.r[a2].d[0];  // changed
-    c.r[s5].d[0] = c.r[a0].d[0];  // object
+    c.r[s5].d[0] = c.r[a0].d[0];  // segment
     tick(c, 13);
-    if (!call(c, 0x00236DB0u, Ra{0x00236F64u})) return;  // TEX1_1 (with its LOD from the object)
+    if (!call(c, 0x00236DB0u, Ra{0x00236F64u})) return;  // TEX1_1
     if (!emit_state(c)) return;
 
     f.lq(s0, 0x60);

@@ -33,39 +33,6 @@ enum VuAddr : std::uint32_t { kVuAlpha = 0x28, kVuTest = 0x29, kVuTex0 = 0x2a, k
 constexpr std::uint32_t kCycle = vif::Stcycl(4, 4);
 constexpr std::uint32_t kV4_32Unit = vif::num_field(1) | vif::element_bits(vif::V4_32);  // 0x10080
 
-// sceVif1PkOpenUnpack inlined: writes an UNPACK with NUM 0 and leaves it open (Chain::code, ::code_unit).
-void OpenUnpack(const Chain &chain, Packet &pk, vif::Format format, std::uint32_t vu_addr) {
-    chain.code = pk.p;
-    pk.w32(vif::Unpack(format, vu_addr));
-    chain.code_unit = vif::num_field(1) | vif::element_bits(format);
-}
-
-// What the close leaves in the original's registers.
-struct Closed {
-    std::uint32_t at;         // the code's address
-    std::uint32_t word;       // the code with its NUM
-    std::uint32_t elem_bits;  // code_unit & 0xffff (zero-extended)
-    std::uint32_t num;        // the quotient (divu's LO)
-    std::uint32_t step;       // num * the NUM step (mult's LO)
-};
-
-// sceVif1PkCloseUnpack inlined: NUM = (words after the code) * 32 / element bits, added in units of the NUM step,
-// with the original's DIVU then MULT (HI/LO are the MULT's). break_pc: the address of the zero-divisor BREAK where the
-// original has one (it has one only on some of its closes), 0 for none.
-Closed CloseUnpack(Cpu &c, const Chain &chain, std::uint32_t end, std::uint32_t break_pc) {
-    const std::uint32_t unit = chain.code_unit, at = chain.code;
-    const std::uint32_t elem_bits = unit & 0xffffu, step = unit & 0xffff0000u;
-    const std::uint32_t bits = static_cast<std::uint32_t>(static_cast<std::int32_t>(end - 4u - at) >> 2) << 5;
-    if (break_pc && elem_bits == 0) breakpoint(c, break_pc);
-    mmi::divu(c, 0, bits, elem_bits);
-    const std::uint32_t num = c.lo.w[0];
-    mmi::mult(c, 0, step, num);
-    const std::uint32_t word = rd<std::uint32_t>(at) + c.lo.w[0];
-    wr<std::uint32_t>(at, word);
-    chain.code = 0;
-    return {at, word, elem_bits, num, c.lo.w[0]};
-}
-
 // One qword of VU1 data at vu_addr: STCYCL 4,4 and UNPACK V4-32, closed.
 Closed UnpackQword(Cpu &c, const Chain &chain, std::uint32_t vu_addr, std::uint64_t lo, std::uint64_t hi,
                    std::uint32_t break_pc = 0) {
