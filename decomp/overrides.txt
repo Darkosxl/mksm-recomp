@@ -9,3 +9,5 @@
 0026DF80	texture_set_link_c_params	decomp/src/renderer/texture_manager/texture_set_link_c_params.cpp
 0026F068	cri_set_vsync_callback	decomp/src/cri/file/cri_set_vsync_callback.cpp
 00273C38	static_init_678920	decomp/src/static_init/static_init_678920.cpp
+00275260	screen_page_this_field	decomp/src/renderer/screen/screen_page_this_field.cpp
+002752B0	screen_page_other_field	decomp/src/renderer/screen/screen_page_other_field.cpp

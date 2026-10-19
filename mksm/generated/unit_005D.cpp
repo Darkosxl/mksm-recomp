@@ -1,4 +1,10 @@
 #include "units.hpp"
+#include "ps2/decomp_hook.hpp"
+
+namespace decomp {
+extern ps2::DecompFn hook_00275260;
+extern ps2::DecompFn hook_002752B0;
+}
 
 namespace gen {
 
@@ -1694,6 +1700,7 @@ L_00275238:
     c.budget -= 10;
     { const std::uint32_t t = c.r[31].w[0];  c.pc = t; return; }
 L_00275260:
+    if (::decomp::hook_00275260.on) [[unlikely]] { if (decomp_enter(c, ::decomp::hook_00275260, depth)) return; }
     set32(c.r[2], ld32((c.r[4].w[0])));
     c.budget -= 3;
     { const bool t = c.r[2].d[0] != 0ull;  if (t) { goto L_00275278; } }
@@ -1717,6 +1724,7 @@ L_002752A0:
     c.budget -= 3;
     { const std::uint32_t t = c.r[31].w[0];  c.pc = t; return; }
 L_002752B0:
+    if (::decomp::hook_002752B0.on) [[unlikely]] { if (decomp_enter(c, ::decomp::hook_002752B0, depth)) return; }
     set32(c.r[2], ld32((c.r[4].w[0])));
     c.budget -= 3;
     { const bool t = c.r[2].d[0] != 0ull;  if (t) { goto L_002752C8; } }
