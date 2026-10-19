@@ -83,6 +83,23 @@ The tools for this:
    (`mksm/build.sh --retranslate` does the same). Only the hooked unit should change.
 4. Build. Record contexts, replay them with `difftest`, then run the scene gate (commands below).
 
+## Shared helpers
+
+One header per subsystem. A helper that is missing goes into the header that owns it, never into a second copy: two
+inline functions or structs of one name with different bodies are an ODR violation, and the linker keeps one silently.
+`decomp/headers.sh` (step 0 of `decomp/ci.sh`, cheap enough for the laptop) compiles every header in one translation
+unit, so a clash fails as a redefinition.
+
+| Header | Namespace | What |
+|---|---|---|
+| `runtime/include/ps2/decomp.hpp` | `ps2` | `gptr<T>` (a guest pointer), `Field<T>` (a member of a guest struct view: reading it is a load, assigning it a store), `StackFrame`, `call`/`tail`, `tick`/`poll` |
+| `decomp/src/render/vif.hpp` | `decomp::render` | The VIF1 chain: `vif::`, `dma::`, `gs::`, `gif::` encoders (constexpr, unmasked as the game composes them), `Qword`/`Ad`/`put_ad`, the `Packet` cursor, `Chain` (the sceVif1Packet at 0x65E300; `Chain{0x006783E0u}` is TextureManager's upload packet) with the inlined OpenUnpack/CloseUnpack, through the write pointer or at a cursor |
+| `decomp/src/texture/texture_manager.hpp` | `decomp::texture` | `TextureManager`, `TextureSlot` (links A/B/C), `Psm`, the MULT that indexes the slots |
+| `decomp/src/render/ps2render/lights.hpp` | `decomp::render::lights` | The per-node lighting globals |
+| `decomp/include/screen_buffers.hpp` | `decomp` | The frame-buffer setup at 0x67B758 (offset layout, `guest.hpp`) |
+
+Headers in `decomp/src` and `decomp/include` both count towards the lockstep build id (`cmake/build_id.cmake`).
+
 ## Commands for the AWS box
 
 Never run these on the laptop. They assume the laptop's layout, with `P` the folder that holds `wt/`:
@@ -135,6 +152,40 @@ rm -rf $D/difftest/ctx-*                   # contexts are ~32 MB each
 **If `remaster/check.sh` fails with `PS2_DECOMP` unset, `golden.json` is behind this branch's base (5ba7f84), and
 the decomp is not the cause.** `decomp/gate.sh` compares the two settings on the same build, so it does not depend
 on `golden.json`.
+
+## Synthetic contexts
+
+For functions the recorded scenes reach rarely or never. `decomp/difftest/synth.py` is the shared core (`Ctx`, helpers,
+the `PS2DIFF1` writer); `decomp/difftest/synth/batch_*.py` hold one generator per function. On the AWS box, with a
+built tree:
+
+```bash
+decomp/synth.sh $P/logs/synth               # every function that has a generator
+decomp/synth.sh $P/logs/synth 23d2f0,26de50 # only these
+```
+
+- Writes, replays (`difftest --keep-going`) and deletes the contexts under `$P/logs`. Reports: `synth-counts.txt`
+  (contexts per function and result) and `synth-replay.log`. Exit status 1 on any failure.
+- Env: `COUNT` (contexts per function; default the generator's), `SEED`, `BASE=<ctx>`, `BATCH` (16).
+- **Zero machine** (default): memory is all zero except what the generator writes, so files are sparse (KB each). Every
+  GPR (128 bits), HI/LO, the FPRs, FACC and FCR31 are random.
+- **Base snapshot** (`base=True`): a recorded context is the machine, so callees see a running game. Each file is
+  ~33 MB, written and replayed `BATCH` at a time. The snapshot is `BASE`, or the script records one: the first call of
+  `screen_page_this_field` (0x00275260) in ci.sh's koop run.
+- `python3 -I decomp/difftest/synth.py --list`: every generator, its machine and its default count.
+
+To add a function, register a generator in its batch's module (a new `synth/*.py` file is picked up). It sets the
+arguments and the memory the function reads so that every branch comes up:
+
+```python
+from synth import A0, float_bits, gen, ram_addr
+
+@gen(0x00326140)                   # base=True: on the snapshot (call scramble() first); count=N (default 64/32)
+def ground_y(c, rng):              # c: a fresh Ctx (random registers), rng: its random.Random
+    o = ram_addr(rng, 0x100, 4)
+    c.set_ptr(A0, o)               # also set_reg/set_sext/set_arg/set_low/set_f, write/w16/w32/w64/words
+    c.w32(o + 0xf4, float_bits(rng))
+```
 
 ## Environment
 
