@@ -21,7 +21,10 @@
 //   'K' u64 key, 16384 bytes                             a VU1 code image, the first time its key (FNV-1a-64) is seen
 //   'C' u32 seq, 46 x 16 bytes                           VU1 data memory qwords 0-45, written when they change
 //   'G' u32 seq, u32 n, n x (u32 reg, u32 0, u64 value)  GS registers last set through GIF paths 2/3, when they change
-//   'B' Batch, nunpack x Unpack, qwords x 16 bytes       one VU1 program start (MSCAL/MSCALF/MSCNT) and the batch at TOP
+//   'B' Batch, nunpack x Unpack, the packed data of the unpacks that carry it (Unpack.words each), qwords x 16 bytes:
+//       one VU1 program start (MSCAL/MSCALF/MSCNT), the VIF UNPACKs since the previous one, and the batch at TOP. An
+//       absolute UNPACK above mem[45] keeps its packed data: the world programs' vertex colours land that way, into the
+//       output area of the batch that has just started (so they belong to the previous record's batch).
 //   'R' u32 batch seq, vf[32], acc, vi[16] (u16), q p i r mac status clip tpc (u32)   VU1 registers before the program
 namespace ps2::seamv {
 
@@ -48,7 +51,8 @@ struct Unpack {
     std::uint32_t mask;
     std::uint16_t num;   // 1-256
     std::uint16_t tops;  // TOPS when it ran
-    std::uint8_t mode, spare[3];
+    std::uint8_t mode, spare;
+    std::uint16_t words;  // packed data words kept in the record (absolute unpacks above mem[45]), else 0
 };
 #pragma pack(pop)
 static_assert(sizeof(Batch) == 52 && sizeof(Unpack) == 24);
@@ -111,6 +115,7 @@ bool g_gs_valid[0x64];
 bool g_gs_dirty = false;
 
 std::vector<Unpack> g_unpacks;
+std::vector<std::uint32_t> g_raw;
 std::uint32_t g_batch_hi = 0;  // qwords past TOPS written by FLG unpacks since the last program start
 std::uint32_t g_draw_pc = ~0u, g_draw_hash = 0;
 
@@ -186,15 +191,19 @@ void vblank(std::uint32_t frame) {
 void code_changed() { g_code_dirty.store(true, std::memory_order_relaxed); }
 
 void unpack(std::uint32_t cmd, std::uint32_t source, std::uint32_t address, std::uint32_t num, std::uint32_t cycle, std::uint32_t mode,
-            std::uint32_t mask, std::uint32_t tops) {
+            std::uint32_t mask, std::uint32_t tops, const std::uint32_t *data, std::uint32_t words) {
     if (!on()) return;
     const std::uint32_t cl = cycle & 0xFFu, wl = (cycle >> 8) & 0xFFu;
     std::uint32_t span = num;  // qwords from the first written to one past the last
     if (wl && cl > wl) span = num + ((num - 1) / wl) * (cl - wl);
     if ((cmd >> 15) & 1u) g_batch_hi = std::max(g_batch_hi, address - tops + span);
     if (!g_in_range) return;
+    const bool keep = !((cmd >> 15) & 1u) && (address & 0x3FFu) >= kConstQwords;
+    if (!keep) words = 0;
     g_unpacks.push_back(Unpack{cmd, source, static_cast<std::uint16_t>(address & 0x3FFu), static_cast<std::uint16_t>(cycle), mask,
-                               static_cast<std::uint16_t>(num), static_cast<std::uint16_t>(tops), static_cast<std::uint8_t>(mode), {}});
+                               static_cast<std::uint16_t>(num), static_cast<std::uint16_t>(tops), static_cast<std::uint8_t>(mode), 0,
+                               static_cast<std::uint16_t>(words)});
+    g_raw.insert(g_raw.end(), data, data + words);
 }
 
 void program(int kind, std::uint32_t pc, std::uint32_t base, std::uint32_t ofst, std::uint32_t tops, std::uint32_t top, std::uint32_t itop, bool dbf) {
@@ -210,6 +219,7 @@ void program(int kind, std::uint32_t pc, std::uint32_t base, std::uint32_t ofst,
     g_batch_hi = 0;
     if (!g_in_range) {
         g_unpacks.clear();
+        g_raw.clear();
         return;
     }
     if (!g_framed) {
@@ -221,6 +231,7 @@ void program(int kind, std::uint32_t pc, std::uint32_t base, std::uint32_t ofst,
     if (g_bytes >= config().cap) {
         ++g_dropped;
         g_unpacks.clear();
+        g_raw.clear();
         return;
     }
     if (g_images.insert(g_image).second) put('K', &g_image, 8, g_vu1_code, 16384);
@@ -262,10 +273,12 @@ void program(int kind, std::uint32_t pc, std::uint32_t base, std::uint32_t ofst,
     b.cseq = g_cseq;
     b.gseq = g_gseq;
     b.qwords = static_cast<std::uint16_t>(hi);
-    std::vector<std::uint8_t> data(static_cast<std::size_t>(hi) * 16);
-    for (std::uint32_t q = 0; q < hi; ++q) std::memcpy(data.data() + q * 16, g_vu1_mem + ((top + q) & 1023u) * 16, 16);
+    std::vector<std::uint8_t> data(g_raw.size() * 4 + static_cast<std::size_t>(hi) * 16);
+    if (!g_raw.empty()) std::memcpy(data.data(), g_raw.data(), g_raw.size() * 4);
+    for (std::uint32_t q = 0; q < hi; ++q) std::memcpy(data.data() + g_raw.size() * 4 + q * 16, g_vu1_mem + ((top + q) & 1023u) * 16, 16);
     put('B', &b, sizeof b, g_unpacks.data(), b.nunpack * sizeof(Unpack), data.data(), data.size());
     g_unpacks.clear();
+    g_raw.clear();
     if (config().regs) {
         const Vu0Regs &r = vu::regs(1);
         std::uint8_t raw[4 + 512 + 16 + 32 + 32];

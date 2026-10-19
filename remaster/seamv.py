@@ -12,7 +12,7 @@ import argparse, json, struct, sys
 from collections import Counter, defaultdict
 
 BATCH = struct.Struct('<IBBH6HQ5I2H')  # 52 bytes, seamv.cpp Batch
-UNPACK = struct.Struct('<IIHHIHHB3x')  # 24 bytes, seamv.cpp Unpack
+UNPACK = struct.Struct('<IIHHIHHBxH')  # 24 bytes, seamv.cpp Unpack (last: packed data words kept)
 NONE = 0xFFFFFFFF
 KINDS = ('MSCAL', 'MSCALF', 'MSCNT')
 IMAGES = {0x49b8b0: 'D', 0x49e430: 'A', 0x49f900: 'B', 0x4a20b0: 'C'}
@@ -65,7 +65,8 @@ def parse(path):
             b = dict(zip(BATCH_FIELDS, BATCH.unpack_from(buf, body)), frame=frame)
             at = body + BATCH.size
             b['unpacks'] = [UNPACK.unpack_from(buf, at + UNPACK.size * i) for i in range(b['nunpack'])]
-            b['data'] = at + UNPACK.size * b['nunpack']
+            b['raw'] = at + UNPACK.size * b['nunpack']  # packed data of the unpacks with words > 0, in order
+            b['data'] = b['raw'] + 4 * sum(u[8] for u in b['unpacks'])
             d['batches'].append(b)
         elif c == 'R':
             seq = struct.unpack_from('<I', buf, body)[0]
@@ -112,7 +113,7 @@ def fmt_name(cmd):
 
 
 def unpack_info(u):
-    cmd, src, addr, cycle, mask, num, tops, mode = u
+    cmd, src, addr, cycle, mask, num, tops, mode = u[:8]
     flg = (cmd >> 15) & 1
     return dict(fmt=fmt_name(cmd), m=(cmd >> 28) & 1, usn=(cmd >> 14) & 1, flg=flg, tops=tops,
                 addr=f'+{(addr - tops) & 0x3FF:#05x}' if flg else f'@{addr:#05x}', cl=cycle & 0xFF, wl=cycle >> 8,
@@ -159,7 +160,7 @@ def dump_batch(d, b, label):
         i = unpack_info(u)
         print(f"    unpack {u[0]:08x} {i['fmt']}{' m' if i['m'] else ''}{' usn' if i['usn'] else ''} {i['addr']} num {i['num']} "
               f"tops {i['tops']:#x} cl/wl {i['cl']}/{i['wl']} mode {i['mode']}" + (f" mask {i['mask']:08x}" if i['mask'] is not None else '')
-              + (f" src {i['src']:08x}" if i['src'] is not None else ' src ?'))
+              + (f" src {i['src']:08x}" if i['src'] is not None else ' src ?') + (f" data {u[8]} words" if u[8] else ''))
     notes, cand = {}, [0, 1, 2, 3]
     while cand:
         q = cand.pop(0)

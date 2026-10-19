@@ -163,7 +163,8 @@ void unpack(int unit, std::uint32_t cmd, const std::uint32_t *data, std::uint32_
     if (unit == 1 && !dry && seamv::on()) {
         const auto *at = reinterpret_cast<const std::uint8_t *>(data);
         const std::uint32_t source = t_source != ~0u && at >= t_payload && at < t_payload_end ? t_source + static_cast<std::uint32_t>(at - t_payload) : ~0u;
-        seamv::unpack(cmd, source, addr, num, u.cycle, u.mode, u.mask, u.tops);
+        const std::uint32_t words = static_cast<std::uint32_t>(std::min<std::size_t>(unpack_words(cmd, u, num), avail));
+        seamv::unpack(cmd, source, addr, num, u.cycle, u.mode, u.mask, u.tops, data, words);
     }
     const std::uint32_t cl = u.cycle & 0xFFu, wl = (u.cycle >> 8) & 0xFFu;
     const std::uint32_t components = vn + 1;
@@ -403,6 +404,10 @@ void transfer(int unit, const std::uint8_t *data, std::uint32_t qwc) {
     const std::size_t old = u.pending.size();
     u.pending.resize(old + static_cast<std::size_t>(qwc) * 4);
     std::memcpy(u.pending.data() + old, data, static_cast<std::size_t>(qwc) * 16);
+    if (unit == 1 && seamv::on() && !shadow(unit)) {  // a code left over from the last packet: its data starts in this one
+        t_payload = reinterpret_cast<const std::uint8_t *>(u.pending.data() + old);
+        t_payload_end = reinterpret_cast<const std::uint8_t *>(u.pending.data() + u.pending.size());
+    }
     process(unit);
 }
 
