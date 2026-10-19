@@ -679,9 +679,25 @@ emulated path as the reference.
 - Mode **replace**: the world batches skip VU1 + GIF + compute raster; the native pass draws into the frame target
   first (the world run is the first 3D block after the clear: §1.3, §4.1.2), then writes back into VRAM before the
   first emulated draw that follows (characters). This is the full hybrid machinery of §4.6 with one hand-off.
-- fps effect (replace): world is 15-25 % of the 3D primitives in Foundry/academy (more in koop, nether), so roughly
-  −15-20 % render-thread and raster time, minus 0.1-0.3 ms of write-back. Estimate +8-15 % fps at 3x6. Small; the
-  point of stage 1 is to prove the seam, the shader, the hand-off and the gate.
+- fps effect (replace): the world programs carry 19 % of Foundry's primitives, 28 % academy's, 35-43 % in raiden,
+  goro and nether, 4-20 % in forest, kahn and koop (classified frame, by VU1 hash; the table below). Expect the render
+  thread and raster time to drop by about that share, minus 0.1-0.3 ms of write-back: roughly +10-20 % fps at 3x6 in
+  goro/nether, +5-10 % in Foundry (estimate). Small; the point of stage 1 is to prove the seam, the shader, the
+  hand-off and the gate.
+
+  Primitive share per category in the classified frame (`draws.ndjson`, by VU1 hash; "char dead" = the ATST NEVER
+  third pass):
+
+  | Scene | prims | characters | char dead | world | world_alpha | sky/shadow | c372c643 | post_fx | path 2/3 |
+  |---|---|---|---|---|---|---|---|---|---|
+  | foundry | 62,710 | 51 % | 25 % | 19 % | 0 % | 1 % | 0 % | 3 % | 0 % |
+  | academy | 36,953 | 37 % | 13 % | 28 % | 13 % | 1 % | 2 % | 6 % | 0 % |
+  | nether | 41,245 | 29 % | 12 % | 43 % | 5 % | 0 % | 4 % | 5 % | 1 % |
+  | goro | 29,808 | 50 % | 0 % | 42 % | 0 % | 0 % | 0 % | 7 % | 1 % |
+  | raiden | 28,364 | 44 % | 0 % | 35 % | 10 % | 2 % | 1 % | 8 % | 1 % |
+  | koop | 22,129 | 43 % | 0 % | 20 % | 20 % | 5 % | 0 % | 10 % | 1 % |
+  | kahn | 22,405 | 50 % | 25 % | 11 % | 3 % | 2 % | 0 % | 10 % | 0 % |
+  | forest | 21,652 | 68 % | 0 % | 4 % | 15 % | 2 % | 0 % | 10 % | 0 % |
 - Risks: AFAIL split order at foliage edges; trilinear LOD mismatch (K values down to −36); depth ties between native
   world and emulated characters (both write Z24; the native depth is exact Z/2²⁴, the interpolation differs) →
   characters could z-fight against the floor. Mitigation: the write-back also writes Z for the hand-off until stage 2.
@@ -694,7 +710,8 @@ emulated path as the reference.
   a storage buffer, then three draws) so the passes tie exactly in depth; the dead third pass (ATST NEVER) dropped;
   highlight 0211 with DstAlpha under the A/128 storage; shading 1202 multiply (doubling only if R5 shows As > 0x80).
   Affine texturing (Q = 1) kept in faithful mode.
-- fps effect: characters are about 78 % of Foundry's draw time (3.98 + 1.81 of 7.45 ms) and the hottest VU1 program;
+- fps effect: characters are 76 % of Foundry's primitives (with the dead pass) and about 78 % of its draw time
+  (3.98 + 1.81 of 7.45 ms), and run the hottest VU1 program;
   with world + characters native, the render thread loses most of its GIF work and the compute raster most of its
   primitives. Estimate: Foundry 1× render thread 11.3 → 3-4 ms, GPU 3x6 21 → 5-7 ms; the frame becomes EE/VU-thread
   bound (§5.1): 3x6 ~49 → 70-90 fps (estimate). This is the stage that reaches 1440p/60 in every gameplay scene.
