@@ -13,6 +13,33 @@ know (lq/sq, MMI, COP2) patched in, so every `0x2xxxxx` instruction cited here c
 The recompiled twin of a function `fn_X` is at `L_00X:` in `mksm/generated/unit_*.cpp` (line numbers given below).
 Names like "scene draw" are ours (role names), not symbols.
 
+## Summary
+
+- **Frame**: fn_2f4200 kicks frame N−1's VIF1 chain in fn_241410 (0x241c88 is the return address of its FlushCache)
+  and builds frame N's chain at its end in fn_24c280 → **fn_23ff60**, which walks 9 typed render lists (block
+  0x65e398, filled by fn_2367b8) in two passes. One write pointer, `[0x65e300]`, written inline by 98 functions.
+  VU1 microcode is swapped as whole 16 KB images (fn_23de10): D 0x49b8b0 post FX, A 0x49e430 3-pass characters,
+  B 0x49f900 1-pass characters, C 0x4a20b0 world.
+- **Seam**: two options. **Seam V** (recommended first): records at each MSCAL/MSCNT on the VU thread, behind the
+  existing VIF1 timing shadow; no decomp needed. **Seam E** (the real fix for whole-mesh buffers, a real bone palette
+  and per-pixel lighting): the per-instance draws fn_24cf08 and fn_246cf0 and their packers, **53 functions,
+  52,028 bytes** (the core: fn_23a280 8,892 B, fn_242ff8 4,976 B, fn_249060 3,544 B, fn_246cf0 3,068 B); all 3D
+  paths 144 functions / 117 KB; the whole render frame 336 / 198 KB.
+- **VU1**: 13 hashes = init + body pairs; they reduce to **two vertex shaders** (world W: one 4×4, 1/w, clamped fog,
+  optional point light, CLIP cull; character C: 1-3 bone blend, 3 directional lights + ambient, three passes from the
+  same transformed vertices, affine texturing) plus a CPU-built sprite grid for post FX. No real clipping anywhere:
+  the guard-band/near-plane cull drops triangles, and faithful mode must too.
+- **GS**: 11 blend equations; the 3D run is ≥ 96 % of every gameplay frame's primitives and reads no render target,
+  so it moves to WebGPU as one block with one colour write-back into the compute VRAM per frame; HUD/DATE, glow and
+  menus stay on compute. 25 % of Foundry's primitives are ATST NEVER no-ops (droppable today, exactly); the shadow
+  prep chain changes 0 pixels.
+- **Exactness**: render work costs no EE time in this runtime (DMAs finish inside the CHCR store, vblank is on an EE
+  cycle schedule, VU1 status reads are constants). Skipping VU1 and the GS raster only changes the render-internal
+  hash sections (VU1, `vifvu`), which the gate and `hash_part` must exclude. The trap is on the EE side: the EE must
+  keep building and kicking the chain unchanged, because poll iterations feed `c.budget` → T0 → the flip pacing.
+- **First milestone**: world opaque (567ce7d8, 002c80ed) natively, side by side and then replacing, with the
+  per-category diff tool and the EE-visible hash gate. Characters (stage 2) are where 1440p/60 is reached.
+
 ## 1. Frame structure
 
 ### 1.1 The frame, top down
@@ -142,7 +169,8 @@ Read from the packers' code; layouts in VU1 memory are cross-checked against the
   fn_248058, fn_248658, fn_248900, fn_246258, fn_244368) and **0x4/0x6** (fn_23a280, fn_231ad0, fn_2379f0).
 - **Segments**: fn_242ff8 DMAs each 0x1d0-byte segment record to the scratchpad with the toSPR channel (D9:
   QWC = 0x1d, SADR = 0x70000000 or 0x700001d0 double-buffered, CHCR = 0x101; 0x2430b0-0x24311c and 0x243230-0x243298),
-  waits for it in a loop that **counts its own iterations into `[0x65e450]`** (0x2431a8-0x2431c0), and hands the
+  waits for it in a loop that **counts its own iterations into `[0x65e450]`** (0x2431a8-0x2431c0; exact today
+  because the runtime finishes every DMA inside the CHCR store, §6.3), and hands the
   record to fn_23a280 (8892 B), which writes that segment's GS state (DIRECT), constants, BASE/OFFSET and MSCAL.
 - **Vertex streams**: prebuilt per mesh by ps2Setup.cpp (fn_24e7b8, fn_24f290, fn_24f990, fn_250450, fn_250fd0,
   fn_252148, fn_252d40, fn_253108, fn_2535a8, fn_253cd0, fn_258040, fn_2591c0, fn_259768: VIF UNPACK + `MSCNT`,
@@ -701,8 +729,10 @@ emulated path as the reference.
 - Risks: AFAIL split order at foliage edges; trilinear LOD mismatch (K values down to −36); depth ties between native
   world and emulated characters (both write Z24; the native depth is exact Z/2²⁴, the interpolation differs) →
   characters could z-fight against the floor. Mitigation: the write-back also writes Z for the hand-off until stage 2.
-- Verification: state hash of every frame identical with `PS2_NATIVE=world` vs off (the `decomp/gate.sh` pattern,
-  all reference scenes); `natdiff` world within the approved threshold in all 12 scenes; lockstep co-op with mixed
+- Verification: every frame's EE-visible state hash identical with `PS2_NATIVE=world` vs off (the `decomp/gate.sh`
+  pattern, all reference scenes). In replace mode the natively drawn batches leave VU1 registers and outputs
+  unwritten, so the comparison is `PS2_HASH_SPLIT=1` minus the `vifvu` and VU1 sections from this stage on (§6.2);
+  side mode must match the full hash; `natdiff` world within the approved threshold in all 12 scenes; lockstep co-op with mixed
   peers (one native, one not) identical (`remaster/coop/test.sh pair … PS2_NATIVE=world -- PS2_NATIVE=off`).
 
 **Stage 2: characters (3-pass set A, 1-pass set B).**
