@@ -1,3 +1,11 @@
 # EE functions whose entry gets the decomp hook (decomp/README.md): address, then anything (name, notes).
 # Each needs a PS2_DECOMP(<address>, name) in decomp/src; retranslate after editing (mksm/build.sh --retranslate).
 00474EDC	strlen	decomp/src/libc/strlen.cpp
+002124C0	ArchiveGetFile	decomp/src/fileio/fileiodrv.cpp
+00213C78	MatrixSetTranslation	decomp/src/math/vu0math.cpp
+00213C98	MatrixGetTranslation	decomp/src/math/vu0math.cpp
+00213E08	sceVu0InnerProduct	decomp/src/math/vu0math.cpp
+00213E88	sceVu0TransposeMatrix	decomp/src/math/vu0math.cpp
+00214058	MatrixInverseRigid	decomp/src/math/vu0math.cpp
+00214658	MatrixTranslate	decomp/src/math/vu0math.cpp
+00214688	CopyVector	decomp/src/math/vu0math.cpp
