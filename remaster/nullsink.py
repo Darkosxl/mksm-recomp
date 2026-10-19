@@ -7,7 +7,9 @@ import os
 import sys
 
 EXPECTED = {'vu', 'vu1x', 'vifvu'}  # render-internal: allowed to differ with the null sink
-PAIRS = [('stn', 'st'), ('thn', 'th'), ('thn', 'st'), ('th', 'st'), ('thj', 'st'), ('thnj', 'st'), ('thnj', 'thn')]
+PAIRS = [('stn', 'st'), ('thn', 'th'), ('thn', 'st'), ('th', 'st'), ('thj', 'st'), ('thnj', 'st'), ('thnj', 'thn'),
+         ('sts', 'st'), ('ths', 'th'), ('ths', 'st'), ('stk', 'st'), ('thk', 'th'), ('thk', 'st')]
+SKIPS_VU1 = ('stn', 'thn', 'stk', 'thk')  # modes where VU1 work is skipped: vu1x and vifvu may differ
 
 
 def load(path):
@@ -46,7 +48,7 @@ def main():
                 continue
             frames, diff = compare(logs[x], logs[y])
             unexpected = {k: v for k, v in diff.items() if k not in EXPECTED and k != 'total'}
-            null = x.startswith(('stn', 'thn')) and not y.startswith(('stn', 'thn'))
+            null = x.startswith(SKIPS_VU1) and not y.startswith(SKIPS_VU1)
             ok = bool(frames) and not unexpected and (null or not diff)
             bad += not ok
             span = f'{frames[0]}-{frames[-1]}' if frames else '-'
