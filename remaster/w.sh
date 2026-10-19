@@ -42,9 +42,10 @@ push)
   echo "pushed $tree" ;;
 run)
   job=${1:?job} tree=${2:?tree}; shift 2
-  # the backgrounded command must be a plain command with all three fds redirected, or ssh waits for it
+  # <cmd> runs in a subshell, so compound commands and set -e all log and still leave rc; the backgrounded command must be a plain command with all three fds redirected, or ssh waits for it
   ssh "$box" "mkdir -p ~/w/out/$job && cd ~/w/wt/$tree || exit 1; rm -f ~/w/out/$job/rc
-    setsid nohup bash -c $(printf '%q' "$* > ~/w/out/$job/log 2>&1; echo \$? > ~/w/out/$job/rc") > /dev/null 2>&1 < /dev/null &"
+    setsid nohup bash -c $(printf '%q' "( $*
+) > ~/w/out/$job/log 2>&1; echo \$? > ~/w/out/$job/rc") > /dev/null 2>&1 < /dev/null &"
   echo "started $job on $box" ;;
 wait)
   job=${1:?job}
