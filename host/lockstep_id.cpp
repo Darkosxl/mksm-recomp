@@ -46,7 +46,7 @@ bool local_only(const std::string &name) {
                                    "PS2_DECODE", "PS2_GPU_FALLBACK", "PS2_GPU_LOW_POWER", "PS2_GPU_PROFILE", "PS2_SDL_RENDERER", "PS2_FPS",
                                    "PS2_HASH_LOG", "PS2_HASH_LOG_EVERY", "PS2_HASH_SPLIT", "PS2_NO_VU_THREAD", "PS2_THREADS", "PS2_ONE_THREAD",
                                    "PS2_VU_JIT", "PS2_PNACH", "PS2_RTC", "PS2_PROFILE", "PS2_PROFILE_FROM", "PS2_CENSUS", "PS2_DRAW_DUMP",
-                                   "PS2_DUMP_AUDIO", "PS2_DUMP_STEMS", "PS2_DUMP_VRAM", "PS2_NETPLAY_ASYNC"};
+                                   "PS2_DUMP_AUDIO", "PS2_DUMP_STEMS", "PS2_DUMP_VRAM", "PS2_NETPLAY_ASYNC", "PS2_RASTER_DIAG"};
     for (const char *n : kNames)
         if (name == n) return true;
     return name.rfind("PS2_TRACE_", 0) == 0 || name.rfind("PS2_LOCKSTEP_", 0) == 0;

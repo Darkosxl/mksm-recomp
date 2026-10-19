@@ -543,9 +543,23 @@ void plan_decodes(std::uint32_t prims) {
     }
 }
 
-std::uint32_t snapshot_batch(std::uint32_t prims, std::uint32_t &lo, std::uint32_t &hi) {
+// GS memory pages a rectangle of a buffer touches, as the shader addresses them (gs.wgsl addr: wraps at 4 MB).
+void mark_pages(bool *page, std::uint32_t bp, std::uint32_t bw, std::uint32_t psm, int x0, int y0, int x1, int y1) {
+    std::uint32_t pw, ph;
+    page_size(psm, pw, ph);
+    const std::uint32_t per_row = std::max<std::uint32_t>(1, bw * 64 / pw);
+    for (std::uint32_t py = static_cast<std::uint32_t>(y0) / ph; py <= static_cast<std::uint32_t>(y1) / ph; ++py)
+        for (std::uint32_t px = static_cast<std::uint32_t>(x0) / pw; px <= static_cast<std::uint32_t>(x1) / pw; ++px)
+            page[((bp * 256 + (px + py * per_row) * 8192) & (kMemorySize - 1)) >> 13] = true;
+}
+
+// Snapshot of the GS memory a batch both reads as texture and writes, so its texture reads see the memory as it was
+// before the batch (gs.wgsl load_texel). Only pages the batch's frame or Z rectangle touches are copied: words
+// lo..hi, pages flagged in mask (512 bits).
+std::uint32_t snapshot_batch(std::uint32_t prims, std::uint32_t &lo, std::uint32_t &hi, std::uint32_t mask[16]) {
     Batch &b = g_batch;
     lo = hi = 0;
+    std::fill(mask, mask + 16, 0u);
     if (g_batch_reads.empty()) return 0;
     const Range fb = pages(b.fbp, b.fbw, b.fpsm, b.minx, b.miny, b.maxx, b.maxy);
     const Range z = pages(b.zbp, b.fbw, b.zpsm, b.minx, b.miny, b.maxx, b.maxy);
@@ -554,6 +568,13 @@ std::uint32_t snapshot_batch(std::uint32_t prims, std::uint32_t &lo, std::uint32
     for (const Range &t : g_batch_reads) any = any || written(t);
     if (!any) return 0;
     Range shared;
+    static bool read[512];
+    std::fill(std::begin(read), std::end(read), false);
+    const auto add = [&](const Range &t, const Range &w) {
+        const std::uint64_t from = std::max(t.lo, w.lo), to = std::min({t.hi, w.hi, static_cast<std::uint64_t>(kMemorySize)});
+        shared.add(std::max(t.lo, w.lo), std::min(t.hi, w.hi));
+        for (std::uint64_t at = from & ~8191ull; at < to; at += 8192) read[at >> 13] = true;
+    };
     for (std::uint32_t i = 0; i < prims; ++i) {
         const std::uint32_t *rec = b.prims.data() + i * kPrimWords;
         const std::uint32_t *setup = b.setups.data() + rec[0] * kSetupWords;
@@ -561,20 +582,55 @@ std::uint32_t snapshot_batch(std::uint32_t prims, std::uint32_t &lo, std::uint32
         const int tw = std::max(1 << (setup[15] & 0xFFu), static_cast<int>(setup[18] >> 16) + 1), th = std::max(1 << (setup[15] >> 8), static_cast<int>(setup[19] >> 16) + 1);
         const Range t = read_range(rec, setup, region(setup[12], setup[13], setup[14], 0, 0, tw - 1, th - 1));
         for (const Range *w : {&fb, b.zwrite ? &z : nullptr})
-            if (w && t.overlaps(w->lo, w->hi)) shared.add(std::max(t.lo, w->lo), std::min(t.hi, w->hi));
+            if (w && t.overlaps(w->lo, w->hi)) add(t, *w);
         for (std::uint32_t n = 1; n <= mip_levels(setup); ++n) {
             const Range m = level_range(setup, n);
             for (const Range *w : {&fb, b.zwrite ? &z : nullptr})
-                if (w && m.overlaps(w->lo, w->hi)) shared.add(std::max(m.lo, w->lo), std::min(m.hi, w->hi));
+                if (w && m.overlaps(w->lo, w->hi)) add(m, *w);
         }
     }
     if (shared.lo >= shared.hi) return 0;
-    lo = static_cast<std::uint32_t>(std::min<std::uint64_t>(shared.lo, kMemorySize) / 4);
-    hi = static_cast<std::uint32_t>(std::min<std::uint64_t>(shared.hi, kMemorySize) / 4);
-    if (hi <= lo) return 0;
-    const std::uint32_t words = (hi - lo) * g_samples;
-    dispatch_linear(kSnapshot, words, push_params({lo, words}));
+    static bool drawn[512];
+    std::fill(std::begin(drawn), std::end(drawn), false);
+    mark_pages(drawn, b.fbp, b.fbw, b.fpsm, b.minx, b.miny, b.maxx, b.maxy);
+    if (b.zwrite) mark_pages(drawn, b.zbp, b.fbw, b.zpsm, b.minx, b.miny, b.maxx, b.maxy);
+    std::uint32_t first = 512, last = 0, count = 0;
+    for (std::uint32_t page = 0; page < 512; ++page)
+        if (read[page] && drawn[page]) {
+            mask[page >> 5] |= 1u << (page & 31u);
+            first = std::min(first, page);
+            last = page;
+            ++count;
+        }
+    if (!count) return 0;
+    lo = first * 2048;
+    hi = (last + 1) * 2048;
+    std::uint32_t *list = g_arena.grow(count);
+    const std::uint32_t at = static_cast<std::uint32_t>(list - g_arena.data());
+    for (std::uint32_t page = first, j = 0; page <= last; ++page)
+        if (mask[page >> 5] >> (page & 31u) & 1u) list[j++] = page;
+    const std::uint32_t words = count * 2048 * g_samples;
+    dispatch_linear(kSnapshot, words, push_params({lo, count, at}));
     return words;
+}
+
+// A sprite that maps texels 1:1 to pixels, with a wide margin around gs.wgsl shade_at's 0.1% test: it never reads a
+// render target on the fine grid, so its batch can keep the common raster pipeline (kRaster).
+bool one_to_one(const std::uint32_t *rec, const std::uint32_t *setup) {
+    float uv[6];
+    std::memcpy(uv, rec + 15, sizeof uv);
+    double du = static_cast<double>(uv[3]) - uv[0], dv = static_cast<double>(uv[4]) - uv[1];
+    if (setup[0] & 16u) {
+        du /= 16.0;
+        dv /= 16.0;
+    } else {
+        const double q = uv[5] == 0.0f ? 1.0 : uv[5];
+        du = du / q * static_cast<double>(1u << (setup[15] & 0xFFu));
+        dv = dv / q * static_cast<double>(1u << (setup[15] >> 8));
+    }
+    const double dx = std::fabs(static_cast<double>(u2f(rec[6]))), dy = std::fabs(static_cast<double>(u2f(rec[7])));
+    if (!std::isfinite(du) || !std::isfinite(dv) || !(dx > 0.0) || !(dy > 0.0) || !std::isfinite(dx) || !std::isfinite(dy)) return false;
+    return std::fabs(std::fabs(du) - dx) <= dx * 0.0005 && std::fabs(std::fabs(dv) - dy) <= dy * 0.0005;
 }
 
 void note_raster(std::uint32_t prims, std::uint32_t tiles, std::uint32_t entries, std::uint32_t snapshot) {
@@ -612,7 +668,22 @@ void flush_batch() {
     plan_decodes(prims);
     const std::uint32_t prim_offset = arena_append(b.prims.data(), b.prims.size() * 4);
     const std::uint32_t setup_offset = arena_append(b.setups.data(), b.setups.size() * 4);
-    for (const Decode &d : g_decodes) dispatch_linear(kDecode, d.words, push_params({setup_offset + d.setup * kSetupWords, d.offset, d.words}));
+    if (!g_decodes.empty()) {
+        // one dispatch for all of them (gs.wgsl decode): setup, decoded offset, texels, first thread per record
+        const std::uint32_t n = static_cast<std::uint32_t>(g_decodes.size());
+        std::uint32_t *rec = g_arena.grow(n * 4u);
+        const std::uint32_t records = static_cast<std::uint32_t>(rec - g_arena.data());
+        std::uint32_t total = 0;
+        for (std::uint32_t i = 0; i < n; ++i) {
+            const Decode &d = g_decodes[i];
+            rec[i * 4] = setup_offset + d.setup * kSetupWords;
+            rec[i * 4 + 1] = d.offset;
+            rec[i * 4 + 2] = d.words;
+            rec[i * 4 + 3] = total;
+            total += d.words;
+        }
+        dispatch_linear(kDecode, total, push_params({records, n, total}));
+    }
     std::uint32_t total = 0;
     for (std::uint32_t t : g_touched) total += g_tile_count[t];
     const std::uint32_t tiles = static_cast<std::uint32_t>(g_touched.size());
@@ -641,12 +712,22 @@ void flush_batch() {
         }
     }
     for (std::uint32_t t : g_touched) g_tile_count[t] = 0;
-    std::uint32_t snapshot_lo, snapshot_hi;
-    const std::uint32_t snapshot = snapshot_batch(prims, snapshot_lo, snapshot_hi);
-    const std::uint32_t param = push_params({tile_offset, prim_offset, setup_offset, tiles, list_offset, snapshot_lo, snapshot_hi});
+    std::uint32_t snapshot_lo, snapshot_hi, snapshot_mask[16];
+    const std::uint32_t snapshot = snapshot_batch(prims, snapshot_lo, snapshot_hi, snapshot_mask);
+    // Z24 words only this batch's Z writes touch (gs.wgsl z_owned): Z pages apart from the frame's, inside GS memory,
+    // and no column past the buffer width (it would alias the next row of pages).
+    const Range fb_pages = pages(b.fbp, b.fbw, b.fpsm, b.minx, b.miny, b.maxx, b.maxy), z_pages = pages(b.zbp, b.fbw, b.zpsm, b.minx, b.miny, b.maxx, b.maxy);
+    const bool z_owned = b.zpsm == PSMZ24 && b.maxx < static_cast<int>(b.fbw) * 64 && z_pages.hi <= kMemorySize && fb_pages.hi <= kMemorySize &&
+                         !z_pages.overlaps(fb_pages.lo, fb_pages.hi);
+    const std::uint32_t param = push_params({tile_offset, prim_offset, setup_offset, tiles, list_offset, snapshot_lo, snapshot_hi, b.fbp, b.fbw, b.fpsm, b.zbp, b.zpsm,
+                                             z_max(b.zpsm), z_owned ? 1u : 0u, 0u, 0u});
+    std::copy(snapshot_mask, snapshot_mask + 16, g_param_records[param].begin() + 16);
     note_raster(prims, tiles, total, snapshot);
     bool hires = false;
-    for (std::size_t i = 0; i < b.setups.size(); i += kSetupWords) hires = hires || (b.setups[i] & kRtHires);
+    for (std::uint32_t i = 0; i < prims && !hires; ++i) {
+        const std::uint32_t *rec = b.prims.data() + i * kPrimWords;
+        hires = rec[1] == 1 && (b.setups[rec[0] * kSetupWords] & kRtHires) && !one_to_one(rec, b.setups.data() + rec[0] * kSetupWords);
+    }
     g_commands.push_back({hires ? kRasterHi : kRaster, std::min(tiles, 1024u), (tiles + 1023) / 1024, param});
     mark_rendered(pages(b.fbp, b.fbw, b.fpsm, b.minx, b.miny, b.maxx, b.maxy));
     if (b.zwrite) mark_rendered(pages(b.zbp, b.fbw, b.zpsm, b.minx, b.miny, b.maxx, b.maxy));
@@ -683,32 +764,49 @@ bool batch_conflict(const Range &r, bool clut) {
     return false;
 }
 
+// Uploads and CLUT loads in as few dispatches as their order allows: each goes into the earliest dispatch of its kind
+// after every dispatch holding an earlier op it depends on (an upload over memory an earlier upload wrote or an
+// earlier CLUT load reads; a CLUT load of memory an earlier upload wrote). CLUT loads keep their chain order, so each
+// load_clut dispatch holds consecutive loads of the chain.
 void emit_pre() {
-    std::size_t i = 0;
-    while (i < g_pre.size()) {
-        const bool clut = g_pre[i].clut;
-        std::size_t j = i + 1;
-        while (j < g_pre.size() && g_pre[j].clut == clut) {
-            bool overlap = false;
-            if (!clut)
-                for (std::size_t k = i; k < j && !overlap; ++k) overlap = uploads_overlap(g_pre[k], g_pre[j]);
-            if (overlap) break;
-            ++j;
+    const std::size_t n = g_pre.size();
+    static std::vector<std::uint32_t> group;
+    static std::vector<bool> kinds;  // per dispatch: CLUT loads (true) or uploads
+    group.assign(n, 0);
+    kinds.clear();
+    std::uint32_t chain = 0;
+    for (std::size_t j = 0; j < n; ++j) {
+        const PreOp &op = g_pre[j];
+        std::uint32_t g = op.clut ? chain : 0;
+        for (std::size_t k = 0; k < j; ++k) {
+            const PreOp &e = g_pre[k];
+            const bool after = op.clut ? !e.clut && e.range.overlaps(op.range.lo, op.range.hi)
+                                       : e.clut ? e.range.overlaps(op.range.lo, op.range.hi) : uploads_overlap(e, op);
+            if (after) g = std::max(g, group[k] + 1);
         }
-        const std::uint32_t count = static_cast<std::uint32_t>(j - i);
+        while (g < kinds.size() && kinds[g] != op.clut) ++g;
+        if (g == kinds.size()) kinds.push_back(op.clut);
+        group[j] = g;
+        if (op.clut) chain = g;
+    }
+    for (std::uint32_t g = 0; g < kinds.size(); ++g) {
+        const bool clut = kinds[g];
+        std::uint32_t count = 0;
+        for (std::size_t j = 0; j < n; ++j) count += group[j] == g;
         std::uint32_t *records = g_arena.grow(count * 12u);
         const std::uint32_t offset = static_cast<std::uint32_t>(records - g_arena.data());
-        std::uint32_t total = 0;
-        for (std::size_t k = i; k < j; ++k) {
-            std::memcpy(records + (k - i) * 12, g_pre[k].rec, sizeof g_pre[k].rec);
+        std::uint32_t total = 0, r = 0;
+        for (std::size_t j = 0; j < n; ++j) {
+            if (group[j] != g) continue;
+            std::memcpy(records + r * 12, g_pre[j].rec, sizeof g_pre[j].rec);
             if (!clut) {
-                records[(k - i) * 12 + 11] = total;
-                total += g_pre[k].rec[7];
+                records[r * 12 + 11] = total;
+                total += g_pre[j].rec[7];
             }
+            ++r;
         }
-        if (clut) g_commands.push_back({kLoadClut, count, 1, push_params({offset, count})});  // one workgroup per load
-        else dispatch_linear(kUpload, total, push_params({offset, count, total}));
-        i = j;
+        if (clut) g_commands.push_back({kLoadClut, kClutEntries / 256, 1, push_params({offset, count})});  // one thread per entry
+        else dispatch_linear(kUpload, total * g_samples, push_params({offset, count, total}));  // one thread per sample
     }
     g_pre.clear();
 }
@@ -1447,20 +1545,29 @@ bool init(Mode m) {
     WGPUShaderModuleDescriptor md = WGPU_SHADER_MODULE_DESCRIPTOR_INIT;
     md.nextInChain = &source.chain;
     WGPUShaderModule module = wgpuDeviceCreateShaderModule(g_device, &md);
+    // Profiling only: PS2_RASTER_DIAG=bits skips parts of the raster (gs.wgsl DIAG); unset, the constant is not passed.
+    const char *diag = std::getenv("PS2_RASTER_DIAG");
     for (int i = 0; i < kPipelines; ++i) {
         if (i == kRasterHi && g_samples == 1) continue;
         WGPUComputePipelineDescriptor cd = WGPU_COMPUTE_PIPELINE_DESCRIPTOR_INIT;
         cd.layout = g_pipeline_layout;
         cd.compute.module = module;
         cd.compute.entryPoint = view(kEntryPoints[i]);
-        WGPUConstantEntry constants[3] = {WGPU_CONSTANT_ENTRY_INIT, WGPU_CONSTANT_ENTRY_INIT, WGPU_CONSTANT_ENTRY_INIT};
-        constants[0].key = view("SCALE");
-        constants[0].value = static_cast<double>(g_sx);
-        constants[1].key = view("SCALE_Y");
-        constants[1].value = static_cast<double>(g_sy);
-        constants[2].key = view("RT_HIRES");
-        constants[2].value = 1.0;
-        cd.compute.constantCount = i == kRasterHi ? 3 : 2;
+        WGPUConstantEntry constants[4] = {WGPU_CONSTANT_ENTRY_INIT, WGPU_CONSTANT_ENTRY_INIT, WGPU_CONSTANT_ENTRY_INIT, WGPU_CONSTANT_ENTRY_INIT};
+        std::size_t n = 0;
+        constants[n].key = view("SCALE");
+        constants[n++].value = static_cast<double>(g_sx);
+        constants[n].key = view("SCALE_Y");
+        constants[n++].value = static_cast<double>(g_sy);
+        if (i == kRasterHi) {
+            constants[n].key = view("RT_HIRES");
+            constants[n++].value = 1.0;
+        }
+        if (diag && (i == kRaster || i == kRasterHi)) {
+            constants[n].key = view("DIAG");
+            constants[n++].value = static_cast<double>(std::strtoul(diag, nullptr, 0));
+        }
+        cd.compute.constantCount = n;
         cd.compute.constants = constants;
         g_pipelines[i] = wgpuDeviceCreateComputePipeline(g_device, &cd);
         if (!g_pipelines[i]) return false;
