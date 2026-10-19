@@ -586,7 +586,22 @@ void flush_batch() {
     plan_decodes(prims);
     const std::uint32_t prim_offset = arena_append(b.prims.data(), b.prims.size() * 4);
     const std::uint32_t setup_offset = arena_append(b.setups.data(), b.setups.size() * 4);
-    for (const Decode &d : g_decodes) dispatch_linear(kDecode, d.words, push_params({setup_offset + d.setup * kSetupWords, d.offset, d.words}));
+    if (!g_decodes.empty()) {
+        // one dispatch for all of them (gs.wgsl decode): setup, decoded offset, texels, first thread per record
+        const std::uint32_t n = static_cast<std::uint32_t>(g_decodes.size());
+        std::uint32_t *rec = g_arena.grow(n * 4u);
+        const std::uint32_t records = static_cast<std::uint32_t>(rec - g_arena.data());
+        std::uint32_t total = 0;
+        for (std::uint32_t i = 0; i < n; ++i) {
+            const Decode &d = g_decodes[i];
+            rec[i * 4] = setup_offset + d.setup * kSetupWords;
+            rec[i * 4 + 1] = d.offset;
+            rec[i * 4 + 2] = d.words;
+            rec[i * 4 + 3] = total;
+            total += d.words;
+        }
+        dispatch_linear(kDecode, total, push_params({records, n, total}));
+    }
     std::uint32_t total = 0;
     for (std::uint32_t t : g_touched) total += g_tile_count[t];
     const std::uint32_t tiles = static_cast<std::uint32_t>(g_touched.size());

@@ -1273,15 +1273,30 @@ fn shade_at(p: u32, s: Setup, x: i32, y: i32, k: u32, px: f32, py: f32) {
 }
 
 @compute @workgroup_size(64)
+// All of a batch's decodes in one dispatch: prm(1) records at data[prm(0)] (setup, decoded offset, texels, first
+// thread), prm(2) texels in all.
 fn decode(@builtin(global_invocation_id) gid: vec3<u32>) {
     let i = gid.x + gid.y * 64u * 1024u;
     if (i >= prm(2u)) {
         return;
     }
-    let s = load_setup(prm(0u));
-    let x = i & ((1u << s.tw) - 1u);
-    let y = i >> s.tw;
-    decoded[prm(1u) + i] = convert(s, load_at(addr(s.tf, x, y), 0u));
+    let records = prm(0u);
+    var lo = 0u;
+    var hi = prm(1u);
+    while (hi - lo > 1u) {
+        let mid = (lo + hi) / 2u;
+        if (data[records + mid * 4u + 3u] <= i) {
+            lo = mid;
+        } else {
+            hi = mid;
+        }
+    }
+    let r = records + lo * 4u;
+    let t = i - data[r + 3u];
+    let s = load_setup(data[r]);
+    let x = t & ((1u << s.tw) - 1u);
+    let y = t >> s.tw;
+    decoded[data[r + 1u] + t] = convert(s, load_at(addr(s.tf, x, y), 0u));
 }
 
 @compute @workgroup_size(64)
