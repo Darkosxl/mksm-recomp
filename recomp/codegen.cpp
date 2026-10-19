@@ -79,6 +79,11 @@ public:
     std::vector<UnitRow> run() {
         add_required_entries();
         assign_ids();
+        if (!relocatable_)
+            for (std::uint32_t a : options_.overrides)
+                if (!p_.is_code(a) || !p_.entries.count(a))
+                    // a new entry would renumber the unit's entry ids and change every unit that calls into it
+                    throw std::runtime_error(std::format("override {:08X} is not a function entry of the program (add it to the entries file first)", a));
         std::vector<UnitRow> rows;
         for (std::uint32_t u = 0; u < layout_.count(); ++u)
             if (has_code_[u]) {
@@ -181,8 +186,18 @@ private:
             if (has_delay_slot(i.op) && labels_.count(a + 4) && in_unit(a + 8)) labels_.insert(a + 8);
         }
 
+        hooks_.clear();
+        if (!relocatable_)
+            for (auto it = options_.overrides.lower_bound(base_); it != options_.overrides.end() && *it < end; ++it) hooks_.insert(*it);
+
         out_.str({});
-        out_ << "#include \"units.hpp\"\n\nnamespace gen {\n\nusing namespace ps2;\n\n";
+        out_ << "#include \"units.hpp\"\n";
+        if (!hooks_.empty()) {
+            out_ << "#include \"ps2/decomp_hook.hpp\"\n\nnamespace decomp {\n";
+            for (std::uint32_t a : hooks_) out_ << std::format("extern ps2::DecompFn hook_{:08X};\n", a);
+            out_ << "}\n";
+        }
+        out_ << "\nnamespace gen {\n\nusing namespace ps2;\n\n";
         out_ << "const std::uint16_t " << table_name(u) << "[" << (layout_.size() / 4) << "] = {";
         std::vector<std::uint16_t> dense(layout_.size() / 4, 0);
         for (const auto &[a, id] : ids_[u]) dense[(a - base_) >> 2] = id;
@@ -213,6 +228,12 @@ private:
                 out_ << label(a) << ":\n";
             }
             if (options_.probes.count(a)) line(std::format("probe(c, {});", pc(a)));
+            // Every way into the function passes this label: the switch (direct jal from any unit, dispatch, jr
+            // through the entry table, resumes) and the in-unit gotos of tail jumps; a loop back to the entry is a
+            // tail call of the same function. decomp_enter() returns true when the decompiled function ran (c.pc
+            // then says where execution continues), false to run the recompiled body below.
+            if (hooks_.count(a))
+                line(std::format("if (::decomp::hook_{0:08X}.on) [[unlikely]] {{ if (decomp_enter(c, ::decomp::hook_{0:08X}, depth)) return; }}", a));
             const Insn i = at(a);
             const Flow fl = flow(i.op);
             if (fl == Flow::None) {
@@ -778,6 +799,7 @@ private:
     std::vector<bool> has_code_;
     std::uint32_t base_{};
     std::set<std::uint32_t> labels_;
+    std::set<std::uint32_t> hooks_;
     std::string *capture_{};
     std::uint32_t pending_{};
     std::ostringstream out_;

@@ -12,6 +12,7 @@
 #include <fstream>
 #include <iterator>
 #include <map>
+#include <stdexcept>
 #include <set>
 #include <string>
 #include <vector>
@@ -90,8 +91,36 @@ std::vector<Snr2Module> read_modules(const std::string &dir) {
     return modules;
 }
 
+// One EE address per line, hex with or without 0x; the first column of a TSV works too. '#' starts a comment; a first
+// line whose first field is not hex is a header.
+std::set<std::uint32_t> read_addresses(const std::string &path) {
+    std::ifstream file(path);
+    if (!file) throw std::runtime_error("cannot read " + path);
+    std::set<std::uint32_t> out;
+    std::string line;
+    for (int n = 1; std::getline(file, line); ++n) {
+        line = line.substr(0, line.find('#'));
+        const auto from = line.find_first_not_of(" \t\r");
+        if (from == std::string::npos) continue;
+        const std::string field = line.substr(from, line.find_first_of(" \t\r", from) - from);
+        std::size_t used = 0;
+        unsigned long value = 0;
+        try {
+            value = std::stoul(field, &used, 16);
+        } catch (const std::exception &) {
+            used = 0;
+        }
+        if (used != field.size() || value > 0xFFFFFFFFul) {
+            if (out.empty() && n == 1) continue;
+            throw std::runtime_error(path + ":" + std::to_string(n) + ": not a hex address: " + field);
+        }
+        out.insert(static_cast<std::uint32_t>(value));
+    }
+    return out;
+}
+
 int usage() {
-    std::fprintf(stderr, "usage: eerecomp <elf> [--entries file] [--modules dir] [--probes file] [--out dir] [--stats]\n");
+    std::fprintf(stderr, "usage: eerecomp <elf> [--entries file] [--modules dir] [--probes file] [--overrides file] [--out dir] [--stats]\n");
     return 2;
 }
 
@@ -99,7 +128,7 @@ int usage() {
 
 int main(int argc, char **argv) {
     if (argc < 2) return usage();
-    std::string elf_path = argv[1], entries_path, out, probes_path, modules_dir;
+    std::string elf_path = argv[1], entries_path, out, probes_path, overrides_path, modules_dir;
     bool stats = false;
     for (int i = 2; i < argc; ++i) {
         const std::string arg = argv[i];
@@ -107,6 +136,7 @@ int main(int argc, char **argv) {
         else if (arg == "--stats") stats = true;
         else if (arg == "--out" && i + 1 < argc) out = argv[++i];
         else if (arg == "--probes" && i + 1 < argc) probes_path = argv[++i];
+        else if (arg == "--overrides" && i + 1 < argc) overrides_path = argv[++i];
         else if (arg == "--modules" && i + 1 < argc) modules_dir = argv[++i];
         else return usage();
     }
@@ -147,6 +177,10 @@ int main(int argc, char **argv) {
             options.output = out;
             if (!probes_path.empty())
                 for (std::uint32_t a : read_entries(probes_path).main) options.probes.insert(a);
+            if (!overrides_path.empty()) {
+                options.overrides = read_addresses(overrides_path);
+                std::printf("%zu decompiled functions hooked\n", options.overrides.size());
+            }
             generate(translations, options);
         }
     } catch (const std::exception &error) {
