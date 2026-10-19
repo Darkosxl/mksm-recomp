@@ -162,31 +162,52 @@ the `PS2DIFF1` writer); `decomp/difftest/synth/batch_*.py` hold one generator pe
 built tree:
 
 ```bash
-decomp/synth.sh $P/logs/synth               # every function that has a generator
+decomp/synth.sh $P/logs/synth               # every function that has a generator, and every real function
 decomp/synth.sh $P/logs/synth 23d2f0,26de50 # only these
 ```
 
 - Writes, replays (`difftest --keep-going`) and deletes the contexts under `$P/logs`. Reports: `synth-counts.txt`
-  (contexts per function and result) and `synth-replay.log`. Exit status 1 on any failure.
-- Env: `COUNT` (contexts per function; default the generator's), `SEED`, `BASE=<ctx>`, `BATCH` (16).
+  (contexts per function, `real` or `synth`, and result), `synth-replay.log`, `synth-real.log`, `synth-labels.txt`
+  (the generators' label per file) and `synth-stderr.log`. Exit status 1 on any failure.
+- Env: `COUNT` (contexts per function; default the generator's), `SEED`, `BASE=<ctx>`, `BATCH` (16), `SCENES`
+  (`scene[:end frame]`, default `koop raiden goro pause academy forest nether kahn foundry charsel:6300`), `SEEDCOUNT`
+  (20: the fighters are in 9 of the 10 scenes), `TIMEOUT` (120).
+- Every replay has a time limit (`TIMEOUT` s plus 1 s per context). A batch that hits it, or crashes, is replayed one
+  file at a time; a file that hits `TIMEOUT` is a `TIMEOUT` failure. Synthetic data can make a recompiled callee loop.
 - **Zero machine** (default): memory is all zero except what the generator writes, so files are sparse (KB each). Every
   GPR (128 bits), HI/LO, the FPRs, FACC and FCR31 are random.
 - **Base snapshot** (`base=True`): a recorded context is the machine, so callees see a running game. Each file is
   ~33 MB, written and replayed `BATCH` at a time. The snapshot is `BASE`, or the script records one: the first call of
   `screen_page_this_field` (0x00275260) in ci.sh's koop run.
-- `python3 -I decomp/difftest/synth.py --list`: every generator, its machine and its default count.
+- **Seed** (`seed=0xADDR`, or a tuple of addresses): a recorded call of the seed function is the machine, retargeted to
+  the generated function. Context i takes seed i mod the number of seeds (`pick=` chooses otherwise), so the result
+  does not depend on `BATCH`. The Ctx gives `i`, `seed_fn`, `seed_index`, `nseeds` and `seed_path`; `c.variant(k)`
+  spreads k variants so that with count >= k x seeds every seed gets each one. Writes may go to RAM, the scratchpad
+  and VU0 memory. ~33 MB per file, `BATCH` at a time.
+- **Real functions** (`real(0xADDR)` in a batch module) and the seed functions: the script records them first in
+  `SCENES`, in parallel (`SEEDCOUNT` per function and scene, every 7th entry). A scene that stops before its frame
+  limit fails the job. Every recorded context is replayed as a real one, then they are the seeds.
+- `python3 -I decomp/difftest/synth.py --list`: every generator, its machine (`zero`, `base`, `seed:<hex>[,<hex>]`)
+  and its default count, then the `real` functions. `--record [hex,...]`: the functions to record for a selection.
+- `python3 -I decomp/difftest/synth/batch_i.py --classify <dir>`: the PackSegment branches each context takes.
 
 To add a function, register a generator in its batch's module (a new `synth/*.py` file is picked up). It sets the
 arguments and the memory the function reads so that every branch comes up:
 
 ```python
-from synth import A0, float_bits, gen, ram_addr
+from synth import A0, float_bits, gen, ram_addr, scramble
 
 @gen(0x00326140)                   # base=True: on the snapshot (call scramble() first); count=N (default 64/32)
 def ground_y(c, rng):              # c: a fresh Ctx (random registers), rng: its random.Random
     o = ram_addr(rng, 0x100, 4)
-    c.set_ptr(A0, o)               # also set_reg/set_sext/set_arg/set_low/set_f, write/w16/w32/w64/words
+    c.set_ptr(A0, o)               # also set_reg/set_sext/set_arg/set_low/set_f, write/wr/w16/w32/w64/words, rd/low
     c.w32(o + 0xf4, float_bits(rng))
+
+@gen(0x00246918, seed=0x00244368, count=40)  # on recorded calls of 0x00244368
+def instance_constants(c, rng):
+    inst = c.low(A0, 32)           # the recorded call's a0
+    scramble(c, rng, ())
+    c.set_arg(A0, inst)
 ```
 
 ## Environment

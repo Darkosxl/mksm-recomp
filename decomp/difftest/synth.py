@@ -6,7 +6,7 @@ data) that difftest replays like recorded ones. This file is the shared core (Ct
 generators live in decomp/difftest/synth/*.py, one module per batch, each registering one generator per function
 address with @gen. decomp/synth.sh writes and replays all of them on a box.
 
-Two kinds of machine:
+Three kinds of machine:
 - zero (default): memory all zero except what the generator writes, so a file is sparse (32 MB of RAM costs a few KB
   of disk). Every GPR gets random 128 bits (pointers keep a RAM address in their low word only), and HI/LO, the
   FPRs, FACC and FCR31 are random too, so a decompiled function that leaves a register different from the original,
@@ -14,10 +14,24 @@ Two kinds of machine:
 - base (@gen(..., base=True)): a recorded context (--base) is the machine snapshot, so callees see a running game.
   The generator scrambles the registers itself (scramble()) and writes the memory it needs. Each file is a full
   ~33 MB snapshot.
+- seed (@gen(..., seed=0xADDR) or seed=(0xADDR, ...)): a recorded call of the seed function is the machine, Cpu and
+  memory, retargeted to the generated function. The recorded contexts are found under --seeds <dir> (recursively,
+  grouped by their header address). Context i takes seed i mod the number of seeds; with several seed functions,
+  function i mod their number, then its seed (i / that number) mod its seeds; pick=fn(i, {function: seeds}) ->
+  (function, seed index) chooses otherwise. The Ctx tells the generator i, seed_fn, seed_index, nseeds and
+  seed_path. Full ~33 MB snapshots, like base ones.
+Writes may go to RAM, the scratchpad (0x70000000) and VU0 code/data (0x11000000/0x11004000), mapped as the runtime
+maps them. A generator may set c.label: it goes to <outdir>/labels.txt next to the file name.
+
+Real functions (real(addr, ...) in a batch module) and the seed functions are recorded in the scenes by
+decomp/synth.sh, and their recordings replay as real contexts.
 
 usage: decomp/difftest/synth.py <outdir> [hexaddr[,hexaddr]...] [--count N] [--first K] [--seed S] [--base ctx]
-         (default: every generator; base ones only with --base)
-       decomp/difftest/synth.py --list     (per generator: address, zero|base, default count, module, name)
+         [--seeds dir]   (default: every generator; base ones only with --base, seed ones only with --seeds)
+       decomp/difftest/synth.py --list     (per generator: address, zero|base|seed:<hex>[,<hex>], default count,
+         module, name; per real or seed function: address, real, -, module, -)
+       decomp/difftest/synth.py --record [hexaddr[,hexaddr]...]   (the functions to record for this selection,
+         default all: the seeds of its seed generators and its real functions, comma-separated)
 """
 import argparse
 import collections
@@ -30,6 +44,8 @@ import sys
 RAM_SIZE = 32 << 20
 SPR_SIZE = 16 << 10
 VU0_SIZE = 4096
+MEM_SIZE = RAM_SIZE + SPR_SIZE + 2 * VU0_SIZE  # what follows the Cpu in a file: RAM, scratchpad, VU0 code, VU0 data
+SPR_BASE = 0x70000000
 HEADER = struct.Struct('<8sIIQIIII')  # magic, addr, index, frame, cpu_size, ram_size, spr_size, vu0_size
 CPU_SIZE = 1440  # sizeof(ps2::Cpu): r[32] at 0, hi 512, lo 528, sa 544, pc 548, budget 552, base 556, f[32] 560,
 OFF_HI, OFF_LO, OFF_PC, OFF_F, OFF_FACC, OFF_FCR31 = 512, 528, 548, 560, 688, 692  # facc 688, fcr31 692
@@ -45,27 +61,38 @@ def sext64(v):
     return v | 0xFFFFFFFF00000000 if v & 0x80000000 else v
 
 
-class Base:
-    """A recorded context: the machine snapshot of base generators."""
+def physical(a):
+    """runtime/src/memory.cpp's physical(): KSEG0/1 and the uncached views map to the low addresses"""
+    if 0x80000000 <= a < 0xC0000000:
+        return a & 0x1FFFFFFF
+    return a & 0x0FFFFFFF if a >> 28 in (2, 3) else a
+
+
+class Snapshot:
+    """A recorded context: the machine of base and seed generators."""
 
     def __init__(self, path):
         with open(path, 'rb') as f:
             data = f.read()
-        magic, _, _, self.frame, *sizes = HEADER.unpack_from(data)
-        if magic != b'PS2DIFF1' or sizes != [CPU_SIZE, RAM_SIZE, SPR_SIZE, VU0_SIZE]:
+        magic, self.addr, self.index, self.frame, *sizes = HEADER.unpack_from(data)
+        if magic != b'PS2DIFF1' or sizes != [CPU_SIZE, RAM_SIZE, SPR_SIZE, VU0_SIZE] or \
+                len(data) != HEADER.size + CPU_SIZE + MEM_SIZE:
             raise SystemExit(f'{path}: not a difftest context with this Cpu layout and memory sizes')
-        ram0 = HEADER.size + CPU_SIZE
-        self.cpu, self.ram, self.rest = data[HEADER.size:ram0], data[ram0:ram0 + RAM_SIZE], data[ram0 + RAM_SIZE:]
+        self.path = path
+        view = memoryview(data)
+        self.cpu, self.mem = view[HEADER.size:HEADER.size + CPU_SIZE], view[HEADER.size + CPU_SIZE:]
 
 
 class Ctx:
-    def __init__(self, rng, addr, base=None):
-        self.rng, self.addr, self.base = rng, addr, base
-        self.dirty = []  # (address, size) of every write: a zero-machine file stores only these
-        if base:
-            self.frame, self.cpu, self.ram = base.frame, bytearray(base.cpu), bytearray(base.ram)
+    def __init__(self, rng, addr, snap=None, i=0):
+        self.rng, self.addr, self.snap, self.i = rng, addr, snap, i
+        self.seed_fn, self.seed_index, self.nseeds, self.seed_path = None, 0, 0, None  # set for seed generators
+        self.label = None
+        self.dirty = []  # (offset, size) of every write: a zero-machine file stores only these
+        if snap:
+            self.frame, self.cpu, self.mem = snap.frame, bytearray(snap.cpu), bytearray(snap.mem)
             return
-        self.frame, self.cpu, self.ram = 0, bytearray(CPU_SIZE), bytearray(RAM_SIZE)
+        self.frame, self.cpu, self.mem = 0, bytearray(CPU_SIZE), bytearray(MEM_SIZE)
         for r in range(1, 32):
             self.set_reg(r, rng.getrandbits(128))
         self.set_ptr(SP, 0x01F00000 - 16 * rng.randrange(1, 4096))
@@ -77,10 +104,19 @@ class Ctx:
         struct.pack_into('<I', self.cpu, OFF_FACC, rng.getrandbits(32))
         struct.pack_into('<I', self.cpu, OFF_FCR31, rng.getrandbits(32) & 0x0083F07F)
 
+    def variant(self, k):
+        """which of k variants this context is: i mod k, or on seeds (i / seeds + seed index) mod k, so consecutive
+        contexts take consecutive variants and with count >= k x seeds every seed gets every variant"""
+        return (self.i // self.nseeds + self.seed_index) % k if self.nseeds else self.i % k
+
     # ---- registers ----
 
     def reg(self, r):
         return int.from_bytes(self.cpu[16 * r:16 * r + 16], 'little')
+
+    def low(self, r, bits=64):
+        """the low `bits` bits of GPR r"""
+        return self.reg(r) & (1 << bits) - 1
 
     def set_reg(self, r, v):
         self.cpu[16 * r:16 * r + 16] = (v & (1 << 128) - 1).to_bytes(16, 'little')
@@ -109,10 +145,32 @@ class Ctx:
 
     # ---- memory ----
 
+    @staticmethod
+    def off(a, n=1):
+        """the offset in mem (RAM, scratchpad, VU0 code, VU0 data) of the n bytes at EE address a"""
+        if a >> 14 == SPR_BASE >> 14:
+            o, end = RAM_SIZE + (a & SPR_SIZE - 1), RAM_SIZE + SPR_SIZE
+        else:
+            p = physical(a)
+            if 0 <= p < RAM_SIZE:
+                o, end = p, RAM_SIZE
+            elif 0x11000000 <= p < 0x11000000 + VU0_SIZE:
+                o, end = RAM_SIZE + SPR_SIZE + p - 0x11000000, MEM_SIZE - VU0_SIZE
+            elif 0x11004000 <= p < 0x11004000 + VU0_SIZE:
+                o, end = MEM_SIZE - VU0_SIZE + p - 0x11004000, MEM_SIZE
+            else:
+                raise AssertionError(f'{a:#x}: not RAM, scratchpad or VU0 memory')
+        assert o + n <= end, f'{a:#x} + {n}: crosses the end of its memory'
+        return o
+
     def write(self, a, data):
-        assert 0 <= a and a + len(data) <= RAM_SIZE, hex(a)
-        self.ram[a:a + len(data)] = data
-        self.dirty.append((a, len(data)))
+        o = self.off(a, len(data))
+        self.mem[o:o + len(data)] = data
+        self.dirty.append((o, len(data)))
+
+    def wr(self, a, fmt, *values):
+        """struct fmt (little-endian) at a"""
+        self.write(a, struct.pack('<' + fmt, *values))
 
     def w16(self, a, v):
         self.write(a, struct.pack('<H', v & 0xFFFF))
@@ -127,23 +185,26 @@ class Ctx:
         """consecutive 32-bit words (float bits)"""
         self.write(a, struct.pack(f'<{len(values)}I', *[v & 0xFFFFFFFF for v in values]))
 
+    def rd(self, a, fmt='I'):
+        """struct fmt (little-endian) at a; one value"""
+        return struct.unpack_from('<' + fmt, self.mem, self.off(a, struct.calcsize('<' + fmt)))[0]
+
     def r64(self, a):
-        return struct.unpack_from('<Q', self.ram, a)[0]
+        return self.rd(a, 'Q')
 
     def save(self, path, index):
         struct.pack_into('<I', self.cpu, OFF_PC, self.addr)
         with open(path, 'wb') as f:
             f.write(HEADER.pack(b'PS2DIFF1', self.addr, index, self.frame, CPU_SIZE, RAM_SIZE, SPR_SIZE, VU0_SIZE))
             f.write(self.cpu)
-            if self.base:
-                f.write(self.ram)
-                f.write(self.base.rest)
+            if self.snap:
+                f.write(self.mem)
                 return
-            ram0 = f.tell()
-            f.truncate(ram0 + RAM_SIZE + SPR_SIZE + 2 * VU0_SIZE)
-            for a, n in self.dirty:
-                f.seek(ram0 + a)
-                f.write(self.ram[a:a + n])
+            mem0 = f.tell()
+            f.truncate(mem0 + MEM_SIZE)
+            for o, n in self.dirty:
+                f.seek(mem0 + o)
+                f.write(self.mem[o:o + n])
 
 
 # ---- helpers ----
@@ -186,8 +247,8 @@ def int_edge(rng, around):
 
 
 def scramble(c, rng, fprs):
-    """Base machine: random 128 bits in every GPR but zero, sp and ra (the snapshot's stack and return address stay),
-    in HI/LO and in the FPRs `fprs`."""
+    """Base or seed machine: random 128 bits in every GPR but zero, sp and ra (the snapshot's stack and return address
+    stay), in HI/LO and in the FPRs `fprs`."""
     for r in range(1, 32):
         if r not in (SP, RA):
             c.set_reg(r, rng.getrandbits(128))
@@ -216,20 +277,65 @@ def slot_index(rng):
 
 # ---- registry ----
 
-Gen = collections.namedtuple('Gen', 'fn base count module')
+Gen = collections.namedtuple('Gen', 'fn base seeds pick count module')
 GENERATORS = {}
+REAL = {}  # function address -> module: recorded with the seeds, replayed as real contexts
 
 
-def gen(*addrs, base=False, count=None):
-    """Registers fn(c, rng) as the generator of these function addresses. It fills a fresh Ctx (the zero machine, or
-    with base=True the recorded snapshot) with the arguments and the memory the function reads. count: contexts per
-    function (default 64 zero, 32 base: those are 33 MB each)."""
+def round_robin(seeds):
+    def pick(i, sizes):
+        fn = seeds[i % len(seeds)]
+        return fn, i // len(seeds) % sizes[fn]
+    return pick
+
+
+def gen(*addrs, base=False, seed=None, pick=None, count=None):
+    """Registers fn(c, rng) as the generator of these function addresses. It fills a fresh Ctx (the zero machine, with
+    base=True the recorded snapshot, with seed=<address or tuple> a recorded call of that function) with the arguments
+    and the memory the function reads. count: contexts per function (default 64 zero, 32 base or seed: those are 33 MB
+    each)."""
+    seeds = (seed,) if isinstance(seed, int) else tuple(seed or ())
+    assert not (base and seeds), 'base or seed, not both'
+
     def register(fn):
         for a in addrs:
             assert a not in GENERATORS, f'{a:08X} has two generators'
-            GENERATORS[a] = Gen(fn, base, count or (32 if base else 64), fn.__module__)
+            GENERATORS[a] = Gen(fn, base, seeds, pick or round_robin(seeds) if seeds else None,
+                                count or (32 if base or seeds else 64), fn.__module__)
         return fn
     return register
+
+
+def real(*addrs):
+    """These functions' recorded calls in the seed scenes replay as real contexts (decomp/synth.sh records them with
+    the seed functions). For functions that the batch's seeds stand for but that ci.sh's three runs rarely reach."""
+    module = sys._getframe(1).f_globals.get('__name__', '?')
+    for a in addrs:
+        REAL.setdefault(a, module)
+
+
+def kind(g):
+    return 'seed:' + ','.join(f'{s:08X}' for s in g.seeds) if g.seeds else 'base' if g.base else 'zero'
+
+
+def to_record(addrs):
+    """the functions decomp/synth.sh records for these addresses: their generators' seeds and the real ones"""
+    out = {s for a in addrs if a in GENERATORS for s in GENERATORS[a].seeds}
+    return sorted(out | {a for a in addrs if a in REAL})
+
+
+def recorded(d):
+    """the recorded contexts under d, recursively: {function address: [paths, sorted]}"""
+    pools = collections.defaultdict(list)
+    for root, _, files in os.walk(d):
+        for name in files:
+            if name.endswith('.ctx'):
+                path = os.path.join(root, name)
+                with open(path, 'rb') as f:
+                    h = f.read(HEADER.size)
+                if len(h) == HEADER.size and h[:8] == b'PS2DIFF1':
+                    pools[HEADER.unpack(h)[1]].append(path)
+    return {a: sorted(p) for a, p in pools.items()}
 
 
 def load():
@@ -250,12 +356,20 @@ def main():
     ap.add_argument('--first', type=int, default=0, help='index of the first context (to write in batches)')
     ap.add_argument('--seed', type=int, default=1)
     ap.add_argument('--base', help='a recorded context: the machine snapshot of base generators')
+    ap.add_argument('--seeds', help='recorded contexts (searched recursively): the seeds of seed generators')
     ap.add_argument('--list', action='store_true')
+    ap.add_argument('--record', action='store_true', help='print the functions to record for the selection')
     a = ap.parse_args()
     load()
     if a.list:
-        for addr, g in sorted(GENERATORS.items()):
-            print(f'{addr:08X} {"base" if g.base else "zero"} {g.count} {g.module} {g.fn.__name__}')
+        rows = [(addr, f'{addr:08X} {kind(g)} {g.count} {g.module} {g.fn.__name__}') for addr, g in GENERATORS.items()]
+        reals = {s: g.module for g in GENERATORS.values() for s in g.seeds} | REAL
+        rows += [(addr, f'{addr:08X} real - {m} -') for addr, m in reals.items()]
+        print('\n'.join(r for _, r in sorted(rows)))
+        return
+    if a.record:
+        sel = [int(x, 16) for s in [a.outdir or ''] + a.addrs for x in s.split(',') if x]
+        print(','.join(f'{x:08X}' for x in to_record(sel or list(GENERATORS) + list(REAL))))
         return
     if not a.outdir:
         ap.error('outdir is required')
@@ -265,21 +379,41 @@ def main():
             raise SystemExit(f'no synthetic generator for {x:08X}')
         if GENERATORS[x].base and not a.base:
             raise SystemExit(f'{x:08X} needs a recorded snapshot: --base <ctx>')
+        if GENERATORS[x].seeds and not a.seeds:
+            raise SystemExit(f'{x:08X} needs recorded seeds: --seeds <dir>')
     if not addrs:
-        addrs = sorted(x for x, g in GENERATORS.items() if a.base or not g.base)
+        addrs = sorted(x for x, g in GENERATORS.items() if (a.base or not g.base) and (a.seeds or not g.seeds))
         if len(addrs) < len(GENERATORS):
-            print(f'skipped {len(GENERATORS) - len(addrs)} base-snapshot generators (no --base)', file=sys.stderr)
-    base = Base(a.base) if a.base else None
+            print(f'skipped {len(GENERATORS) - len(addrs)} base or seed generators (no --base or --seeds)',
+                  file=sys.stderr)
+    base = Snapshot(a.base) if a.base else None
+    pools = recorded(a.seeds) if a.seeds else {}
     os.makedirs(a.outdir, exist_ok=True)
+    labels = []
     n = 0
     for addr in addrs:
         g = GENERATORS[addr]
+        for s in g.seeds:
+            if not pools.get(s):
+                raise SystemExit(f'{addr:08X}: no recorded contexts of {s:08X} under {a.seeds}')
+        sizes = {s: len(pools[s]) for s in g.seeds}
         for i in range(a.first, a.first + (a.count or g.count)):
             rng = random.Random(f'{a.seed}:{addr:08X}:{i}')
-            c = Ctx(rng, addr, base if g.base else None)
+            if g.seeds:
+                fn, k = g.pick(i, sizes)
+                c = Ctx(rng, addr, Snapshot(pools[fn][k]), i)
+                c.seed_fn, c.seed_index, c.nseeds, c.seed_path = fn, k, sizes[fn], pools[fn][k]
+            else:
+                c = Ctx(rng, addr, base if g.base else None, i)
             g.fn(c, rng)
-            c.save(os.path.join(a.outdir, f'{addr:08X}_s{i:03d}.ctx'), i)
+            name = f'{addr:08X}_s{i:03d}.ctx'
+            c.save(os.path.join(a.outdir, name), i)
+            if c.label:
+                labels.append(f'{name} {c.label}\n')
             n += 1
+    if labels:
+        with open(os.path.join(a.outdir, 'labels.txt'), 'a') as f:
+            f.writelines(labels)
     print(f'{n} synthetic contexts in {a.outdir}')
 
 

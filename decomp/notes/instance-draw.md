@@ -159,7 +159,7 @@ pointer, start, open tag, open VIF code). `dma::tag`, `dma::tag_addr` and `vif::
 |---|---|---|---|
 | `decomp/ci.sh` (job k1): real contexts from boot, charsel and koop | 32 pass | 32 pass | 32 pass |
 | `decomp/coverage.sh` (k2): 10 gameplay scenes + charsel:6300, 16 contexts each | 160 pass | 160 pass | 160 pass |
-| Mutated contexts (`decomp/difftest/mutate_instance.py`, k5 + k6) | - | 48 + 24 pass | 48 pass |
+| Mutated contexts (k5 + k6; now `decomp/difftest/synth/batch_k.py`) | - | 48 + 24 pass | 48 pass |
 
 k1 also passed the regeneration check (identical units), the scene gate (12 scenes, every frame's state hash, off vs
 all) and the golden hashes with off and with all.
@@ -173,8 +173,9 @@ all) and the golden hashes with off and with all.
 - fn_246cf0 runs with three_pass 0 and 1 but never with effect_pass, and `[0x6660c0]` is always 0.
 
 So the instance paths of fn_249060 (culling, skin matrices, lights) and fn_246cf0's effect and alternative families
-are not covered by recorded contexts or by the gate. `mutate_instance.py` covers them. It takes recorded fighter
-contexts as seeds, so the machine stays real, then:
+are not covered by recorded contexts or by the gate. `decomp/difftest/synth/batch_k.py` covers them
+(`decomp/synth.sh <outdir> 249060,246cf0`). It takes recorded fighter contexts as seeds, so the machine stays real,
+then:
 
 - draws the fighter through fn_249060 as a non-stage instance, varying every switch in §2 and the falloff branches;
 - runs fn_246cf0 with the effect pass, the program families, sorting and both effect-timer branches;

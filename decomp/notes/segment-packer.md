@@ -228,16 +228,17 @@ The pass draws the material's link-C texture over the base:
   - 32 recorded koop calls replayed;
   - the scene gate: all 12 scenes, the state hash of every frame identical with the decomp on and off;
   - the golden hashes with decomp off and with decomp on.
-- **The recorded calls (`decomp/difftest/synth/batch_i.sh`, 8 scenes, 42 calls) are all world segments.** They take
-  these branches:
+- **The recorded calls (8 scenes, 42 calls; now recorded by `decomp/synth.sh <outdir> 23a280`) are all world
+  segments.** They take these branches:
   - node matrix (42);
   - fog (35);
   - PRIM (42);
   - node product (16);
   - UV scroll (1).
 
-  The other branches are covered by 462 variants of those calls written by `batch_i.py`. These change the flags,
-  the segment's option bits and the globals, and scramble the temporaries and the upper halves. Branch counts:
+  The other branches are covered by 462 variants of those calls written by `decomp/difftest/synth/batch_i.py`. These
+  change the flags, the segment's option bits and the globals, and scramble the temporaries and the upper halves.
+  Branch counts:
   - additive pass 58;
   - linked pass 81;
   - mode-3 fog 12;
