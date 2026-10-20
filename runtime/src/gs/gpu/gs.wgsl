@@ -660,9 +660,6 @@ fn fetch(s: Setup, l: Level, xi: i32, yi: i32, k: u32, hi: bool) -> u32 {
     }
     let x = texel_x(s, l, nx);
     let y = texel_y(s, l, ny);
-    if (SOURCE && has(s, F_SOURCE)) {
-        return convert(s, source_texel(x, y, k));
-    }
     if (l.dec != 0xFFFFFFFFu) {
         return decoded[l.dec + (y << l.tw) + x];
     }
@@ -679,6 +676,9 @@ fn fetch(s: Setup, l: Level, xi: i32, yi: i32, k: u32, hi: bool) -> u32 {
             sy = select(SCALE_Y - 1u, 0u, i32(y) > ny);
         }
         sk = sy * SCALE + sx;
+    }
+    if (SOURCE && has(s, F_SOURCE)) {
+        return convert(s, source_texel(x, y, sk));
     }
     return convert(s, load_texel(addr(l.f, x, y), sk));
 }

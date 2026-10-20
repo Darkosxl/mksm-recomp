@@ -931,6 +931,11 @@ fn hw_vs(@builtin(vertex_index) index: u32) -> HwOut {
         let y0 = fat(p + 5u);
         x = x0 + select(0.0, fat(p + 6u), (c & 1u) != 0u);
         y = y0 + select(0.0, fat(p + 7u), (c & 2u) != 0u);
+        // at scale > 1 the raster covers whole GS pixels of a sprite, x0 <= x < x1 (gs.wgsl shade_at case 1)
+        if (SCALE * SCALE_Y > 1u) {
+            x = ceil(x);
+            y = ceil(y);
+        }
         z = f32(min(data[p + 24u], prm(13u)));
         out.rect = vec4<f32>(x0, y0, fat(p + 6u), fat(p + 7u));
         out.ta = vertex_tex(p, 0u);
@@ -965,7 +970,7 @@ fn hw_fs(in: HwOut) -> HwFrag {
     }
     var at: Attr;
     if (prm(3u) == 1u) {
-        // shade_at() case 1 without the fine grid (gpu.cpp keeps F_RT_HIRES sprites emulated)
+        // shade_at() case 1
         let px = f32(x) + f32(sx % SCALE) / f32(SCALE);
         let py = f32(y) + f32(sy % SCALE_Y) / f32(SCALE_Y);
         let x0 = in.rect.x;
@@ -991,10 +996,11 @@ fn hw_fs(in: HwOut) -> HwFrag {
         var uy = py;
         let direct = s.tpsm == 0x00u || s.tpsm == 0x01u || s.tpsm == 0x02u || s.tpsm == 0x0Au || s.tpsm >= 0x30u;
         let point = has(s, F_TME) && (!has(s, F_BILINEAR) || direct);
-        if (point && abs(du) >= abs(dx) * 0.999) {
+        rt_hires = RT_HIRES && has(s, F_RT_HIRES) && (abs(abs(du) - abs(dx)) > abs(dx) * 0.001 || abs(abs(dv) - abs(dy)) > abs(dy) * 0.001);
+        if (point && !rt_hires && abs(du) >= abs(dx) * 0.999) {
             ux = f32(x);
         }
-        if (point && abs(dv) >= abs(dy) * 0.999) {
+        if (point && !rt_hires && abs(dv) >= abs(dy) * 0.999) {
             uy = f32(y);
         }
         var tx = 0.0;

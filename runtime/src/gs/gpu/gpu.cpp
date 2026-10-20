@@ -254,7 +254,7 @@ struct SetupCache {
 } g_setup_cache;
 
 bool g_hw = false;  // PS2_GS_HW=1: the hardware GS renderer, step 1 (hw_flush)
-enum HwReject : std::uint8_t { kHwOk, kHwDate, kHwPabe, kHwFbmsk, kHwAmsk, kHwFormat, kHwWidth, kHwBlend, kHwZNever, kHwANever, kHwPrim, kHwHires, kHwReasons };
+enum HwReject : std::uint8_t { kHwOk, kHwDate, kHwPabe, kHwFbmsk, kHwAmsk, kHwFormat, kHwWidth, kHwBlend, kHwZNever, kHwANever, kHwPrim, kHwReasons };
 void hw_flush();
 std::uint8_t hw_setup(const std::uint32_t *w);
 void hw_bind(const std::uint32_t *w);
@@ -1667,6 +1667,7 @@ struct Native {
     WGPUBindGroup source_group = nullptr;
     WGPUPipelineLayout render_layout = nullptr;
     std::uint64_t sourced = 0, copied = 0;  // setups read from the source, samples copied
+    std::uint64_t overwritten = 0;  // sprites whose tiles needed no import
     std::uint64_t clock = 0, made = 0, rebased = 0, retired = 0, switches = 0;
     std::uint64_t imports = 0, tile_writebacks = 0;
     // samples written back per cause (what made them leave the target): kByEmulated .. kByFlush
@@ -1741,17 +1742,19 @@ WGPURenderPipeline native_pipeline(std::uint32_t key) {
     WGPUColorTargetState targets[2] = {color, WGPU_COLOR_TARGET_STATE_INIT};
     targets[1].format = WGPUTextureFormat_R8Uint;
     targets[1].writeMask = import || (key & kNativeAlpha) ? WGPUColorWriteMask_All : WGPUColorWriteMask_None;
-    WGPUConstantEntry constants[3] = {WGPU_CONSTANT_ENTRY_INIT, WGPU_CONSTANT_ENTRY_INIT, WGPU_CONSTANT_ENTRY_INIT};
+    WGPUConstantEntry constants[4] = {WGPU_CONSTANT_ENTRY_INIT, WGPU_CONSTANT_ENTRY_INIT, WGPU_CONSTANT_ENTRY_INIT, WGPU_CONSTANT_ENTRY_INIT};
     constants[0].key = view("SCALE");
     constants[0].value = static_cast<double>(g_sx);
     constants[1].key = view("SCALE_Y");
     constants[1].value = static_cast<double>(g_sy);
     constants[2].key = view("SOURCE");
     constants[2].value = 1.0;
+    constants[3].key = view("RT_HIRES");
+    constants[3].value = 1.0;
     WGPUFragmentState fs = WGPU_FRAGMENT_STATE_INIT;
     fs.module = g_nat.module;
     fs.entryPoint = view(import ? "native_import_fs" : (key & kNativeHw) ? "hw_fs" : "native_fs");
-    fs.constantCount = !import && (key & kNativeHw) ? 3 : 2;
+    fs.constantCount = !import && (key & kNativeHw) ? 4 : 2;
     fs.constants = constants;
     fs.targetCount = 2;
     fs.targets = targets;
@@ -2434,13 +2437,16 @@ void tiles_import(Binding &b, const std::vector<std::uint32_t> &list) {
 }
 
 // Binding b's tiles [x0, x1] x [y0, y1] about to be drawn with these writes (kTileColor, kTileZ): the VRAM-newer ones go
-// on list for the import, and they all become native-newer for what the draws write.
-void tiles_take(Binding &b, int x0, int y0, int x1, int y1, std::uint8_t writes, std::vector<std::uint32_t> &list) {
+// on list for the import, but for those in over (x0 y0 x1 y1), which the draw overwrites whole, and they all become
+// native-newer for what the draws write.
+void tiles_take(Binding &b, int x0, int y0, int x1, int y1, std::uint8_t writes, std::vector<std::uint32_t> &list, const int *over = nullptr) {
     if (!tiles_clip(b, x0, y0, x1, y1)) return;
     for (int y = y0; y <= y1; ++y) {
-        std::uint64_t m[2];
+        std::uint64_t m[2], skip[2] = {};
         row_mask(x0, x1, m);
+        if (over && y >= over[1] && y <= over[3]) row_mask(over[0], over[2], skip);
         for (int w = 0; w < 2; ++w) {
+            b.tv[y][w] &= ~(m[w] & skip[w]);
             std::uint64_t bits = b.tv[y][w] & m[w];
             b.tv[y][w] &= ~m[w];
             while (bits) {
@@ -2804,6 +2810,26 @@ Binding *source_of(const std::uint32_t *w, const TexelRect &t) {
     return nullptr;
 }
 
+// The tiles (over: x0 y0 x1 y1) a sprite overwrites whole, every sample's colour, alpha and (with a Z buffer) Z, so they
+// need no import: no blend, alpha test, DATE, write mask or scan mask, Z written everywhere. One GS pixel of slack.
+bool overwritten(const std::uint32_t *rec, const std::uint32_t *w, const Binding &x, int over[4]) {
+    const std::uint32_t f = w[0], m = w[7];
+    if (rec[1] != 1 || (f & (8u | 128u)) || (w[4] & 0xFFFFFFu) || ((w[4] >> 24) && x.fpsm == PSMCT32) || ((m >> 28) & 3u)) return false;
+    if ((f & 64u) && (m & 7u) != 1u) return false;
+    if (x.z && (!(f & 512u) || (f & 32u) || ((m >> 8) & 3u) != 1u)) return false;
+    const float x0 = u2f(rec[4]), y0 = u2f(rec[5]), x1 = x0 + u2f(rec[6]), y1 = y0 + u2f(rec[7]);
+    if (!(std::isfinite(x0) && std::isfinite(y0) && std::isfinite(x1) && std::isfinite(y1))) return false;
+    const int t = static_cast<int>(kTilePx);
+    const int px0 = std::max(static_cast<int>(std::ceil(std::min(x0, x1))) + 1, static_cast<int>(w[10] & 0xFFFFu));
+    const int px1 = std::min(static_cast<int>(std::ceil(std::max(x0, x1))) - 2, static_cast<int>(w[10] >> 16));
+    const int py0 = std::max(static_cast<int>(std::ceil(std::min(y0, y1))) + 1, static_cast<int>(w[11] & 0xFFFFu));
+    const int py1 = std::min(static_cast<int>(std::ceil(std::max(y0, y1))) - 2, static_cast<int>(w[11] >> 16));
+    over[0] = (px0 + t - 1) / t, over[1] = (py0 + t - 1) / t, over[2] = (px1 + 1) / t - 1, over[3] = (py1 + 1) / t - 1;
+    if (px0 < 0 || py0 < 0) return false;
+    g_nat.overwritten += over[0] <= over[2] && over[1] <= over[3];
+    return over[0] <= over[2] && over[1] <= over[3];
+}
+
 void hw_flush() {
     Batch &b = g_batch;
     Binding &x = *b.binding;
@@ -2862,10 +2888,11 @@ void hw_flush() {
     }
     for (std::uint32_t i = 0; i < prims; ++i) {
         const std::uint32_t *rec = b.prims.data() + i * kPrimWords;
-        const std::uint32_t f = b.setups[rec[0] * kSetupWords];
-        const bool zwrite = (f & 512u) && !(f & 32u);
+        const std::uint32_t *w = b.setups.data() + rec[0] * kSetupWords;
+        const bool zwrite = (w[0] & 512u) && !(w[0] & 32u);
+        int over[4];
         tiles_take(x, static_cast<int>(rec[2] & 0xFFFFu) / t, static_cast<int>(rec[2] >> 16) / t, static_cast<int>(rec[3] & 0xFFFFu) / t,
-                   static_cast<int>(rec[3] >> 16) / t, kTileColor | (zwrite ? kTileZ : 0), list);
+                   static_cast<int>(rec[3] >> 16) / t, kTileColor | (zwrite ? kTileZ : 0), list, overwritten(rec, w, x, over) ? over : nullptr);
     }
     tiles_import(x, list);
     emit_native();  // the write-backs and the import go ahead of the decodes, which may read what they wrote back
@@ -3115,7 +3142,7 @@ void native_stats() {
                      static_cast<double>(g_render_passes) / per);
     if (g_hw) {
         static const char *const kNames[kHwReasons] = {"hardware", "DATE", "PABE", "FBMSK", "FBMSK alpha", "frame format", "frame width", "blend", "ZTST never",
-                                                       "ATST never", "lines/points", "RT_HIRES sprites"};
+                                                       "ATST never", "lines/points"};
         std::fprintf(stderr, "\n[native] hw primitives per frame:");
         for (int r = 0; r < kHwReasons; ++r) {
             if (!g_nat.hw_prims[r]) continue;
@@ -3131,8 +3158,8 @@ void native_stats() {
     }
     if (g_nat.tiles) {
         static const char *const kBy[] = {"emulated", "texture", "claim", "display", "access", "flush"};
-        std::fprintf(stderr, "\n[native] source: %.1f textures a frame read from a target copy, %.0f samples copied", static_cast<double>(g_nat.sourced) / per,
-                     static_cast<double>(g_nat.copied) / per);
+        std::fprintf(stderr, "\n[native] source: %.1f textures a frame read from a target copy, %.0f samples copied; %.1f sprites overwrite whole tiles",
+                     static_cast<double>(g_nat.sourced) / per, static_cast<double>(g_nat.copied) / per, static_cast<double>(g_nat.overwritten) / per);
         std::fprintf(stderr, "\n[native] written back per frame by cause:");
         for (int k = 0; k < 6; ++k) std::fprintf(stderr, " %s %.0f", kBy[k], static_cast<double>(g_nat.written_by[k]) / per);
         std::fprintf(stderr, "\n[native] texture-read write-backs (tpsm|fpsm<<8|flags<<16|own<<20|at frame<<21|at Z<<22):");
@@ -3528,7 +3555,7 @@ void draw(const State &st, const Vertex *v, int count, texcache::Run run) {
 
     // the hardware GS renderer: triangles and sprites of a setup it can draw; a sprite that scales a render target at
     // scale > 1 (F_RT_HIRES) stays emulated
-    const std::uint8_t why = cache.hw != kHwOk ? cache.hw : prim < 3 || prim > 6 ? kHwPrim : prim == 6 && (flags & kRtHires) ? kHwHires : kHwOk;
+    const std::uint8_t why = cache.hw != kHwOk ? cache.hw : prim < 3 || prim > 6 ? kHwPrim : kHwOk;
     const bool hw = g_hw && why == kHwOk;
     if (g_hw) {
         ++g_nat.hw_prims[why];
