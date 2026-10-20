@@ -463,6 +463,7 @@ const F_BILINEAR: u32 = 16384u;
 const F_AEM: u32 = 32768u;
 const F_REPLACED: u32 = 65536u;
 const F_RT_HIRES: u32 = 131072u;
+const F_SOURCE: u32 = 262144u;
 
 fn load_setup(at: u32) -> Setup {
     var s: Setup;
@@ -636,6 +637,13 @@ override RT_HIRES: bool = false;
 // 32 no frame write.
 override DIAG: u32 = 0u;
 
+// Hardware draws (native.wgsl hw_fs, on only there): a texture at a target's frame, read from a copy of the target
+// (gpu.cpp kSource, native.wgsl source_texel; this stub is renamed out of that module).
+override SOURCE: bool = false;
+fn source_texel(x: u32, y: u32, k: u32) -> u32 {
+    return 0u;
+}
+
 fn floor_div(a: i32, b: i32) -> i32 {
     return select(a / b, (a - b + 1) / b, a < 0);
 }
@@ -652,6 +660,9 @@ fn fetch(s: Setup, l: Level, xi: i32, yi: i32, k: u32, hi: bool) -> u32 {
     }
     let x = texel_x(s, l, nx);
     let y = texel_y(s, l, ny);
+    if (SOURCE && has(s, F_SOURCE)) {
+        return convert(s, source_texel(x, y, k));
+    }
     if (l.dec != 0xFFFFFFFFu) {
         return decoded[l.dec + (y << l.tw) + x];
     }

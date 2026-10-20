@@ -55,6 +55,9 @@ constexpr std::uint32_t kSetupWords = 32;
 constexpr std::uint32_t kDecodedWords = 4u << 20;
 // Texture-pack replacements live after the per-batch decodes in the same buffer (only allocated with PS2_TEX_PACK).
 constexpr std::uint32_t kReplaced = 1u << 16, kRtHires = 1u << 17;
+// A hardware batch's texture read from a copy of the target it sits on (hw_flush, gs.wgsl F_SOURCE): at most this many
+// GS pixels across and down.
+constexpr std::uint32_t kSource = 1u << 18, kSourcePx = 1024, kSourceRows = 512;
 // Texture-pack replacements live in this many words after kDecodedWords (PS2_TEX_PACK_MB, default 256 MB).
 const std::uint32_t kReplWords = [] {
     const char *e = std::getenv("PS2_TEX_PACK_MB");
@@ -152,6 +155,7 @@ struct NativeDraw {
     std::uint32_t writeback[3] = {};  // workgroups of a write-back to VRAM (replace): a run's box, or z = one per tile
     WGPUComputePipeline compute = nullptr;  // the write-back's pipeline (default: g_nat.writeback, a run's box)
     Binding *binding = nullptr;  // a tile write-back's target (its bind group); none: g_nat.target
+    WGPUTexture copy = nullptr, copy_alpha = nullptr;  // a target's colour and alpha in the scissor rect, to the source (kSource)
     std::uint32_t scissor[4] = {};
     double constant = 0.0;  // blend constant (FIX / 128)
 };
@@ -572,7 +576,7 @@ void plan_decodes(std::uint32_t prims, bool all = false) {
     static const int kKey[] = {12, 13, 14, 15, 16, 17, 20, 22};
     for (std::uint32_t i = 0; i < setups; ++i) {
         std::uint32_t *w = b.setups.data() + i * kSetupWords;
-        if (!(w[0] & 2u) || (w[0] & kReplaced)) continue;
+        if (!(w[0] & 2u) || (w[0] & (kReplaced | kSource))) continue;
         bool shared = false;
         for (const Decode &d : g_decodes) {
             const std::uint32_t *o = b.setups.data() + d.setup * kSetupWords;
@@ -1657,11 +1661,21 @@ struct Native {
     WGPUComputePipeline writeback_tiles = nullptr;
     std::vector<std::unique_ptr<Binding>> bindings;
     Binding *cur = nullptr;  // the target native and hardware draws go into
+    // kSource: the copy a hardware batch's texture reads (colour and alpha only), bound as group 1 of every render pass
+    NativeTarget source;
+    WGPUBindGroupLayout source_layout = nullptr;
+    WGPUBindGroup source_group = nullptr;
+    WGPUPipelineLayout render_layout = nullptr;
+    std::uint64_t sourced = 0, copied = 0;  // setups read from the source, samples copied
     std::uint64_t clock = 0, made = 0, rebased = 0, retired = 0, switches = 0;
     std::uint64_t imports = 0, tile_writebacks = 0;
     // samples written back per cause (what made them leave the target): kByEmulated .. kByFlush
     int cause = 0;
     std::uint64_t written_by[6] = {};
+    // texture-read write-backs per TEX0 PSM | target frame PSM << 8 | tile flags << 16 | the batch's own target << 20 |
+    // TBP0, TBW the target's frame << 21 | its Z buffer << 22
+    std::uint32_t read_key = 0, read_tbp = 0, read_tbw = 0;
+    std::map<std::uint32_t, std::uint64_t> read_detail;
     // PS2_GS_HW: primitives per path (kHwOk: hardware) and, for the rejects, per detail (ALPHA, FBMSK, PSM, FBW)
     std::uint64_t hw_prims[kHwReasons] = {};
     std::map<std::uint32_t, std::uint64_t> hw_detail[kHwReasons];
@@ -1727,15 +1741,17 @@ WGPURenderPipeline native_pipeline(std::uint32_t key) {
     WGPUColorTargetState targets[2] = {color, WGPU_COLOR_TARGET_STATE_INIT};
     targets[1].format = WGPUTextureFormat_R8Uint;
     targets[1].writeMask = import || (key & kNativeAlpha) ? WGPUColorWriteMask_All : WGPUColorWriteMask_None;
-    WGPUConstantEntry constants[2] = {WGPU_CONSTANT_ENTRY_INIT, WGPU_CONSTANT_ENTRY_INIT};
+    WGPUConstantEntry constants[3] = {WGPU_CONSTANT_ENTRY_INIT, WGPU_CONSTANT_ENTRY_INIT, WGPU_CONSTANT_ENTRY_INIT};
     constants[0].key = view("SCALE");
     constants[0].value = static_cast<double>(g_sx);
     constants[1].key = view("SCALE_Y");
     constants[1].value = static_cast<double>(g_sy);
+    constants[2].key = view("SOURCE");
+    constants[2].value = 1.0;
     WGPUFragmentState fs = WGPU_FRAGMENT_STATE_INIT;
     fs.module = g_nat.module;
     fs.entryPoint = view(import ? "native_import_fs" : (key & kNativeHw) ? "hw_fs" : "native_fs");
-    fs.constantCount = 2;
+    fs.constantCount = !import && (key & kNativeHw) ? 3 : 2;
     fs.constants = constants;
     fs.targetCount = 2;
     fs.targets = targets;
@@ -1745,7 +1761,7 @@ WGPURenderPipeline native_pipeline(std::uint32_t key) {
     const std::uint32_t cmp = (key >> 5) & 3u;
     ds.depthCompare = import || cmp == 0 ? WGPUCompareFunction_Always : cmp == 1 ? WGPUCompareFunction_GreaterEqual : WGPUCompareFunction_Greater;
     WGPURenderPipelineDescriptor rd = WGPU_RENDER_PIPELINE_DESCRIPTOR_INIT;
-    rd.layout = g_nat.pipeline_layout;
+    rd.layout = g_nat.render_layout;
     rd.vertex.module = g_nat.module;
     const bool full = import && !(key & kNativeTiles);  // the import of a whole run, or of a tile list (instanced)
     rd.vertex.entryPoint = view(full ? "native_full_vs" : import ? "native_tile_vs" : (key & kNativeHw) ? "hw_vs" : "native_vs");
@@ -1895,6 +1911,18 @@ void encode_native(WGPUCommandEncoder enc, const Command &c, const std::vector<N
             wgpuComputePassEncoderRelease(pass);
             continue;
         }
+        if (d[i].copy) {
+            end();
+            for (int k = 0; k < 2; ++k) {
+                WGPUTexelCopyTextureInfo from = WGPU_TEXEL_COPY_TEXTURE_INFO_INIT, to = WGPU_TEXEL_COPY_TEXTURE_INFO_INIT;
+                from.texture = k ? d[i].copy_alpha : d[i].copy;
+                to.texture = k ? g_nat.source.alpha : g_nat.source.color;
+                from.origin = to.origin = WGPUOrigin3D{d[i].scissor[0], d[i].scissor[1], 0};
+                const WGPUExtent3D size{d[i].scissor[2], d[i].scissor[3], 1};
+                wgpuCommandEncoderCopyTextureToTexture(enc, &from, &to, &size);
+            }
+            continue;
+        }
         if (!d[i].pipeline) continue;
         const bool split = import && d[i].pipeline == import;  // PS2_GPU_PROFILE: the tile imports get passes of their own
         if (rp && (d[i].color != view || split)) end();
@@ -1917,6 +1945,7 @@ void encode_native(WGPUCommandEncoder enc, const Command &c, const std::vector<N
             rd.timestampWrites = prof_slot(split ? "native-import" : "native-render", c.x + i);
             prof_pass = g_prof_on && rd.timestampWrites ? &g_prof_passes.back() : nullptr;
             rp = wgpuCommandEncoderBeginRenderPass(enc, &rd);
+            wgpuRenderPassEncoderSetBindGroup(rp, 1, g_nat.source_group, 0, nullptr);
             ++g_render_passes;
             view = d[i].color;
             current = nullptr;
@@ -2175,7 +2204,10 @@ void take_newer(Binding &b, int y, const std::uint64_t m[2]) {
             const int bit = __builtin_ctzll(bits);
             bits &= bits - 1;
             const std::uint32_t flags = ((b.tc[y][w] >> bit) & 1u ? kTileColor : 0u) | ((b.tz[y][w] >> bit) & 1u ? kTileZ : 0u);
-            g_nat.written_by[g_nat.cause] += tile_samples(b, static_cast<std::uint32_t>(w * 64 + bit), static_cast<std::uint32_t>(y));
+            const std::uint64_t n = tile_samples(b, static_cast<std::uint32_t>(w * 64 + bit), static_cast<std::uint32_t>(y));
+            g_nat.written_by[g_nat.cause] += n;
+            if (g_nat.cause == kByTexture) g_nat.read_detail[g_nat.read_key | b.fpsm << 8 | flags << 16 | (&b == g_batch.binding ? 1u << 20 : 0u) |
+                                     (g_nat.read_tbp == b.fbp && g_nat.read_tbw == b.fbw ? 1u << 21 : 0u) | (g_nat.read_tbp == b.zbp && g_nat.read_tbw == b.fbw ? 1u << 22 : 0u)] += n;
             b.list.push_back(static_cast<std::uint32_t>(w * 64 + bit) | static_cast<std::uint32_t>(y) << 8 | flags << 16);
         }
         b.tc[y][w] &= ~m[w];
@@ -2272,9 +2304,10 @@ void tiles_flush() {
 void tiles_reset() {
     for (const auto &b : g_nat.bindings) tiles_reset(*b);
 }
-void tiles_read(const Range &r) {
+void tiles_read(const Range &r, const Binding *skip = nullptr) {
     g_nat.cause = kByTexture;
-    for (const auto &b : g_nat.bindings) tiles_range(*b, r, false);
+    for (const auto &b : g_nat.bindings)
+        if (b.get() != skip) tiles_range(*b, r, false);
 }
 bool tiles_queued() {
     for (const auto &b : g_nat.bindings)
@@ -2724,23 +2757,109 @@ void hw_bind(const std::uint32_t *w) {
     tiles_bind_to(w[1], w[2], w[3], w[5], w[6], rows, z);
 }
 
+// The texel rect (r: x0 y0 x1 y1) each setup's texture is read in, if only FST sprites read it, with the filter's margin
+// and the wrap mode applied; ok false otherwise (or under REGION_REPEAT, or a REPEAT that wraps).
+struct TexelRect {
+    int r[4] = {1 << 30, 1 << 30, -1, -1};
+    bool ok = true;
+};
+
+void texel_rects(std::uint32_t prims, std::vector<TexelRect> &out) {
+    const Batch &b = g_batch;
+    out.assign(b.setups.size() / kSetupWords, TexelRect{});
+    for (std::uint32_t i = 0; i < prims; ++i) {
+        const std::uint32_t *rec = b.prims.data() + i * kPrimWords;
+        const std::uint32_t *w = b.setups.data() + rec[0] * kSetupWords;
+        TexelRect &t = out[rec[0]];
+        if (!t.ok || !(w[0] & 2u)) continue;
+        if (rec[1] != 1 || !(w[0] & 16u)) {
+            t.ok = false;
+            continue;
+        }
+        float uv[6];
+        std::memcpy(uv, rec + 15, sizeof uv);
+        int q[4] = {static_cast<int>(std::floor(std::min(uv[0], uv[3]) / 16.0f)) - 1, static_cast<int>(std::floor(std::min(uv[1], uv[4]) / 16.0f)) - 1,
+                    static_cast<int>(std::ceil(std::max(uv[0], uv[3]) / 16.0f)) + 1, static_cast<int>(std::ceil(std::max(uv[1], uv[4]) / 16.0f)) + 1};
+        for (int a = 0; a < 2; ++a) {  // u, then v
+            const std::uint32_t mode = (w[7] >> (24 + 2 * a)) & 3u, size = 1u << ((w[15] >> (8 * a)) & 0xFFu), region = w[18 + a];
+            const int lo = mode == 2 ? static_cast<int>(region & 0x3FFu) : 0, hi = mode == 2 ? static_cast<int>(region >> 16) : static_cast<int>(size) - 1;
+            if (mode == 3 || (mode == 0 && (q[a] < 0 || q[a + 2] > hi))) t.ok = false;
+            q[a] = std::clamp(q[a], lo, hi), q[a + 2] = std::clamp(q[a + 2], lo, hi);
+        }
+        t.r[0] = std::min(t.r[0], q[0]), t.r[1] = std::min(t.r[1], q[1]), t.r[2] = std::max(t.r[2], q[2]), t.r[3] = std::max(t.r[3], q[3]);
+    }
+}
+
+// The target a texture with setup w and texel rect t is read from instead of VRAM (kSource), or none: a CT32 / CT24
+// texture at a target's frame (same TBP0, TBW; CT24 only from a CT32 one, whose alpha the copy holds), no mipmaps,
+// read inside the target and the source.
+Binding *source_of(const std::uint32_t *w, const TexelRect &t) {
+    if (!t.ok || t.r[2] < 0 || (w[0] & kReplaced) || mip_levels(w) || (w[14] != PSMCT32 && w[14] != PSMCT24)) return nullptr;
+    for (const auto &p : g_nat.bindings) {
+        const Binding &y = *p;
+        if (y.fbp != w[12] || y.fbw != w[13] || (y.fpsm != PSMCT32 && (y.fpsm != PSMCT24 || w[14] != PSMCT24))) continue;
+        const int cols = static_cast<int>(std::min(y.target.width / g_sx, kSourcePx)), rows = static_cast<int>(std::min(y.rows, kSourceRows));
+        return t.r[2] < cols && t.r[3] < rows ? p.get() : nullptr;
+    }
+    return nullptr;
+}
+
 void hw_flush() {
     Batch &b = g_batch;
     Binding &x = *b.binding;
     const std::uint32_t prims = static_cast<std::uint32_t>(b.prims.size() / kPrimWords);
     const std::uint32_t setups = static_cast<std::uint32_t>(b.setups.size() / kSetupWords);
-    // what the textures read of any target goes back to VRAM first; the other targets give up the pages drawn here
+    // what the textures read of any target goes back to VRAM first, but a texture on a target's frame is read from a
+    // copy of that target (one per batch): only the other targets give those pages back. The other targets give up
+    // the pages drawn here.
+    static std::vector<TexelRect> rects;
+    texel_rects(prims, rects);
+    Binding *src = nullptr;
+    int sr[4] = {1 << 30, 1 << 30, -1, -1};
     for (std::uint32_t i = 0; i < setups; ++i) {
-        const std::uint32_t *w = b.setups.data() + i * kSetupWords;
-        if (w[0] & 2u)
-            for (std::uint32_t n = 0; n <= mip_levels(w); ++n) tiles_read(level_range(w, n));
+        std::uint32_t *w = b.setups.data() + i * kSetupWords;
+        if (!(w[0] & 2u)) continue;
+        g_nat.read_key = w[14], g_nat.read_tbp = w[12], g_nat.read_tbw = w[13];
+        Binding *y = source_of(w, rects[i]);
+        if (y && (!src || src == y)) {
+            const int *r = rects[i].r;
+            src = y;
+            w[0] |= kSource;
+            sr[0] = std::min(sr[0], r[0]), sr[1] = std::min(sr[1], r[1]), sr[2] = std::max(sr[2], r[2]), sr[3] = std::max(sr[3], r[3]);
+            tiles_read(region(w[12], w[13], w[14], r[0], r[1], r[2], r[3]), y);
+            ++g_nat.sourced;
+            continue;
+        }
+        for (std::uint32_t n = 0; n <= mip_levels(w); ++n) tiles_read(level_range(w, n));
     }
     tiles_claim(x, b.minx, b.miny, b.maxx, b.maxy, b.zwrite);
     tiles_writeback();
-    // the VRAM-newer tiles under the primitives come into the target, which then holds them newer
+    // the VRAM-newer tiles under the primitives come into the target, which then holds them newer; those the source
+    // reads come into it before the copy
     static std::vector<std::uint32_t> list;
     list.clear();
     const int t = static_cast<int>(kTilePx);
+    if (src) {
+        if (src != &x) {
+            static std::vector<std::uint32_t> read;
+            read.clear();
+            tiles_take(*src, sr[0] / t, sr[1] / t, sr[2] / t, sr[3] / t, 0, read);
+            tiles_import(*src, read);
+        } else {
+            tiles_take(x, sr[0] / t, sr[1] / t, sr[2] / t, sr[3] / t, 0, list);
+            tiles_import(x, list);
+            list.clear();
+        }
+        NativeDraw d;
+        d.copy = src->target.color;
+        d.copy_alpha = src->target.alpha;
+        d.scissor[0] = static_cast<std::uint32_t>(sr[0]) * g_sx;
+        d.scissor[1] = static_cast<std::uint32_t>(sr[1]) * g_sy;
+        d.scissor[2] = static_cast<std::uint32_t>(sr[2] - sr[0] + 1) * g_sx;
+        d.scissor[3] = static_cast<std::uint32_t>(sr[3] - sr[1] + 1) * g_sy;
+        g_native_draws.push_back(d);
+        g_nat.copied += static_cast<std::uint64_t>(d.scissor[2]) * d.scissor[3];
+    }
     for (std::uint32_t i = 0; i < prims; ++i) {
         const std::uint32_t *rec = b.prims.data() + i * kPrimWords;
         const std::uint32_t f = b.setups[rec[0] * kSetupWords];
@@ -2879,7 +2998,47 @@ bool native_init() {
     pld.bindGroupLayoutCount = 1;
     pld.bindGroupLayouts = &g_native_layout;
     g_nat.pipeline_layout = wgpuDeviceCreatePipelineLayout(g_device, &pld);
-    const std::string code = std::string(kGsShader) + "\n" + kNativeShader;
+    {  // the source (kSource): group 1 of the render pipelines; 1 x 1 unless the hardware renderer is on
+        WGPUBindGroupLayoutEntry se[2] = {WGPU_BIND_GROUP_LAYOUT_ENTRY_INIT, WGPU_BIND_GROUP_LAYOUT_ENTRY_INIT};
+        const WGPUTextureSampleType types[2] = {WGPUTextureSampleType_UnfilterableFloat, WGPUTextureSampleType_Uint};
+        const WGPUTextureFormat formats[2] = {WGPUTextureFormat_RGBA8Unorm, WGPUTextureFormat_R8Uint};
+        WGPUTexture *textures[2] = {&g_nat.source.color, &g_nat.source.alpha};
+        WGPUTextureView *views[2] = {&g_nat.source.color_view, &g_nat.source.alpha_view};
+        WGPUBindGroupEntry be[2] = {WGPU_BIND_GROUP_ENTRY_INIT, WGPU_BIND_GROUP_ENTRY_INIT};
+        g_nat.source.width = g_hw ? kSourcePx * g_sx : 1;
+        g_nat.source.height = g_hw ? kSourceRows * g_sy : 1;
+        for (int i = 0; i < 2; ++i) {
+            se[i].binding = static_cast<std::uint32_t>(i);
+            se[i].visibility = WGPUShaderStage_Fragment;
+            se[i].texture.sampleType = types[i];
+            se[i].texture.viewDimension = WGPUTextureViewDimension_2D;
+            WGPUTextureDescriptor td = WGPU_TEXTURE_DESCRIPTOR_INIT;
+            td.usage = WGPUTextureUsage_CopyDst | WGPUTextureUsage_TextureBinding;
+            td.size = WGPUExtent3D{g_nat.source.width, g_nat.source.height, 1};
+            td.format = formats[i];
+            *textures[i] = wgpuDeviceCreateTexture(g_device, &td);
+            *views[i] = wgpuTextureCreateView(*textures[i], nullptr);
+            be[i].binding = static_cast<std::uint32_t>(i);
+            be[i].textureView = *views[i];
+        }
+        WGPUBindGroupLayoutDescriptor sld = WGPU_BIND_GROUP_LAYOUT_DESCRIPTOR_INIT;
+        sld.entryCount = 2;
+        sld.entries = se;
+        g_nat.source_layout = wgpuDeviceCreateBindGroupLayout(g_device, &sld);
+        WGPUBindGroupDescriptor bd = WGPU_BIND_GROUP_DESCRIPTOR_INIT;
+        bd.layout = g_nat.source_layout;
+        bd.entryCount = 2;
+        bd.entries = be;
+        g_nat.source_group = wgpuDeviceCreateBindGroup(g_device, &bd);
+        const WGPUBindGroupLayout layouts[2] = {g_native_layout, g_nat.source_layout};
+        WGPUPipelineLayoutDescriptor rld = WGPU_PIPELINE_LAYOUT_DESCRIPTOR_INIT;
+        rld.bindGroupLayoutCount = 2;
+        rld.bindGroupLayouts = layouts;
+        g_nat.render_layout = wgpuDeviceCreatePipelineLayout(g_device, &rld);
+    }
+    // gs.wgsl's source_texel stub gives way to native.wgsl's
+    std::string code = std::string(kGsShader) + "\n" + kNativeShader;
+    code.replace(code.find("fn source_texel("), 16, "fn source_texel_stub(");
     WGPUShaderSourceWGSL source = WGPU_SHADER_SOURCE_WGSL_INIT;
     source.code = view(code.c_str());
     WGPUShaderModuleDescriptor md = WGPU_SHADER_MODULE_DESCRIPTOR_INIT;
@@ -2972,8 +3131,12 @@ void native_stats() {
     }
     if (g_nat.tiles) {
         static const char *const kBy[] = {"emulated", "texture", "claim", "display", "access", "flush"};
+        std::fprintf(stderr, "\n[native] source: %.1f textures a frame read from a target copy, %.0f samples copied", static_cast<double>(g_nat.sourced) / per,
+                     static_cast<double>(g_nat.copied) / per);
         std::fprintf(stderr, "\n[native] written back per frame by cause:");
         for (int k = 0; k < 6; ++k) std::fprintf(stderr, " %s %.0f", kBy[k], static_cast<double>(g_nat.written_by[k]) / per);
+        std::fprintf(stderr, "\n[native] texture-read write-backs (tpsm|fpsm<<8|flags<<16|own<<20|at frame<<21|at Z<<22):");
+        for (const auto &[k, n] : g_nat.read_detail) std::fprintf(stderr, " %x: %.0f", k, static_cast<double>(n) / per);
     }
     std::fprintf(stderr, "\n[native] per frame (%llu frames): %.2f runs, %.0f samples imported, %.0f written back; runs ended by: draw %llu, copy/download/display %llu, "
                          "upload %llu, target %llu, texture %llu, vblank %llu",

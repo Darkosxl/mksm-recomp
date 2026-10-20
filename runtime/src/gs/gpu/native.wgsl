@@ -1014,6 +1014,17 @@ fn hw_fs(in: HwOut) -> HwFrag {
     return HwFrag(f.color, f.alpha);
 }
 
+// The batch's source (gpu.cpp hw_flush, kSource): a copy of the target its texture sits on, texel (x, y) at the target's
+// GS pixel (x, y), sample k as in VRAM.
+@group(1) @binding(0) var source_color: texture_2d<f32>;
+@group(1) @binding(1) var source_alpha: texture_2d<u32>;
+
+fn source_texel(x: u32, y: u32, k: u32) -> u32 {
+    let at = vec2<i32>(i32(x * SCALE + k % SCALE), i32(y * SCALE_Y + k / SCALE));
+    let c = textureLoad(source_color, at, 0);
+    return u32(round(c.x * 255.0)) | (u32(round(c.y * 255.0)) << 8u) | (u32(round(c.z * 255.0)) << 16u) | (textureLoad(source_alpha, at, 0).x << 24u);
+}
+
 // ---- Import: the emulated frame and Z buffer into the native target at the start of a run of native draws
 
 struct ImportOut {
