@@ -1616,7 +1616,8 @@ struct NativeTarget {
 // Replace mode, tiles (§7.3), and the hardware GS renderer's target cache: one target per frame buffer (with the Z buffer
 // it was bound with; z false: none), kept coherent with VRAM per tile (tiles_bind_to). Tile bitsets, two words per row:
 // native-newer colour and Z, VRAM-newer, and what the emulated primitives of the pending batch read and write (applied
-// when the batch goes into the stream, tiles_apply).
+// when the batch goes into the stream, tiles_apply); the last three per buffer, [0] the frame, [1] the Z buffer, which
+// other targets can alias apart (the glow drawn over the Z buffer leaves the frame's colour in the target).
 struct Binding {
     NativeTarget target;
     WGPUBindGroup group = nullptr;  // the tile write-back's bindings (binding_group: made when encoded)
@@ -1624,7 +1625,7 @@ struct Binding {
     std::uint32_t fbp = 0, fbw = 0, fpsm = 0, zbp = 0, zpsm = 0, rows = 0;
     bool z = false;
     std::uint32_t tx = 0, ty = 0;  // tiles across (<= 128) and down (<= 128)
-    std::uint64_t tc[128][2] = {}, tz[128][2] = {}, tv[128][2] = {}, pr[128][2] = {}, pw[128][2] = {};
+    std::uint64_t tc[128][2] = {}, tz[128][2] = {}, tv[2][128][2] = {}, pr[2][128][2] = {}, pw[2][128][2] = {};
     bool pending = false;
     std::vector<std::uint32_t> list;  // tiles waiting for a write-back (x | y << 8 | flags << 16)
     std::uint64_t bound_lo[2] = {}, bound_hi[2] = {};  // VRAM bytes of the frame and Z pages
@@ -1712,6 +1713,8 @@ std::uint32_t native_blend(std::uint32_t alpha, bool abe, std::uint32_t fix = 25
 WGPURenderPipeline native_pipeline(std::uint32_t key) {
     if (const auto it = g_nat.pipelines.find(key); it != g_nat.pipelines.end()) return it->second;
     const bool import = key & kNativeImport;
+    // a tile import of the frame (kNativeColor) or the Z buffer (kNativeZWrite) alone; neither: both
+    const bool import_color = import && (key & (kNativeColor | kNativeZWrite)) != kNativeZWrite, import_z = import && (key & (kNativeColor | kNativeZWrite)) != kNativeColor;
     const std::uint32_t blend = key & 15u;
     // kNativePremul: the shader multiplies Cs by its factor (Cs·C with C past 1), the hardware takes it as is
     const WGPUBlendFactor f = (key & kNativePremul) ? WGPUBlendFactor_One : (key & kNativeConstant) ? WGPUBlendFactor_Constant : WGPUBlendFactor_SrcAlpha;
@@ -1737,14 +1740,14 @@ WGPURenderPipeline native_pipeline(std::uint32_t key) {
     WGPUColorTargetState color = WGPU_COLOR_TARGET_STATE_INIT;
     color.format = WGPUTextureFormat_RGBA8Unorm;
     // the colour target's alpha holds min(A, 128) / 128 for DstAlpha (§4.3): written with the frame's alpha
-    color.writeMask = import ? WGPUColorWriteMask_All
+    color.writeMask = import ? (import_color ? WGPUColorWriteMask_All : WGPUColorWriteMask_None)
                              : ((key & kNativeColor) && blend != kBlendKeep ? WGPUColorWriteMask_Red | WGPUColorWriteMask_Green | WGPUColorWriteMask_Blue
                                                                              : WGPUColorWriteMask_None) |
                                    ((key & kNativeAlpha) ? WGPUColorWriteMask_Alpha : WGPUColorWriteMask_None);
     if (!import && blend != kBlendNone && blend != kBlendKeep) color.blend = &bs;
     WGPUColorTargetState targets[2] = {color, WGPU_COLOR_TARGET_STATE_INIT};
     targets[1].format = WGPUTextureFormat_R8Uint;
-    targets[1].writeMask = import || (key & kNativeAlpha) ? WGPUColorWriteMask_All : WGPUColorWriteMask_None;
+    targets[1].writeMask = import_color || (!import && (key & kNativeAlpha)) ? WGPUColorWriteMask_All : WGPUColorWriteMask_None;
     WGPUConstantEntry constants[4] = {WGPU_CONSTANT_ENTRY_INIT, WGPU_CONSTANT_ENTRY_INIT, WGPU_CONSTANT_ENTRY_INIT, WGPU_CONSTANT_ENTRY_INIT};
     constants[0].key = view("SCALE");
     constants[0].value = static_cast<double>(g_sx);
@@ -1763,7 +1766,7 @@ WGPURenderPipeline native_pipeline(std::uint32_t key) {
     fs.targets = targets;
     WGPUDepthStencilState ds = WGPU_DEPTH_STENCIL_STATE_INIT;
     ds.format = WGPUTextureFormat_Depth32Float;
-    ds.depthWriteEnabled = import || (key & kNativeZWrite) ? WGPUOptionalBool_True : WGPUOptionalBool_False;
+    ds.depthWriteEnabled = import ? (import_z ? WGPUOptionalBool_True : WGPUOptionalBool_False) : (key & kNativeZWrite) ? WGPUOptionalBool_True : WGPUOptionalBool_False;
     const std::uint32_t cmp = (key >> 5) & 3u;
     ds.depthCompare = import || cmp == 0 ? WGPUCompareFunction_Always : cmp == 1 ? WGPUCompareFunction_GreaterEqual : WGPUCompareFunction_Greater;
     WGPURenderPipelineDescriptor rd = WGPU_RENDER_PIPELINE_DESCRIPTOR_INIT;
@@ -2202,40 +2205,44 @@ void row_mask(int x0, int x1, std::uint64_t m[2]) {
     }
 }
 
-// Row y's native-newer tiles under m go on the write-back list and stop being native-newer.
-void take_newer(Binding &b, int y, const std::uint64_t m[2]) {
+// Row y's native-newer tiles, colour under mc and Z under mz, go on the write-back list and stop being native-newer.
+void take_newer(Binding &b, int y, const std::uint64_t mc[2], const std::uint64_t mz[2]) {
     for (int w = 0; w < 2; ++w) {
-        std::uint64_t bits = (b.tc[y][w] | b.tz[y][w]) & m[w];
+        const std::uint64_t c = b.tc[y][w] & mc[w], z = b.tz[y][w] & mz[w];
+        std::uint64_t bits = c | z;
         while (bits) {
             const int bit = __builtin_ctzll(bits);
             bits &= bits - 1;
-            const std::uint32_t flags = ((b.tc[y][w] >> bit) & 1u ? kTileColor : 0u) | ((b.tz[y][w] >> bit) & 1u ? kTileZ : 0u);
+            const std::uint32_t flags = ((c >> bit) & 1u ? kTileColor : 0u) | ((z >> bit) & 1u ? kTileZ : 0u);
             const std::uint64_t n = tile_samples(b, static_cast<std::uint32_t>(w * 64 + bit), static_cast<std::uint32_t>(y));
             g_nat.written_by[g_nat.cause] += n;
             if (g_nat.cause == kByTexture) g_nat.read_detail[g_nat.read_key | b.fpsm << 8 | flags << 16 | (&b == g_batch.binding ? 1u << 20 : 0u) |
                                      (g_nat.read_tbp == b.fbp && g_nat.read_tbw == b.fbw ? 1u << 21 : 0u) | (g_nat.read_tbp == b.zbp && g_nat.read_tbw == b.fbw ? 1u << 22 : 0u)] += n;
             b.list.push_back(static_cast<std::uint32_t>(w * 64 + bit) | static_cast<std::uint32_t>(y) << 8 | flags << 16);
         }
-        b.tc[y][w] &= ~m[w];
-        b.tz[y][w] &= ~m[w];
+        b.tc[y][w] &= ~c;
+        b.tz[y][w] &= ~z;
     }
 }
 
-// Tiles [x0, x1] x [y0, y1], now: the native-newer ones go on the write-back list; with mark they become VRAM-newer.
-void tiles_touch(Binding &b, int x0, int y0, int x1, int y1, bool mark) {
+// Tiles [x0, x1] x [y0, y1] of these buffers (kTileColor, kTileZ), now: the native-newer ones go on the write-back
+// list; with mark they become VRAM-newer.
+void tiles_touch(Binding &b, int x0, int y0, int x1, int y1, bool mark, std::uint8_t buffers = kTileColor | kTileZ) {
     if (!tiles_clip(b, x0, y0, x1, y1)) return;
+    const std::uint64_t none[2] = {};
     for (int y = y0; y <= y1; ++y) {
         std::uint64_t m[2];
         row_mask(x0, x1, m);
-        take_newer(b, y, m);
-        if (mark) b.tv[y][0] |= m[0], b.tv[y][1] |= m[1];
+        take_newer(b, y, buffers & kTileColor ? m : none, buffers & kTileZ ? m : none);
+        for (int k = 0; k < 2 && mark; ++k)
+            if (buffers & (1u << k)) b.tv[k][y][0] |= m[0], b.tv[k][y][1] |= m[1];
     }
 }
 
 // The same for an emulated primitive: noted, applied with its batch (tiles_apply).
-void tiles_pend(Binding &b, int x0, int y0, int x1, int y1, bool write) {
+void tiles_pend(Binding &b, int x0, int y0, int x1, int y1, bool write, std::uint8_t buffer) {
     if (!tiles_clip(b, x0, y0, x1, y1)) return;
-    std::uint64_t (&p)[128][2] = write ? b.pw : b.pr;
+    std::uint64_t (&p)[128][2] = (write ? b.pw : b.pr)[buffer == kTileZ];
     for (int y = y0; y <= y1; ++y) {
         std::uint64_t m[2];
         row_mask(x0, x1, m);
@@ -2248,15 +2255,19 @@ void tiles_apply(Binding &b) {
     if (!b.pending) return;
     b.pending = false;
     for (std::uint32_t y = 0; y < b.ty; ++y) {
-        const std::uint64_t m[2] = {b.pr[y][0] | b.pw[y][0], b.pr[y][1] | b.pw[y][1]};
-        if (!(m[0] | m[1])) continue;
-        take_newer(b, static_cast<int>(y), m);
-        b.tv[y][0] |= b.pw[y][0], b.tv[y][1] |= b.pw[y][1];
-        b.pr[y][0] = b.pr[y][1] = b.pw[y][0] = b.pw[y][1] = 0;
+        const std::uint64_t mc[2] = {b.pr[0][y][0] | b.pw[0][y][0], b.pr[0][y][1] | b.pw[0][y][1]};
+        const std::uint64_t mz[2] = {b.pr[1][y][0] | b.pw[1][y][0], b.pr[1][y][1] | b.pw[1][y][1]};
+        if (!(mc[0] | mc[1] | mz[0] | mz[1])) continue;
+        take_newer(b, static_cast<int>(y), mc, mz);
+        for (int k = 0; k < 2; ++k) {
+            b.tv[k][y][0] |= b.pw[k][y][0], b.tv[k][y][1] |= b.pw[k][y][1];
+            b.pr[k][y][0] = b.pr[k][y][1] = b.pw[k][y][0] = b.pw[k][y][1] = 0;
+        }
     }
 }
 
-// VRAM bytes r: the tile rect of each frame and Z page of binding b it overlaps, to f(x0, y0, x1, y1).
+// VRAM bytes r: the tile rect of each frame and Z page of binding b it overlaps, to f(x0, y0, x1, y1, buffer) (kTileColor:
+// a frame page, kTileZ: a Z page).
 template <class F> void tiles_pages(const Binding &b, const Range &r, F &&f) {
     if (!r.overlaps(b.bound_lo[0], b.bound_hi[0]) && !r.overlaps(b.bound_lo[1], b.bound_hi[1])) return;
     for (int buffer = 0; buffer < 2; ++buffer) {
@@ -2269,13 +2280,13 @@ template <class F> void tiles_pages(const Binding &b, const Range &r, F &&f) {
         const int tw = static_cast<int>(pw / kTilePx), th = static_cast<int>(ph / kTilePx);
         for (std::uint64_t p = p0; p < p1; ++p) {
             const int px = static_cast<int>(p % per_row), py = static_cast<int>(p / per_row);
-            f(px * tw, py * th, px * tw + tw - 1, py * th + th - 1);
+            f(px * tw, py * th, px * tw + tw - 1, py * th + th - 1, buffer ? kTileZ : kTileColor);
         }
     }
 }
 
 void tiles_range(Binding &b, const Range &r, bool mark) {
-    tiles_pages(b, r, [&](int x0, int y0, int x1, int y1) { tiles_touch(b, x0, y0, x1, y1, mark); });
+    tiles_pages(b, r, [&](int x0, int y0, int x1, int y1, std::uint8_t buffer) { tiles_touch(b, x0, y0, x1, y1, mark, buffer); });
 }
 
 void tiles_reset(Binding &b) {
@@ -2284,7 +2295,8 @@ void tiles_reset(Binding &b) {
     std::memset(b.pr, 0, sizeof b.pr);
     std::memset(b.pw, 0, sizeof b.pw);
     std::memset(b.tv, 0, sizeof b.tv);
-    for (std::uint32_t y = 0; y < b.ty; ++y) row_mask(0, static_cast<int>(b.tx) - 1, b.tv[y]);  // every tile VRAM-newer
+    for (std::uint32_t y = 0; y < b.ty; ++y)  // every tile VRAM-newer
+        for (auto &v : b.tv) row_mask(0, static_cast<int>(b.tx) - 1, v[y]);
     b.pending = false;
 }
 
@@ -2321,12 +2333,12 @@ bool tiles_queued() {
     return false;
 }
 
-// A draw into binding x's GS pixels [x0, x1] x [y0, y1] reads its frame and Z there (the import) and writes the frame
-// (and Z): the other targets write back what they hold newer on those pages, and where it writes becomes VRAM-newer.
-void tiles_claim(Binding &x, int x0, int y0, int x1, int y1, bool zwrite) {
+// A draw into binding x's GS pixels [x0, x1] x [y0, y1] reads its frame and (zte) Z there (the import) and writes the
+// frame (and Z): the other targets write back what they hold newer on those pages, and where it writes becomes VRAM-newer.
+void tiles_claim(Binding &x, int x0, int y0, int x1, int y1, bool zte, bool zwrite) {
     if (g_nat.bindings.size() < 2) return;
     g_nat.cause = kByClaim;
-    const Range fb = pages(x.fbp, x.fbw, x.fpsm, x0, y0, x1, y1), z = x.z ? pages(x.zbp, x.fbw, x.zpsm, x0, y0, x1, y1) : Range{};
+    const Range fb = pages(x.fbp, x.fbw, x.fpsm, x0, y0, x1, y1), z = x.z && zte ? pages(x.zbp, x.fbw, x.zpsm, x0, y0, x1, y1) : Range{};
     for (const auto &b : g_nat.bindings) {
         if (b.get() == &x) continue;
         tiles_range(*b, fb, true);
@@ -2337,7 +2349,8 @@ void tiles_claim(Binding &x, int x0, int y0, int x1, int y1, bool zwrite) {
 // The tiles and VRAM pages binding b covers, rows GS lines down (rows past the old ones are VRAM-newer).
 void tiles_cover(Binding &b, std::uint32_t rows) {
     const std::uint32_t ty = (rows + kTilePx - 1) / kTilePx;
-    for (std::uint32_t y = b.ty; y < ty; ++y) row_mask(0, static_cast<int>(b.tx) - 1, b.tv[y]);
+    for (std::uint32_t y = b.ty; y < ty; ++y)
+        for (auto &v : b.tv) row_mask(0, static_cast<int>(b.tx) - 1, v[y]);
     b.ty = std::max(b.ty, ty);
     b.rows = std::max(b.rows, rows);
     for (int buffer = 0; buffer < 2; ++buffer) {
@@ -2417,45 +2430,61 @@ void tiles_bind(const Context &c) {
     tiles_bind_to(fbp, fbw, fpsm, zbp, zpsm, std::clamp<std::uint32_t>((static_cast<std::uint32_t>(c.scissor >> 48) & 0x7FFu) + 1u, 1u, 2048u), true);
 }
 
-// The import of binding b's VRAM-newer tiles in list (x | y << 8), next in the stream of native draws.
+// The import of binding b's VRAM-newer tiles in list (x | y << 8 | buffers << 16), next in the stream of native draws:
+// one draw per set of buffers (both, the frame, the Z buffer).
 void tiles_import(Binding &b, const std::vector<std::uint32_t> &list) {
     if (list.empty()) return;
     std::uint32_t zmax;
     float scale;
     native_depth(b.zpsm, zmax, scale);
-    NativeDraw d;
-    d.pipeline = native_pipeline(kNativeImport | kNativeTiles);
-    d.color = b.target.color_view;
-    d.depth = b.target.depth_view;
-    d.alpha = b.target.alpha_view;
-    d.param = push_params({b.fbp, b.fbw, b.fpsm, b.zbp, b.zpsm, arena_append(list.data(), list.size() * 4), 0u, b.target.width, b.target.height, 0u, 0u, 0u, 0u, zmax,
-                           f2u(scale), 0u});
-    d.vertices = 6;
-    d.instances = static_cast<std::uint32_t>(list.size());
-    d.scissor[2] = b.target.width;
-    d.scissor[3] = b.target.height;
-    g_native_draws.push_back(d);
+    static std::vector<std::uint32_t> part;
+    for (const std::uint32_t buffers : {kTileColor | kTileZ, +kTileColor, +kTileZ}) {
+        part.clear();
+        for (std::uint32_t e : list)
+            if ((e >> 16) == buffers) part.push_back(e);
+        if (part.empty()) continue;
+        NativeDraw d;
+        d.pipeline = native_pipeline(kNativeImport | kNativeTiles | (buffers == kTileColor ? kNativeColor : buffers == kTileZ ? kNativeZWrite : 0u));
+        d.color = b.target.color_view;
+        d.depth = b.target.depth_view;
+        d.alpha = b.target.alpha_view;
+        d.param = push_params({b.fbp, b.fbw, b.fpsm, b.zbp, b.zpsm, arena_append(part.data(), part.size() * 4), 0u, b.target.width, b.target.height, buffers, 0u, 0u, 0u,
+                               zmax, f2u(scale), 0u});
+        d.vertices = 6;
+        d.instances = static_cast<std::uint32_t>(part.size());
+        d.scissor[2] = b.target.width;
+        d.scissor[3] = b.target.height;
+        g_native_draws.push_back(d);
+    }
     for (std::uint32_t e : list) g_nat.imported += tile_samples(b, e & 0xFFu, (e >> 8) & 0xFFu);
     ++g_nat.imports;
 }
 
-// Binding b's tiles [x0, x1] x [y0, y1] about to be drawn with these writes (kTileColor, kTileZ): the VRAM-newer ones go
-// on list for the import, but for those in over (x0 y0 x1 y1), which the draw overwrites whole, and they all become
-// native-newer for what the draws write.
-void tiles_take(Binding &b, int x0, int y0, int x1, int y1, std::uint8_t writes, std::vector<std::uint32_t> &list, const int *over = nullptr) {
+// Binding b's tiles [x0, x1] x [y0, y1] about to be drawn, reading or writing these buffers (kTileColor, kTileZ) and
+// writing writes: their VRAM-newer ones go on list for the import (x | y << 8 | buffers << 16), but for those in over
+// (x0 y0 x1 y1), which the draw overwrites whole in the buffers over_buffers, and they all become native-newer for what
+// the draws write.
+void tiles_take(Binding &b, int x0, int y0, int x1, int y1, std::uint8_t buffers, std::uint8_t writes, std::vector<std::uint32_t> &list,
+                const int *over = nullptr, std::uint8_t over_buffers = 0) {
     if (!tiles_clip(b, x0, y0, x1, y1)) return;
     for (int y = y0; y <= y1; ++y) {
         std::uint64_t m[2], skip[2] = {};
         row_mask(x0, x1, m);
         if (over && y >= over[1] && y <= over[3]) row_mask(over[0], over[2], skip);
         for (int w = 0; w < 2; ++w) {
-            b.tv[y][w] &= ~(m[w] & skip[w]);
-            std::uint64_t bits = b.tv[y][w] & m[w];
-            b.tv[y][w] &= ~m[w];
+            std::uint64_t take[2] = {};
+            for (int k = 0; k < 2; ++k) {
+                if (!(buffers & (1u << k))) continue;
+                if (over_buffers & (1u << k)) b.tv[k][y][w] &= ~(m[w] & skip[w]);
+                take[k] = b.tv[k][y][w] & m[w];
+                b.tv[k][y][w] &= ~m[w];
+            }
+            std::uint64_t bits = take[0] | take[1];
             while (bits) {
                 const int bit = __builtin_ctzll(bits);
                 bits &= bits - 1;
-                list.push_back(static_cast<std::uint32_t>(w * 64 + bit) | static_cast<std::uint32_t>(y) << 8);
+                const std::uint32_t flags = ((take[0] >> bit) & 1u ? kTileColor : 0u) | ((take[1] >> bit) & 1u ? kTileZ : 0u);
+                list.push_back(static_cast<std::uint32_t>(w * 64 + bit) | static_cast<std::uint32_t>(y) << 8 | flags << 16);
             }
             if (writes & kTileColor) b.tc[y][w] |= m[w];
             if (writes & kTileZ) b.tz[y][w] |= m[w];
@@ -2468,12 +2497,12 @@ void tiles_take(Binding &b, int x0, int y0, int x1, int y1, std::uint8_t writes,
 void tiles_draw(std::uint32_t sx0, std::uint32_t sy0, std::uint32_t sx1, std::uint32_t sy1, std::uint8_t writes) {
     Binding &b = *g_nat.cur;
     const int x0 = static_cast<int>(sx0 / g_sx), y0 = static_cast<int>(sy0 / g_sy), x1 = static_cast<int>((sx1 - 1) / g_sx), y1 = static_cast<int>((sy1 - 1) / g_sy);
-    tiles_claim(b, x0, y0, x1, y1, writes & kTileZ);
+    tiles_claim(b, x0, y0, x1, y1, true, writes & kTileZ);
     tiles_writeback();
     static std::vector<std::uint32_t> list;
     list.clear();
     const int t = static_cast<int>(kTilePx);
-    tiles_take(b, x0 / t, y0 / t, x1 / t, y1 / t, writes, list);
+    tiles_take(b, x0 / t, y0 / t, x1 / t, y1 / t, kTileColor | kTileZ, writes, list);
     tiles_import(b, list);  // ahead of the batch's draws, which are pushed after it
 }
 
@@ -2487,24 +2516,24 @@ void tiles_emulated(const std::uint32_t *w, std::uint32_t flags, int minx, int m
     const bool zte = flags & 512u, zwrite = zte && !(flags & 32u);
     for (const auto &p : g_nat.bindings) {
         Binding &b = *p;
-        // the frame (blending reads it); a tile covers its colour and Z, so the Z buffer on the same rect is covered too
-        const bool frame = w[1] == b.fbp && w[2] == b.fbw && w[3] == b.fpsm;
-        if (frame) {
-            tiles_pend(b, minx / t, miny / t, maxx / t, maxy / t, true);
+        // the frame (blending reads it)
+        const auto pend = [&](bool write) { return [&b, write](int x0, int y0, int x1, int y1, std::uint8_t buffer) { tiles_pend(b, x0, y0, x1, y1, write, buffer); }; };
+        if (w[1] == b.fbp && w[2] == b.fbw && w[3] == b.fpsm) {
+            tiles_pend(b, minx / t, miny / t, maxx / t, maxy / t, true, kTileColor);
         } else {
             if (!fb_set) fb = pages(w[1], w[2], w[3], minx, miny, maxx, maxy), fb_set = true;
-            tiles_pages(b, fb, [&](int x0, int y0, int x1, int y1) { tiles_pend(b, x0, y0, x1, y1, true); });
+            tiles_pages(b, fb, pend(true));
         }
         if (zte) {
             if (!b.z || w[5] != b.zbp || w[6] != b.zpsm || w[2] != b.fbw) {
                 if (!z_set) z = pages(w[5], w[2], w[6], minx, miny, maxx, maxy), z_set = true;
-                tiles_pages(b, z, [&](int x0, int y0, int x1, int y1) { tiles_pend(b, x0, y0, x1, y1, zwrite); });
-            } else if (!frame) {
-                tiles_pend(b, minx / t, miny / t, maxx / t, maxy / t, zwrite);
+                tiles_pages(b, z, pend(zwrite));
+            } else {
+                tiles_pend(b, minx / t, miny / t, maxx / t, maxy / t, zwrite, kTileZ);
             }
         }
         if (flags & 2u)
-            for (std::uint32_t n = 0; n <= mips; ++n) tiles_pages(b, n ? levels[n] : tex, [&](int x0, int y0, int x1, int y1) { tiles_pend(b, x0, y0, x1, y1, false); });
+            for (std::uint32_t n = 0; n <= mips; ++n) tiles_pages(b, n ? levels[n] : tex, pend(false));
     }
 }
 
@@ -2814,13 +2843,13 @@ Binding *source_of(const std::uint32_t *w, const TexelRect &t) {
     return nullptr;
 }
 
-// The tiles (over: x0 y0 x1 y1) a sprite overwrites whole, every sample's colour, alpha and (with a Z buffer) Z, so they
-// need no import: no blend, alpha test, DATE, write mask or scan mask, Z written everywhere. One GS pixel of slack.
+// The tiles (over: x0 y0 x1 y1) a sprite overwrites whole, every sample's colour and alpha (and Z, when it writes Z), so
+// they need no import: no blend, alpha test, DATE, write mask, scan mask or Z test but ALWAYS. One GS pixel of slack.
 bool overwritten(const std::uint32_t *rec, const std::uint32_t *w, const Binding &x, int over[4]) {
     const std::uint32_t f = w[0], m = w[7];
     if (rec[1] != 1 || (f & (8u | 128u)) || (w[4] & 0xFFFFFFu) || ((w[4] >> 24) && x.fpsm == PSMCT32) || ((m >> 28) & 3u)) return false;
     if ((f & 64u) && (m & 7u) != 1u) return false;
-    if (x.z && (!(f & 512u) || (f & 32u) || ((m >> 8) & 3u) != 1u)) return false;
+    if ((f & 512u) && ((m >> 8) & 3u) != 1u) return false;
     const float x0 = u2f(rec[4]), y0 = u2f(rec[5]), x1 = x0 + u2f(rec[6]), y1 = y0 + u2f(rec[7]);
     if (!(std::isfinite(x0) && std::isfinite(y0) && std::isfinite(x1) && std::isfinite(y1))) return false;
     const int t = static_cast<int>(kTilePx);
@@ -2846,8 +2875,10 @@ void hw_flush() {
     texel_rects(prims, rects);
     Binding *src = nullptr;
     int sr[4] = {1 << 30, 1 << 30, -1, -1};
+    bool zuse = false;  // a primitive reads or writes Z (ZTE with ZTST ALWAYS and ZMSK does neither)
     for (std::uint32_t i = 0; i < setups; ++i) {
         std::uint32_t *w = b.setups.data() + i * kSetupWords;
+        zuse = zuse || ((w[0] & 512u) && (!(w[0] & 32u) || ((w[7] >> 8) & 3u) != 1u));
         if (!(w[0] & 2u)) continue;
         g_nat.read_key = w[14], g_nat.read_tbp = w[12], g_nat.read_tbw = w[13];
         Binding *y = source_of(w, rects[i]);
@@ -2862,7 +2893,7 @@ void hw_flush() {
         }
         for (std::uint32_t n = 0; n <= mip_levels(w); ++n) tiles_read(level_range(w, n));
     }
-    tiles_claim(x, b.minx, b.miny, b.maxx, b.maxy, b.zwrite);
+    tiles_claim(x, b.minx, b.miny, b.maxx, b.maxy, zuse, b.zwrite);
     tiles_writeback();
     // the VRAM-newer tiles under the primitives come into the target, which then holds them newer; those the source
     // reads come into it before the copy
@@ -2873,10 +2904,10 @@ void hw_flush() {
         if (src != &x) {
             static std::vector<std::uint32_t> read;
             read.clear();
-            tiles_take(*src, sr[0] / t, sr[1] / t, sr[2] / t, sr[3] / t, 0, read);
+            tiles_take(*src, sr[0] / t, sr[1] / t, sr[2] / t, sr[3] / t, kTileColor, 0, read);
             tiles_import(*src, read);
         } else {
-            tiles_take(x, sr[0] / t, sr[1] / t, sr[2] / t, sr[3] / t, 0, list);
+            tiles_take(x, sr[0] / t, sr[1] / t, sr[2] / t, sr[3] / t, kTileColor, 0, list);
             tiles_import(x, list);
             list.clear();
         }
@@ -2893,10 +2924,12 @@ void hw_flush() {
     for (std::uint32_t i = 0; i < prims; ++i) {
         const std::uint32_t *rec = b.prims.data() + i * kPrimWords;
         const std::uint32_t *w = b.setups.data() + rec[0] * kSetupWords;
-        const bool zwrite = (w[0] & 512u) && !(w[0] & 32u);
+        // the Z buffer only when the primitive tests or writes Z
+        const bool zte = w[0] & 512u, zwrite = zte && !(w[0] & 32u), ztest = zte && ((w[7] >> 8) & 3u) != 1u;
+        const std::uint8_t z = (ztest || zwrite) && x.z ? kTileZ : 0, zw = zwrite && x.z ? kTileZ : 0;
         int over[4];
         tiles_take(x, static_cast<int>(rec[2] & 0xFFFFu) / t, static_cast<int>(rec[2] >> 16) / t, static_cast<int>(rec[3] & 0xFFFFu) / t,
-                   static_cast<int>(rec[3] >> 16) / t, kTileColor | (zwrite ? kTileZ : 0), list, overwritten(rec, w, x, over) ? over : nullptr);
+                   static_cast<int>(rec[3] >> 16) / t, kTileColor | z, kTileColor | zw, list, overwritten(rec, w, x, over) ? over : nullptr, kTileColor | zw);
     }
     tiles_import(x, list);
     emit_native();  // the write-backs and the import go ahead of the decodes, which may read what they wrote back

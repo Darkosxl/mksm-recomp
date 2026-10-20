@@ -1069,8 +1069,16 @@ fn native_import_fs(in: ImportOut) -> NativeFrag {
     let x = px / SCALE;
     let y = py / SCALE_Y;
     let k = (py % SCALE_Y) * SCALE + px % SCALE;
-    let c = read_sample(prm(2u), prm(0u), prm(1u), x, y, k);
-    let z = read_sample(prm(4u), prm(3u), prm(1u), x, y, k) & prm(13u);
+    // prm 9: the buffers a tile import writes (1 the frame, 2 Z; 0 both), the pipeline masks the others
+    let buffers = select(prm(9u), 3u, prm(9u) == 0u);
+    var c = 0u;
+    var z = 0u;
+    if ((buffers & 1u) != 0u) {
+        c = read_sample(prm(2u), prm(0u), prm(1u), x, y, k);
+    }
+    if ((buffers & 2u) != 0u) {
+        z = read_sample(prm(4u), prm(3u), prm(1u), x, y, k) & prm(13u);
+    }
     var out: NativeFrag;
     out.color = vec4<f32>(f32(c & 0xFFu) / 255.0, f32((c >> 8u) & 0xFFu) / 255.0, f32((c >> 16u) & 0xFFu) / 255.0, f32(min(c >> 24u, 128u)) / 128.0);
     out.alpha = c >> 24u;
