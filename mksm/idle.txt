@@ -1,0 +1,3 @@
+# EE wait loops the recompiler fast-forwards (eerecomp --idle, recomp/codegen.hpp CodegenOptions::idle): loop head, then
+# anything. Each iteration must compute the same until preempt() runs events; eerecomp checks the loop's shape.
+00274790	vsync wait: polls GS CSR.FIELD against the field flag at 0x4F4D68 (~350k polls a frame at 1x)
