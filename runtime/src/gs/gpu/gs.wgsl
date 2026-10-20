@@ -465,34 +465,49 @@ const F_REPLACED: u32 = 65536u;
 const F_RT_HIRES: u32 = 131072u;
 const F_SOURCE: u32 = 262144u;
 
+// Hardware draws (gpu.cpp hw_flush): the setup also sits in the draw's parameters from prm(32) on, read there as constants
+// instead of loaded into registers. Words 26 on: the mip levels' TBP and TBW, or a texture pack's scale (mip_word).
+override SETUP_PRM: bool = false;
+
+fn setup_word(at: u32, i: u32) -> u32 {
+    if (SETUP_PRM) {
+        return prm(32u + i);
+    }
+    return data[at + i];
+}
+
+fn mip_word(s: Setup, j: u32) -> u32 {
+    return setup_word(s.mip_at - 26u, 26u + j);
+}
+
 fn load_setup(at: u32) -> Setup {
     var s: Setup;
-    s.flags = data[at];
-    s.fbmsk = data[at + 4u];
-    s.modes = data[at + 7u];
-    s.aref = data[at + 8u];
-    s.fix = data[at + 9u];
-    s.scax0 = i32(data[at + 10u] & 0xFFFFu);
-    s.scax1 = i32(data[at + 10u] >> 16u);
-    s.scay0 = i32(data[at + 11u] & 0xFFFFu);
-    s.scay1 = i32(data[at + 11u] >> 16u);
-    s.tbp = data[at + 12u];
-    s.tbw = data[at + 13u];
-    s.tpsm = data[at + 14u];
-    s.tw = data[at + 15u] & 0xFFu;
-    s.th = data[at + 15u] >> 8u;
-    s.cpsm = data[at + 16u];
-    s.csa = data[at + 17u];
-    s.minu = data[at + 18u] & 0xFFFFu;
-    s.maxu = data[at + 18u] >> 16u;
-    s.minv = data[at + 19u] & 0xFFFFu;
-    s.maxv = data[at + 19u] >> 16u;
-    s.ta0 = data[at + 20u] & 0xFFu;
-    s.ta1 = (data[at + 20u] >> 8u) & 0xFFu;
-    s.fogcol = data[at + 21u];
-    s.clut = data[at + 22u];
-    s.dec = data[at + 24u];
-    s.mip = data[at + 25u];
+    s.flags = setup_word(at, 0u);
+    s.fbmsk = setup_word(at, 4u);
+    s.modes = setup_word(at, 7u);
+    s.aref = setup_word(at, 8u);
+    s.fix = setup_word(at, 9u);
+    s.scax0 = i32(setup_word(at, 10u) & 0xFFFFu);
+    s.scax1 = i32(setup_word(at, 10u) >> 16u);
+    s.scay0 = i32(setup_word(at, 11u) & 0xFFFFu);
+    s.scay1 = i32(setup_word(at, 11u) >> 16u);
+    s.tbp = setup_word(at, 12u);
+    s.tbw = setup_word(at, 13u);
+    s.tpsm = setup_word(at, 14u);
+    s.tw = setup_word(at, 15u) & 0xFFu;
+    s.th = setup_word(at, 15u) >> 8u;
+    s.cpsm = setup_word(at, 16u);
+    s.csa = setup_word(at, 17u);
+    s.minu = setup_word(at, 18u) & 0xFFFFu;
+    s.maxu = setup_word(at, 18u) >> 16u;
+    s.minv = setup_word(at, 19u) & 0xFFFFu;
+    s.maxv = setup_word(at, 19u) >> 16u;
+    s.ta0 = setup_word(at, 20u) & 0xFFu;
+    s.ta1 = (setup_word(at, 20u) >> 8u) & 0xFFu;
+    s.fogcol = setup_word(at, 21u);
+    s.clut = setup_word(at, 22u);
+    s.dec = setup_word(at, 24u);
+    s.mip = setup_word(at, 25u);
     s.mip_at = at + 26u;
     s.tf = fmt_of(s.tpsm, s.tbp, s.tbw);
     return s;
@@ -556,12 +571,12 @@ struct Level {
 fn level(s: Setup, n: u32) -> Level {
     if (n == 0u) {
         if (has(s, F_REPLACED)) {
-            let r = data[s.mip_at];
+            let r = mip_word(s, 0u);
             return Level(s.tf, s.tw + r, s.th + r, s.minu << r, ((s.maxu + 1u) << r) - 1u, s.minv << r, ((s.maxv + 1u) << r) - 1u, s.dec);
         }
         return Level(s.tf, s.tw, s.th, s.minu, s.maxu, s.minv, s.maxv, s.dec);
     }
-    let w = data[s.mip_at + n - 1u];
+    let w = mip_word(s, n - 1u);
     // a decode holds every level, each right after the one before (gpu.cpp plan_decodes)
     var dec = s.dec;
     for (var j = 0u; j < n && dec != 0xFFFFFFFFu; j = j + 1u) {
@@ -767,7 +782,7 @@ fn texture(s: Setup, u: f32, v: f32, q: f32, k: u32) -> u32 {
     var f = 0.0;
     var linear = has(s, F_BILINEAR);
     if (!DECODED && !SOURCE && has(s, F_REPLACED)) {
-        scale = f32(1u << data[s.mip_at]);
+        scale = f32(1u << mip_word(s, 0u));
     } else if (mxl != 0u) {
         let lod = texture_lod(s, q);
         if (lod > 0.0) {

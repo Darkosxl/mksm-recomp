@@ -1883,7 +1883,7 @@ WGPURenderPipeline native_pipeline(std::uint32_t key) {
     WGPUColorTargetState targets[2] = {color, WGPU_COLOR_TARGET_STATE_INIT};
     targets[1].format = WGPUTextureFormat_R8Uint;
     targets[1].writeMask = import_color || (!import && (key & kNativeAlpha)) ? WGPUColorWriteMask_All : WGPUColorWriteMask_None;
-    WGPUConstantEntry constants[6] = {WGPU_CONSTANT_ENTRY_INIT, WGPU_CONSTANT_ENTRY_INIT, WGPU_CONSTANT_ENTRY_INIT, WGPU_CONSTANT_ENTRY_INIT, WGPU_CONSTANT_ENTRY_INIT, WGPU_CONSTANT_ENTRY_INIT};
+    WGPUConstantEntry constants[7] = {WGPU_CONSTANT_ENTRY_INIT, WGPU_CONSTANT_ENTRY_INIT, WGPU_CONSTANT_ENTRY_INIT, WGPU_CONSTANT_ENTRY_INIT, WGPU_CONSTANT_ENTRY_INIT, WGPU_CONSTANT_ENTRY_INIT, WGPU_CONSTANT_ENTRY_INIT};
     constants[0].key = view("SCALE");
     constants[0].value = static_cast<double>(g_sx);
     constants[1].key = view("SCALE_Y");
@@ -1896,10 +1896,12 @@ WGPURenderPipeline native_pipeline(std::uint32_t key) {
     constants[4].value = (key & kNativeDecoded) ? 1.0 : 0.0;
     constants[5].key = view("PLAIN");
     constants[5].value = (key & kNativePlain) ? 1.0 : 0.0;
+    constants[6].key = view("SETUP_PRM");
+    constants[6].value = 1.0;
     WGPUFragmentState fs = WGPU_FRAGMENT_STATE_INIT;
     fs.module = g_nat.module;
     fs.entryPoint = view(import ? "native_import_fs" : (key & kNativeHw) ? "hw_fs" : "native_fs");
-    fs.constantCount = !import && (key & kNativeHw) ? 6 : 2;
+    fs.constantCount = !import && (key & kNativeHw) ? 7 : 2;
     fs.constants = constants;
     fs.targetCount = 2;
     fs.targets = targets;
@@ -3249,6 +3251,7 @@ void hw_flush() {
             NativeDraw d;
             d.param = push_params({prim_offset + i * kPrimWords, n, 0u, rec[1], setup_offset + rec[0] * kSetupWords, 0u, 0u, tg.width, tg.height, splits[k].split, 0u, pflags,
                                    0u, zmax, f2u(scale), 0u});
+            std::memcpy(g_param_records[d.param].data() + 32, w, kSetupWords * 4);  // gs.wgsl SETUP_PRM
             std::uint32_t key = kNativeHw | blend | (cmp << 5) | (splits[k].zwrite ? kNativeZWrite : 0u) | (splits[k].color ? kNativeColor : 0u) |
                                 (splits[k].alpha ? kNativeAlpha : 0u);
             if (premul) key |= kNativePremul;
