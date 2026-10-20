@@ -58,6 +58,8 @@ constexpr std::uint32_t kReplaced = 1u << 16, kRtHires = 1u << 17;
 // A hardware batch's texture read straight from the target it sits on (hw_flush, gs.wgsl F_SOURCE), one of kSources
 // a batch binds: kSourceSlot set, the second.
 constexpr std::uint32_t kSource = 1u << 18, kSourceSlot = 1u << 19, kSources = 2;
+// a source read through VRAM's pages (source_of): kSourcePages, the first target's rows / 32 << kSourceSplit
+constexpr std::uint32_t kSourcePages = 1u << 20, kSourceSplit = 21;
 // Texture-pack replacements live in this many words after kDecodedWords (PS2_TEX_PACK_MB, default 256 MB).
 const std::uint32_t kReplWords = [] {
     const char *e = std::getenv("PS2_TEX_PACK_MB");
@@ -2389,10 +2391,10 @@ void tiles_flush() {
 void tiles_reset() {
     for (const auto &b : g_nat.bindings) tiles_reset(*b);
 }
-void tiles_read(const Range &r, const Binding *skip = nullptr) {
+void tiles_read(const Range &r, const Binding *skip = nullptr, const Binding *skip2 = nullptr) {
     g_nat.cause = kByTexture;
     for (const auto &b : g_nat.bindings)
-        if (b.get() != skip) tiles_range(*b, r, false);
+        if (b.get() != skip && b.get() != skip2) tiles_range(*b, r, false);
 }
 bool tiles_queued() {
     for (const auto &b : g_nat.bindings)
@@ -2915,18 +2917,42 @@ void texel_rects(std::uint32_t prims, std::vector<TexelRect> &out) {
     }
 }
 
-// The target a texture with setup w and texel rect t is read from instead of VRAM (kSource), or none: a CT32 / CT24
-// texture at a target's frame (same TBP0, TBW; CT24 only from a CT32 one, whose alpha the target holds), no mipmaps,
-// read inside the target.
-Binding *source_of(const std::uint32_t *w, const TexelRect &t) {
-    if (!t.ok || t.r[2] < 0 || (w[0] & kReplaced) || mip_levels(w) || (w[14] != PSMCT32 && w[14] != PSMCT24)) return nullptr;
-    for (const auto &p : g_nat.bindings) {
-        const Binding &y = *p;
-        if (y.fbp != w[12] || y.fbw != w[13] || (y.fpsm != PSMCT32 && (y.fpsm != PSMCT24 || w[14] != PSMCT24))) continue;
-        const int cols = static_cast<int>(y.target.width / g_sx), rows = static_cast<int>(std::min(y.rows, y.target.height / g_sy));
-        return t.r[2] < cols && t.r[3] < rows ? p.get() : nullptr;
-    }
+// The targets a texture with setup w and texel rect t is read from instead of VRAM (kSource): a CT32 / CT24 texture at a
+// target's frame (same TBP0, TBW; CT24 only from a CT32 one, whose alpha the target holds), no mipmaps. Read inside the
+// target, or through VRAM's pages (kSourcePages, native.wgsl source_texel): a texel past the buffer width is the one a
+// page row down, and the rows past the target's are those of the target that starts on the page there (y[1]).
+struct Source {
+    Binding *y[kSources] = {};
+    int r[kSources][4] = {};  // the GS pixels read of each
+    std::uint32_t flags = 0;
+};
+
+Binding *frame_at(std::uint32_t fbp, std::uint32_t fbw, std::uint32_t tpsm) {
+    for (const auto &p : g_nat.bindings)
+        if (p->fbp == fbp && p->fbw == fbw && (p->fpsm == PSMCT32 || (p->fpsm == PSMCT24 && tpsm == PSMCT24))) return p.get();
     return nullptr;
+}
+
+bool source_of(const std::uint32_t *w, const TexelRect &t, Source &s) {
+    if (!t.ok || t.r[2] < 0 || (w[0] & kReplaced) || mip_levels(w) || (w[14] != PSMCT32 && w[14] != PSMCT24)) return false;
+    Binding *y = frame_at(w[12], w[13], w[14]);
+    if (!y) return false;
+    const int cols = static_cast<int>(y->target.width / g_sx), rows = static_cast<int>(std::min(y->rows, y->target.height / g_sy));
+    s = Source{};
+    s.y[0] = y;
+    if (t.r[2] < cols && t.r[3] < rows) return std::copy(t.r, t.r + 4, s.r[0]), true;
+    const int width = static_cast<int>(w[13]) * 64, wrap = t.r[2] >= width ? 32 : 0, bottom = t.r[3] + wrap;
+    if (!width || cols < width || t.r[2] >= 2 * width) return false;
+    s.flags = kSourcePages;
+    s.r[0][0] = wrap ? 0 : t.r[0], s.r[0][1] = t.r[1], s.r[0][2] = wrap ? width - 1 : t.r[2], s.r[0][3] = std::min(bottom, rows - 1);
+    if (bottom < rows) return true;
+    if (static_cast<std::uint32_t>(rows) != y->rows || rows % 32 || rows / 32 > 127 || t.r[1] >= rows) return false;
+    Binding *z = frame_at(w[12] + static_cast<std::uint32_t>(rows / 32) * w[13] * 32, w[13], w[14]);
+    if (!z || static_cast<int>(z->target.width / g_sx) < width || bottom - rows >= static_cast<int>(std::min(z->rows, z->target.height / g_sy))) return false;
+    s.y[1] = z;
+    s.flags |= static_cast<std::uint32_t>(rows / 32) << kSourceSplit;
+    s.r[1][0] = s.r[0][0], s.r[1][1] = 0, s.r[1][2] = s.r[0][2], s.r[1][3] = bottom - rows;
+    return true;
 }
 
 // The tiles (over: x0 y0 x1 y1) a sprite overwrites whole, every sample's colour and alpha (and Z, when it writes Z), so
@@ -2984,16 +3010,26 @@ void hw_flush() {
         zuse = zuse || ((w[0] & 512u) && (!(w[0] & 32u) || ((w[7] >> 8) & 3u) != 1u));
         if (!(w[0] & 2u)) continue;
         g_nat.read_key = w[14], g_nat.read_tbp = w[12], g_nat.read_tbw = w[13];
-        Binding *y = source_of(w, rects[i]);
-        std::uint32_t slot = 0;
-        while (y && slot < kSources && src[slot] && src[slot] != y) ++slot;
-        if (y && slot < kSources) {
+        Source so;
+        std::uint32_t slot = 0;  // a split source (two targets) takes both slots, in order
+        bool fits = source_of(w, rects[i], so);
+        if (fits && so.y[1]) fits = (!src[0] || src[0] == so.y[0]) && (!src[1] || src[1] == so.y[1]);
+        else if (fits) {
+            while (slot < kSources && src[slot] && src[slot] != so.y[0]) ++slot;
+            fits = slot < kSources;
+        }
+        if (fits) {
+            for (std::uint32_t k = 0; k < kSources && so.y[k]; ++k) {
+                src[slot + k] = so.y[k];
+                int *u = sr[slot + k];
+                const int *r = so.r[k];
+                u[0] = std::min(u[0], r[0]), u[1] = std::min(u[1], r[1]), u[2] = std::max(u[2], r[2]), u[3] = std::max(u[3], r[3]);
+            }
+            w[0] |= kSource | (slot ? kSourceSlot : 0u) | so.flags;
+            // the other targets on those pages give back what they hold newer: of a paged read, the whole texture's at
+            // once (what a later upload there would take tile run by tile run, a compute pass each)
             const int *r = rects[i].r;
-            src[slot] = y;
-            w[0] |= kSource | (slot ? kSourceSlot : 0u);
-            int *u = sr[slot];
-            u[0] = std::min(u[0], r[0]), u[1] = std::min(u[1], r[1]), u[2] = std::max(u[2], r[2]), u[3] = std::max(u[3], r[3]);
-            tiles_read(region(w[12], w[13], w[14], r[0], r[1], r[2], r[3]), y);
+            tiles_read(so.flags ? level_range(w, 0) : region(w[12], w[13], w[14], r[0], r[1], r[2], r[3]), so.y[0], so.y[1]);
             ++g_nat.sourced;
             continue;
         }
