@@ -39,6 +39,8 @@ int g_render_path = 0;
 std::uint32_t g_setup_generation = 0;
 
 void serve_state(const void *payload);
+void render_stats();
+extern std::atomic<std::uint32_t> g_stats_done;
 
 namespace {
 
@@ -1298,6 +1300,11 @@ Rendered render_pending(const std::function<void(const DisplayRegs &)> &on_prese
             break;
         }
         case queue::kState: serve_state(payload); break;
+        case queue::kStats:
+            render_stats();
+            g_stats_done.fetch_add(1);
+            queue::notify(g_stats_done);
+            break;
         case queue::kNativeBegin: case queue::kNative: render_native(h.type, payload, h.bytes); break;
         case queue::kDownload: {
             std::uintptr_t target;
@@ -1350,7 +1357,9 @@ void dump_region(const char *spec) {
     std::fclose(f);
 }
 
-void stats() {
+std::atomic<std::uint32_t> g_stats_done{0};
+
+void render_stats() {
     if (const char *spec = std::getenv("PS2_DUMP_VRAM")) dump_region(spec);
 #ifdef PS2_GPU
     gpu::stats();
@@ -1359,6 +1368,14 @@ void stats() {
     for (int r = 0; r < 128; ++r)
         if (g_writes[r]) std::fprintf(stderr, " %02X:%llu", r, static_cast<unsigned long long>(g_writes[r]));
     std::fprintf(stderr, "\n");
+}
+
+// with a render thread, on that thread after the work queued before (the GPU renderer is not thread-safe)
+void stats() {
+    if (!queue::active()) return render_stats();
+    const std::uint32_t seen = g_stats_done.load();
+    queue::post(queue::kStats, 0, 0, nullptr, 0);
+    while (g_stats_done.load() == seen) queue::wait(g_stats_done, seen);
 }
 
 }
