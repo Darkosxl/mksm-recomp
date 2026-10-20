@@ -1130,6 +1130,64 @@ fn native_import_fs(in: ImportOut) -> NativeFrag {
     return out;
 }
 
+// ---- Transfers (gpu.cpp xfer_plan): a target's tiles into another target's view of the same memory in another format
+// (a CT32 frame, a Z24 frame, a Z24 Z buffer), the bits its write-back and the import would give. One instance per tile
+// of the list at data[prm(5)] (native_tile_vs). prm 0 the view read (0 a CT32 frame: colour and alpha, 1 a Z24 frame:
+// colour, 2 a Z24 Z buffer: depth), 1 the destination (0 a CT32 frame, 1 a Z24 frame, 2 a Z24 Z buffer), 2 the view
+// read at (x ^ 32, y ^ 16) (a Z format's page against CT32's), 3, 4, 6 the destination pixel's word (base, width,
+// PSMCT32 or PSMZ32), 7, 8 the destination size, 9, 10 the size of the target read that its tiles cover, 13, 14 Z max,
+// depth per unit. Group 1 as the transfer pipelines bind it (past the source slots' bindings).
+@group(1) @binding(4) var xfer_color: texture_2d<f32>;
+@group(1) @binding(5) var xfer_depth: texture_depth_2d;
+@group(1) @binding(6) var xfer_alpha: texture_2d<u32>;
+
+// The word: Z24 keeps its top byte in VRAM (a Z24 view never holds it), so a CT32 frame into a Z24 view leaves its
+// alpha there, as its write-back would. Past the tiles of the target read, VRAM's word.
+fn xfer_word(pos: vec4<f32>) -> u32 {
+    let px = u32(pos.x);
+    let py = u32(pos.y);
+    let x = px / SCALE;
+    let y = py / SCALE_Y;
+    let k = (py % SCALE_Y) * SCALE + px % SCALE;
+    let remap = select(vec2<u32>(0u, 0u), vec2<u32>(32u, 16u), prm(2u) != 0u);
+    let at = vec2<i32>(i32((x ^ remap.x) * SCALE + px % SCALE), i32((y ^ remap.y) * SCALE_Y + py % SCALE_Y));
+    let w = locate(prm(6u), prm(3u), prm(4u), x, y).word * SCALE * SCALE_Y + k;
+    let word = atomicLoad(&vram[w]);
+    if (u32(at.x) >= prm(9u) || u32(at.y) >= prm(10u)) {
+        return word;
+    }
+    var low: u32;
+    if (prm(0u) == 2u) {
+        low = min(u32(round(textureLoad(xfer_depth, at, 0) / bitcast<f32>(prm(14u)))), prm(13u));
+    } else {
+        let c = textureLoad(xfer_color, at, 0);
+        low = u32(round(c.x * 255.0)) | (u32(round(c.y * 255.0)) << 8u) | (u32(round(c.z * 255.0)) << 16u);
+    }
+    var top = word >> 24u;
+    if (prm(0u) == 0u) {
+        let a = textureLoad(xfer_alpha, at, 0).x;
+        if (prm(1u) != 0u && a != top) {
+            atomicAnd(&vram[w], 0xFFFFFFu);
+            atomicOr(&vram[w], a << 24u);
+        }
+        top = a;
+    }
+    return low | (top << 24u);
+}
+
+@fragment
+fn native_xfer_fs(in: ImportOut) -> NativeFrag {
+    var c = xfer_word(in.pos);
+    var out: NativeFrag;
+    out.depth = f32(c & prm(13u)) * bitcast<f32>(prm(14u));
+    if (prm(1u) == 1u) {
+        c = c & 0xFFFFFFu;  // a Z24 frame: 24 bits, as its import reads them
+    }
+    out.color = vec4<f32>(f32(c & 0xFFu) / 255.0, f32((c >> 8u) & 0xFFu) / 255.0, f32((c >> 16u) & 0xFFu) / 255.0, f32(min(c >> 24u, 128u)) / 128.0);
+    out.alpha = c >> 24u;
+    return out;
+}
+
 // ---- Replace mode: the end of a run writes the target back to compute VRAM, one thread per sample of the run's box
 // (prm 5..8: x0 y0 x1 y1 in samples; 0..4 the frame and Z buffer as for the import; 9 the run wrote Z). Only words
 // whose value changed are stored, so samples no native draw touched keep their VRAM word bit for bit (whatever the
