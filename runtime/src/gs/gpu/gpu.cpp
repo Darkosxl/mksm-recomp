@@ -900,7 +900,8 @@ bool native_overlaps(const Range &r);
 enum NativeClose : int { kCloseDraw, kCloseSync, kCloseUpload, kCloseTarget, kCloseTexture, kCloseVblank };
 void native_close(int why);
 
-void tiles_access(const Range &r, bool write);
+enum TileCause : int { kByEmulated, kByTexture, kByClaim, kByDisplay, kByAccess, kByFlush };
+void tiles_access(const Range &r, bool write, int cause = kByAccess);
 bool native_bound();
 
 void queue_pre(const PreOp &op) {
@@ -1658,6 +1659,9 @@ struct Native {
     Binding *cur = nullptr;  // the target native and hardware draws go into
     std::uint64_t clock = 0, made = 0, rebased = 0, retired = 0, switches = 0;
     std::uint64_t imports = 0, tile_writebacks = 0;
+    // samples written back per cause (what made them leave the target): kByEmulated .. kByFlush
+    int cause = 0;
+    std::uint64_t written_by[6] = {};
     // PS2_GS_HW: primitives per path (kHwOk: hardware) and, for the rejects, per detail (ALPHA, FBMSK, PSM, FBW)
     std::uint64_t hw_prims[kHwReasons] = {};
     std::map<std::uint32_t, std::uint64_t> hw_detail[kHwReasons];
@@ -2171,6 +2175,7 @@ void take_newer(Binding &b, int y, const std::uint64_t m[2]) {
             const int bit = __builtin_ctzll(bits);
             bits &= bits - 1;
             const std::uint32_t flags = ((b.tc[y][w] >> bit) & 1u ? kTileColor : 0u) | ((b.tz[y][w] >> bit) & 1u ? kTileZ : 0u);
+            g_nat.written_by[g_nat.cause] += tile_samples(b, static_cast<std::uint32_t>(w * 64 + bit), static_cast<std::uint32_t>(y));
             b.list.push_back(static_cast<std::uint32_t>(w * 64 + bit) | static_cast<std::uint32_t>(y) << 8 | flags << 16);
         }
         b.tc[y][w] &= ~m[w];
@@ -2248,12 +2253,14 @@ void tiles_reset(Binding &b) {
 // Writes back every native-newer tile of b (it stays cached).
 void tiles_flush(Binding &b) {
     tiles_apply(b);
+    g_nat.cause = kByFlush;
     tiles_touch(b, 0, 0, static_cast<int>(b.tx) - 1, static_cast<int>(b.ty) - 1, false);
     tiles_writeback(b);
 }
 
 // Every cached target at once.
 void tiles_apply() {
+    g_nat.cause = kByEmulated;
     for (const auto &b : g_nat.bindings) tiles_apply(*b);
 }
 void tiles_writeback() {
@@ -2266,6 +2273,7 @@ void tiles_reset() {
     for (const auto &b : g_nat.bindings) tiles_reset(*b);
 }
 void tiles_read(const Range &r) {
+    g_nat.cause = kByTexture;
     for (const auto &b : g_nat.bindings) tiles_range(*b, r, false);
 }
 bool tiles_queued() {
@@ -2278,6 +2286,7 @@ bool tiles_queued() {
 // (and Z): the other targets write back what they hold newer on those pages, and where it writes becomes VRAM-newer.
 void tiles_claim(Binding &x, int x0, int y0, int x1, int y1, bool zwrite) {
     if (g_nat.bindings.size() < 2) return;
+    g_nat.cause = kByClaim;
     const Range fb = pages(x.fbp, x.fbw, x.fpsm, x0, y0, x1, y1), z = x.z ? pages(x.zbp, x.fbw, x.zpsm, x0, y0, x1, y1) : Range{};
     for (const auto &b : g_nat.bindings) {
         if (b.get() == &x) continue;
@@ -2459,7 +2468,8 @@ void tiles_emulated(const std::uint32_t *w, std::uint32_t flags, int minx, int m
 
 // Any other access: VRAM bytes r are read (and, with write, written) outside the native path; the native draws and
 // write-backs it needs go into the stream with the caller's flush_all / emit_all.
-void tiles_access(const Range &r, bool write) {
+void tiles_access(const Range &r, bool write, int cause) {
+    g_nat.cause = cause;
     for (const auto &b : g_nat.bindings) {
         tiles_range(*b, r, write);
         tiles_writeback(*b);
@@ -2471,7 +2481,7 @@ bool native_tiles() { return g_nat.tiles; }
 
 void native_display(const DisplaySource &src) {
     if (!native_bound()) return native_sync();
-    tiles_access(pages(src.fbp, src.fbw, src.psm, 0, 0, static_cast<int>(src.fbw * 64) - 1, static_cast<int>(src.dby + 2 * src.height)), false);
+    tiles_access(pages(src.fbp, src.fbw, src.psm, 0, 0, static_cast<int>(src.fbw * 64) - 1, static_cast<int>(src.dby + 2 * src.height)), false, kByDisplay);
 }
 
 void native_open(const State &st) {
@@ -2695,7 +2705,7 @@ std::uint8_t hw_setup(const std::uint32_t *w) {
     if ((flags & 8u) && (flags & 1024u)) return kHwPabe;
     if (fbmsk && fbmsk != 0xFFFFFFu) return kHwFbmsk;
     if (amsk && amsk != 0xFFu) return kHwAmsk;
-    if (w[3] != PSMCT32 && w[3] != PSMCT24) return kHwFormat;
+    if (w[3] != PSMCT32 && w[3] != PSMCT24 && w[3] != PSMZ24) return kHwFormat;  // Z24 as a frame: CT24's colour, Z's swizzle
     if (w[2] == 0 || w[2] * 64u > 2048u) return kHwWidth;
     if (!native_blend((w[7] >> 12) & 0xFFu, flags & 8u)) return kHwBlend;
     if ((flags & 512u) && ((w[7] >> 8) & 3u) == 0) return kHwZNever;
@@ -2959,6 +2969,11 @@ void native_stats() {
             for (std::size_t k = 0; k < std::min<std::size_t>(top.size(), 4); ++k) std::fprintf(stderr, "%s%x: %.1f", k ? ", " : "", top[k].second, static_cast<double>(top[k].first) / per);
             std::fprintf(stderr, ")");
         }
+    }
+    if (g_nat.tiles) {
+        static const char *const kBy[] = {"emulated", "texture", "claim", "display", "access", "flush"};
+        std::fprintf(stderr, "\n[native] written back per frame by cause:");
+        for (int k = 0; k < 6; ++k) std::fprintf(stderr, " %s %.0f", kBy[k], static_cast<double>(g_nat.written_by[k]) / per);
     }
     std::fprintf(stderr, "\n[native] per frame (%llu frames): %.2f runs, %.0f samples imported, %.0f written back; runs ended by: draw %llu, copy/download/display %llu, "
                          "upload %llu, target %llu, texture %llu, vblank %llu",
@@ -3225,6 +3240,8 @@ void draw(const State &st, const Vertex *v, int count, texcache::Run run) {
         }
         cache.hw = g_hw ? hw_setup(cache.setup) : kHwOk;
     }
+    // ZTST NEVER, or ATST NEVER with AFAIL KEEP: the primitive writes nothing, and would only end a hardware batch
+    if (cache.hw == kHwZNever || cache.hw == kHwANever) return void(++g_nat.hw_prims[cache.hw]);
     // Scale > 1: a sprite sampling a render target in a direct format (g_rt_pages, or drawn by the batch still pending)
     // may read its samples on the fine grid (gs.wgsl F_RT_HIRES; the shader keeps 1:1 copies per sample). Uploaded
     // textures hold one value per texel and keep the native path (bilinear between texels, not between equal samples).
