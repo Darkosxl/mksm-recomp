@@ -96,7 +96,9 @@ WGPUDevice g_device = nullptr;
 WGPUQueue g_queue = nullptr;
 WGPUBuffer g_vram = nullptr, g_tables = nullptr, g_params = nullptr, g_data = nullptr, g_clut = nullptr, g_scratch = nullptr, g_readback = nullptr, g_decoded = nullptr;
 std::uint32_t g_decoded_used = 0;
-bool g_rendered[512] = {};
+// Blocks whose last write was rendering, per page (bit b: block b of the page): their samples may differ, so nothing that
+// keeps one value per texel (a decode, a texture-pack key) reads them. Uploads of whole words clear the blocks they fill.
+std::uint32_t g_drawn[512] = {};
 // Pages whose last write was rendering, with no upload since (not even into part of them): render targets whose samples
 // may differ, which F_RT_HIRES sprites read on the fine grid. Uploaded data holds one value per texel.
 bool g_rt_pages[512] = {};
@@ -566,9 +568,47 @@ void mark_uploaded(const Range &r) {
     each_page(r, [](std::uint32_t p) { ++g_page_gen[p]; });
 }
 
-void mark_rendered(const Range &r) {
-    for (std::uint64_t at = r.lo; at < r.hi; at += 8192) g_rendered[(at >> 13) & 511u] = g_rt_pages[(at >> 13) & 511u] = true;
+void block_size(std::uint32_t psm, int &w, int &h) {
+    switch (psm) {
+    case PSMCT16: case PSMCT16S: case PSMZ16: case PSMZ16S: w = 16, h = 8; break;
+    case PSMT8: w = 16, h = 16; break;
+    case PSMT4: w = 32, h = 16; break;
+    default: w = 8, h = 8; break;
+    }
+}
+
+// Every block of a buffer's rectangle (whole: only the blocks it fills) as f(page, block bits): a whole page at once when
+// the buffer starts on a page, else block by block through the GS layout.
+template <class F> void each_block(std::uint32_t bp, std::uint32_t bw, std::uint32_t psm, int x0, int y0, int x1, int y1, bool whole, F f) {
+    std::uint32_t pw, ph;
+    page_size(psm, pw, ph);
+    int w, h;
+    block_size(psm, w, h);
+    x0 = std::max(x0, 0);
+    y0 = std::max(y0, 0);
+    const int bx0 = (x0 + (whole ? w - 1 : 0)) / w, by0 = (y0 + (whole ? h - 1 : 0)) / h, bx1 = (x1 + (whole ? 1 : w)) / w - 1, by1 = (y1 + (whole ? 1 : h)) / h - 1;
+    const int cols = static_cast<int>(pw) / w, rows = static_cast<int>(ph) / h;
+    if (bx0 > bx1 || by0 > by1) return;
+    for (int py = by0 / rows; py <= by1 / rows; ++py)
+        for (int px = bx0 / cols; px <= bx1 / cols; ++px) {
+            const int ax = std::max(bx0, px * cols), ay = std::max(by0, py * rows), zx = std::min(bx1, px * cols + cols - 1), zy = std::min(by1, py * rows + rows - 1);
+            if (bp % 32 == 0 && ax == px * cols && ay == py * rows && zx == px * cols + cols - 1 && zy == py * rows + rows - 1) {
+                f(pixel_address(psm, bp, bw, px * pw, py * ph) >> 13, ~0u);
+                continue;
+            }
+            for (int y = ay; y <= zy; ++y)
+                for (int x = ax; x <= zx; ++x) {
+                    const std::uint32_t a = pixel_address(psm, bp, bw, x * w, y * h);
+                    f(a >> 13, 1u << ((a >> 8) & 31u));
+                }
+        }
+}
+
+void mark_rendered(std::uint32_t bp, std::uint32_t bw, std::uint32_t psm, int x0, int y0, int x1, int y1) {
+    const Range r = pages(bp, bw, psm, x0, y0, x1, y1);
+    for (std::uint64_t at = r.lo; at < r.hi; at += 8192) g_rt_pages[(at >> 13) & 511u] = true;
     mark_uploaded(r);
+    each_block(bp, bw, psm, x0, y0, x1, y1, false, [](std::uint32_t page, std::uint32_t bits) { g_drawn[page & 511u] |= bits; });
 }
 
 std::uint64_t page_gens(const Range &r) {
@@ -596,40 +636,50 @@ std::uint64_t clut_key(const std::uint32_t *w) {
     return h;
 }
 
-bool rendered(const Range &r) {
-    for (std::uint64_t at = r.lo; at < r.hi; at += 8192)
-        if (g_rendered[(at >> 13) & 511u]) return true;
-    return false;
+bool rendered(std::uint32_t bp, std::uint32_t bw, std::uint32_t psm, int x0, int y0, int x1, int y1) {
+    bool any = false;
+    each_block(bp, bw, psm, x0, y0, x1, y1, false, [&](std::uint32_t page, std::uint32_t bits) { any = any || (g_drawn[page & 511u] & bits); });
+    return any;
 }
 
 struct Decode {
-    std::uint32_t setup, offset, words;
+    std::uint32_t setup, level, offset, words;
 };
 std::vector<Decode> g_decodes;
 // This submit's decodes (cleared with g_decoded_used): the setup words that key them, the generations of the pages they
 // read, where they sit. ponytail: linear scan, a hash map if it shows in a profile.
 struct Decoded {
-    std::uint32_t key[8];
+    std::uint32_t key[15];
     std::uint64_t clut, gens;
     std::uint32_t offset;
 };
 std::vector<Decoded> g_decode_cache;
 
+// A decode holds every level the setup samples, level n right after level n - 1 (gs.wgsl level()).
 void plan_decodes(std::uint32_t prims, bool all = false) {
     Batch &b = g_batch;
     g_decodes.clear();
     if (!g_decode || (prims <= kDecodePrims && !all)) return;
     const std::uint32_t setups = static_cast<std::uint32_t>(b.setups.size() / kSetupWords);
-    static const int kKey[] = {12, 13, 14, 15, 16, 17, 20};
+    static const int kKey[] = {12, 13, 14, 15, 16, 17, 20, 25, 26, 27, 28, 29, 30, 31};
     for (std::uint32_t i = 0; i < setups; ++i) {
         std::uint32_t *w = b.setups.data() + i * kSetupWords;
         if (!(w[0] & 2u) || (w[0] & (kReplaced | kSource))) continue;
-        const std::uint32_t tw = w[15] & 0xFFu, th = w[15] >> 8;
-        Decoded e{{w[0] & 32768u}, clut_key(w), page_gens(pages(w[12], w[13], w[14], 0, 0, (1 << tw) - 1, (1 << th) - 1)), 0};
-        for (int k = 0; k < 7; ++k) e.key[k + 1] = w[kKey[k]];
+        const std::uint32_t tw = w[15] & 0xFFu, th = w[15] >> 8, levels = mip_levels(w);
+        const auto bits = [&](std::uint32_t n) { return (tw > n ? tw - n : 0u) + (th > n ? th - n : 0u); };
+        const auto level = [&](std::uint32_t n, auto f) {
+            return f(n ? w[25 + n] & 0x3FFFu : w[12], n ? w[25 + n] >> 16 : w[13], w[14], 0, 0, (1 << (tw > n ? tw - n : 0)) - 1, (1 << (th > n ? th - n : 0)) - 1);
+        };
+        Decoded e{{w[0] & 32768u}, clut_key(w), 0, 0};
+        for (int k = 0; k < 14; ++k) e.key[k + 1] = w[kKey[k]];
+        std::uint32_t words = 0;
+        for (std::uint32_t n = 0; n <= levels; ++n) {
+            e.gens += page_gens(level(n, pages));
+            words += 1u << bits(n);
+        }
         bool shared = false;
         for (const Decoded &d : g_decode_cache) {
-            if (d.gens != e.gens || d.clut != e.clut || !std::equal(e.key, e.key + 8, d.key)) continue;
+            if (d.gens != e.gens || d.clut != e.clut || !std::equal(e.key, e.key + 15, d.key)) continue;
             w[24] = d.offset;
             shared = true;
             break;
@@ -637,14 +687,16 @@ void plan_decodes(std::uint32_t prims, bool all = false) {
         if (shared) continue;
         const std::uint32_t mu = (w[7] >> 24) & 3u, mv = (w[7] >> 26) & 3u;
         const auto inside = [](std::uint32_t mode, std::uint32_t region, std::uint32_t size) { return mode < 2 || ((region & 0x3FFu) < (1u << size) && (region >> 16) < (1u << size)); };
-        if (!inside(mu, w[18], tw) || !inside(mv, w[19], th)) continue;
-        const std::uint32_t words = 1u << (tw + th);
-        if (g_decoded_used + words > kDecodedWords) continue;
-        if (g_samples > 1 && rendered(pages(w[12], w[13], w[14], 0, 0, (1 << tw) - 1, (1 << th) - 1))) continue;
+        if (!inside(mu, w[18], tw) || !inside(mv, w[19], th) || g_decoded_used + words > kDecodedWords) continue;
+        bool drawn = false;
+        for (std::uint32_t n = 0; n <= levels && g_samples > 1; ++n) drawn = drawn || level(n, rendered);
+        if (drawn) continue;
         w[24] = e.offset = g_decoded_used;
         g_decode_cache.push_back(e);
-        g_decodes.push_back({i, g_decoded_used, words});
-        g_decoded_used += words;
+        for (std::uint32_t n = 0; n <= levels; ++n) {
+            g_decodes.push_back({i, n, g_decoded_used, 1u << bits(n)});
+            g_decoded_used += 1u << bits(n);
+        }
     }
 }
 
@@ -758,7 +810,7 @@ void emit_decodes(std::uint32_t setup_offset) {
     std::uint32_t total = 0;
     for (std::uint32_t i = 0; i < n; ++i) {
         const Decode &d = g_decodes[i];
-        rec[i * 4] = setup_offset + d.setup * kSetupWords;
+        rec[i * 4] = (setup_offset + d.setup * kSetupWords) | d.level << 29;  // the arena stays far below 2^29 words
         rec[i * 4 + 1] = d.offset;
         rec[i * 4 + 2] = d.words;
         rec[i * 4 + 3] = total;
@@ -838,8 +890,8 @@ void flush_batch() {
         hires = rec[1] == 1 && (b.setups[rec[0] * kSetupWords] & kRtHires) && !one_to_one(rec, b.setups.data() + rec[0] * kSetupWords);
     }
     g_commands.push_back({hires ? kRasterHi : kRaster, std::min(tiles, 1024u), (tiles + 1023) / 1024, param});
-    mark_rendered(pages(b.fbp, b.fbw, b.fpsm, b.minx, b.miny, b.maxx, b.maxy));
-    if (b.zwrite) mark_rendered(pages(b.zbp, b.fbw, b.zpsm, b.minx, b.miny, b.maxx, b.maxy));
+    mark_rendered(b.fbp, b.fbw, b.fpsm, b.minx, b.miny, b.maxx, b.maxy);
+    if (b.zwrite) mark_rendered(b.zbp, b.fbw, b.zpsm, b.minx, b.miny, b.maxx, b.maxy);
     b.prims.clear();
     b.setups.clear();
     b.boxes.clear();
@@ -1010,12 +1062,9 @@ void finish_image_if_done() {
             for (std::uint32_t px = im.dsax / pw; px <= (im.dsax + im.rrw - 1) / pw; ++px) g_rt_pages[((im.dbp * 256 + (px + py * per_row) * 8192) >> 13) & 511u] = false;
     }
     if (psm != PSMCT32 && psm != PSMCT16 && psm != PSMCT16S && psm != PSMT8 && psm != PSMT4 && psm != PSMZ32 && psm != PSMZ16 && psm != PSMZ16S) return;
-    std::uint32_t pw, ph;
-    page_size(psm, pw, ph);
-    const std::uint32_t per_row = std::max<std::uint32_t>(1, im.dbw * 64 / pw), rows = im.rrw ? im.total / im.rrw : 0;
-    for (std::uint32_t py = (im.dsay + ph - 1) / ph; py < (im.dsay + rows) / ph; ++py)
-        for (std::uint32_t px = (im.dsax + pw - 1) / pw; px < (im.dsax + im.rrw) / pw; ++px)
-            g_rendered[((im.dbp * 256 + (px + py * per_row) * 8192) >> 13) & 511u] = false;
+    const int rows = im.rrw ? static_cast<int>(im.total / im.rrw) : 0;
+    each_block(im.dbp, im.dbw, psm, static_cast<int>(im.dsax), static_cast<int>(im.dsay), static_cast<int>(im.dsax + im.rrw) - 1, static_cast<int>(im.dsay) + rows - 1, true,
+               [](std::uint32_t page, std::uint32_t bits) { g_drawn[page & 511u] &= ~bits; });
 }
 
 void flush_image() {
@@ -1734,7 +1783,7 @@ struct Native {
     std::map<std::string, std::uint64_t> unsupported;
 } g_nat;
 
-constexpr std::uint32_t kNativePremul = 8192u, kNativeHw = 4096u, kNativeTiles = 2048u, kNativeAlpha = 1024u, kNativeImport = 512u, kNativeColor = 256u, kNativeZWrite = 128u, kNativeConstant = 16u;
+constexpr std::uint32_t kNativeDecoded = 16384u, kNativePremul = 8192u, kNativeHw = 4096u, kNativeTiles = 2048u, kNativeAlpha = 1024u, kNativeImport = 512u, kNativeColor = 256u, kNativeZWrite = 128u, kNativeConstant = 16u;
 
 // GS ALPHA (Cv = ((A - B) * C >> 7) + D; A, B, D: 0 Cs, 1 Cd, 2 zero; C: 0 As, 1 Ad, 2 FIX) as fixed-function blending,
 // with the shader's alpha output As / 128 (§4.3). 0: not expressible without the destination alpha (C = Ad) or not seen.
@@ -1758,7 +1807,8 @@ std::uint32_t native_blend(std::uint32_t alpha, bool abe, std::uint32_t fix = 25
 }
 
 // key: blend (bits 0-3), FIX factor (16), depth compare (bits 5-6: always, gequal, greater), Z write (128), colour (256),
-// the import (512), alpha (1024: the frame's alpha, As | FBA, into the r8uint target, unblended as the GS writes it)
+// the import (512), alpha (1024: the frame's alpha, As | FBA, into the r8uint target, unblended as the GS writes it),
+// decoded (16384: gs.wgsl DECODED, every level of the draw's texture is in decoded[])
 WGPURenderPipeline native_pipeline(std::uint32_t key) {
     if (const auto it = g_nat.pipelines.find(key); it != g_nat.pipelines.end()) return it->second;
     const bool import = key & kNativeImport;
@@ -1797,7 +1847,7 @@ WGPURenderPipeline native_pipeline(std::uint32_t key) {
     WGPUColorTargetState targets[2] = {color, WGPU_COLOR_TARGET_STATE_INIT};
     targets[1].format = WGPUTextureFormat_R8Uint;
     targets[1].writeMask = import_color || (!import && (key & kNativeAlpha)) ? WGPUColorWriteMask_All : WGPUColorWriteMask_None;
-    WGPUConstantEntry constants[4] = {WGPU_CONSTANT_ENTRY_INIT, WGPU_CONSTANT_ENTRY_INIT, WGPU_CONSTANT_ENTRY_INIT, WGPU_CONSTANT_ENTRY_INIT};
+    WGPUConstantEntry constants[5] = {WGPU_CONSTANT_ENTRY_INIT, WGPU_CONSTANT_ENTRY_INIT, WGPU_CONSTANT_ENTRY_INIT, WGPU_CONSTANT_ENTRY_INIT, WGPU_CONSTANT_ENTRY_INIT};
     constants[0].key = view("SCALE");
     constants[0].value = static_cast<double>(g_sx);
     constants[1].key = view("SCALE_Y");
@@ -1806,10 +1856,12 @@ WGPURenderPipeline native_pipeline(std::uint32_t key) {
     constants[2].value = 1.0;
     constants[3].key = view("RT_HIRES");
     constants[3].value = 1.0;
+    constants[4].key = view("DECODED");
+    constants[4].value = (key & kNativeDecoded) ? 1.0 : 0.0;
     WGPUFragmentState fs = WGPU_FRAGMENT_STATE_INIT;
     fs.module = g_nat.module;
     fs.entryPoint = view(import ? "native_import_fs" : (key & kNativeHw) ? "hw_fs" : "native_fs");
-    fs.constantCount = !import && (key & kNativeHw) ? 4 : 2;
+    fs.constantCount = !import && (key & kNativeHw) ? 5 : 2;
     fs.constants = constants;
     fs.targetCount = 2;
     fs.targets = targets;
@@ -2160,8 +2212,8 @@ void native_writeback() {
     emit_all();  // the uploads and CLUT loads queued during the run go first: its draws read them
     const int x0 = static_cast<int>(g_nat.rx0 / g_sx), y0 = static_cast<int>(g_nat.ry0 / g_sy);
     const int x1 = static_cast<int>((g_nat.rx1 - 1) / g_sx), y1 = static_cast<int>((g_nat.ry1 - 1) / g_sy);
-    mark_rendered(pages(g_nat.fbp, g_nat.fbw, g_nat.fpsm, x0, y0, x1, y1));
-    if (g_nat.zwritten) mark_rendered(pages(g_nat.zbp, g_nat.fbw, g_nat.zpsm, x0, y0, x1, y1));
+    mark_rendered(g_nat.fbp, g_nat.fbw, g_nat.fpsm, x0, y0, x1, y1);
+    if (g_nat.zwritten) mark_rendered(g_nat.zbp, g_nat.fbw, g_nat.zpsm, x0, y0, x1, y1);
     ++g_nat.writebacks;
 }
 
@@ -2233,8 +2285,8 @@ void tiles_writeback(Binding &b) {
     }
     const int px0 = static_cast<int>(x0 * kTilePx), py0 = static_cast<int>(y0 * kTilePx);
     const int px1 = static_cast<int>(x1 * kTilePx + kTilePx - 1), py1 = static_cast<int>(y1 * kTilePx + kTilePx - 1);
-    mark_rendered(pages(b.fbp, b.fbw, b.fpsm, px0, py0, px1, py1));
-    if (z) mark_rendered(pages(b.zbp, b.fbw, b.zpsm, px0, py0, px1, py1));
+    mark_rendered(b.fbp, b.fbw, b.fpsm, px0, py0, px1, py1);
+    if (z) mark_rendered(b.zbp, b.fbw, b.zpsm, px0, py0, px1, py1);
     ++g_nat.tile_writebacks;
     b.list.clear();
 }
@@ -3002,6 +3054,7 @@ void hw_flush() {
         const bool zte = flags & 512u, zwrite = zte && !(flags & 32u);
         const std::uint32_t ztst = (w[7] >> 8) & 3u, cmp = !zte || ztst == 1 ? 0u : ztst == 2 ? 1u : 2u;
         const bool amsk = (w[4] >> 24) != 0, frame_alpha = !amsk && w[3] == PSMCT32;
+        const bool decoded = (flags & 2u) && w[24] != 0xFFFFFFFFu && !(flags & (kReplaced | kRtHires | kSource));  // gs.wgsl DECODED
         struct Split {
             std::uint32_t split;
             bool color, zwrite, alpha;
@@ -3032,6 +3085,7 @@ void hw_flush() {
                                 (splits[k].alpha ? kNativeAlpha : 0u);
             if (premul) key |= kNativePremul;
             else if (csel == 2u) key |= kNativeConstant;
+            if (decoded) key |= kNativeDecoded;
             d.pipeline = native_pipeline(key);
             d.color = tg.color_view;
             d.depth = tg.depth_view;
@@ -3050,8 +3104,8 @@ void hw_flush() {
     }
     emit_native();
     ++g_nat.drawn;
-    mark_rendered(pages(b.fbp, b.fbw, b.fpsm, b.minx, b.miny, b.maxx, b.maxy));
-    if (b.zwrite) mark_rendered(pages(b.zbp, b.fbw, b.zpsm, b.minx, b.miny, b.maxx, b.maxy));
+    mark_rendered(b.fbp, b.fbw, b.fpsm, b.minx, b.miny, b.maxx, b.maxy);
+    if (b.zwrite) mark_rendered(b.zbp, b.fbw, b.zpsm, b.minx, b.miny, b.maxx, b.maxy);
     b.prims.clear();
     b.setups.clear();
     b.boxes.clear();
@@ -3455,7 +3509,7 @@ void replace_texture(const State &st, SetupCache &cache) {
     static std::uint32_t used = 0;
     std::uint32_t *w = cache.setup;
     const std::uint32_t tw = w[15] & 0xFFu, th = w[15] >> 8;
-    if (rendered(pages(w[12], w[13], w[14], 0, 0, (1 << tw) - 1, (1 << th) - 1))) return;
+    if (rendered(w[12], w[13], w[14], 0, 0, (1 << tw) - 1, (1 << th) - 1)) return;
     const std::uint64_t key = texpack::key(st);
     if (!key || !texpack::packing() || ((w[7] >> 24) & 3u) == 3u || ((w[7] >> 26) & 3u) == 3u) return;
     auto it = replaced.find(key);
@@ -3785,9 +3839,9 @@ void local_copy(const State &s) {
     }
     flush_all();
     if (!w || !h) return;
-    mark_rendered(pages(static_cast<std::uint32_t>(buf >> 32) & 0x3FFFu, static_cast<std::uint32_t>(buf >> 48) & 0x3Fu, static_cast<std::uint32_t>(buf >> 56) & 0x3Fu,
-                        static_cast<int>(pos >> 32) & 0x7FF, static_cast<int>(pos >> 48) & 0x7FF, (static_cast<int>(pos >> 32) & 0x7FF) + static_cast<int>(w) - 1,
-                        (static_cast<int>(pos >> 48) & 0x7FF) + static_cast<int>(h) - 1));
+    mark_rendered(static_cast<std::uint32_t>(buf >> 32) & 0x3FFFu, static_cast<std::uint32_t>(buf >> 48) & 0x3Fu, static_cast<std::uint32_t>(buf >> 56) & 0x3Fu,
+                  static_cast<int>(pos >> 32) & 0x7FF, static_cast<int>(pos >> 48) & 0x7FF, (static_cast<int>(pos >> 32) & 0x7FF) + static_cast<int>(w) - 1,
+                  (static_cast<int>(pos >> 48) & 0x7FF) + static_cast<int>(h) - 1);
     const std::uint32_t read = push_params({static_cast<std::uint32_t>(buf) & 0x3FFFu, static_cast<std::uint32_t>(buf >> 16) & 0x3Fu, static_cast<std::uint32_t>(buf >> 24) & 0x3Fu,
                                             static_cast<std::uint32_t>(pos) & 0x7FFu, static_cast<std::uint32_t>(pos >> 16) & 0x7FFu, w, h});
     const std::uint32_t write = push_params({static_cast<std::uint32_t>(buf >> 32) & 0x3FFFu, static_cast<std::uint32_t>(buf >> 48) & 0x3Fu, static_cast<std::uint32_t>(buf >> 56) & 0x3Fu,
@@ -3940,7 +3994,7 @@ void write_state(const std::vector<std::uint32_t> &vram, std::uint32_t scale, co
     const std::uint32_t from_x = scale & 0xFFu, from_y = scale >> 8 ? scale >> 8 : from_x;
     const std::uint32_t from = from_x * from_y, to = g_samples;
     const bool same = from_x == g_sx && from_y == g_sy;
-    std::fill(std::begin(g_rendered), std::end(g_rendered), same && to > 1);
+    std::fill(std::begin(g_drawn), std::end(g_drawn), same && to > 1 ? ~0u : 0u);
     std::fill(std::begin(g_rt_pages), std::end(g_rt_pages), same && to > 1);
     if (same && vram.size() == words * to) {
         wgpuQueueWriteBuffer(g_queue, g_vram, 0, vram.data(), vram.size() * 4);

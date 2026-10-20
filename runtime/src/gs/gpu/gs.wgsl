@@ -562,8 +562,13 @@ fn level(s: Setup, n: u32) -> Level {
         return Level(s.tf, s.tw, s.th, s.minu, s.maxu, s.minv, s.maxv, s.dec);
     }
     let w = data[s.mip_at + n - 1u];
+    // a decode holds every level, each right after the one before (gpu.cpp plan_decodes)
+    var dec = s.dec;
+    for (var j = 0u; j < n && dec != 0xFFFFFFFFu; j = j + 1u) {
+        dec = dec + (1u << (select(0u, s.tw - j, s.tw > j) + select(0u, s.th - j, s.th > j)));
+    }
     return Level(fmt_of(s.tpsm, w & 0x3FFFu, (w >> 16u) & 0x3Fu), select(0u, s.tw - n, s.tw > n), select(0u, s.th - n, s.th > n),
-                 s.minu >> n, s.maxu >> n, s.minv >> n, s.maxv >> n, 0xFFFFFFFFu);
+                 s.minu >> n, s.maxu >> n, s.minv >> n, s.maxv >> n, dec);
 }
 
 fn texel_x(s: Setup, l: Level, xi: i32) -> u32 {
@@ -644,6 +649,10 @@ fn source_texel(x: u32, y: u32, k: u32) -> u32 {
     return 0u;
 }
 
+// Hardware draws whose texture sits decoded, without a texture pack or F_RT_HIRES (gpu.cpp kNativeDecoded): the swizzled
+// and CLUT paths compile out, which a draw pays for even when it skips them.
+override DECODED: bool = false;
+
 fn floor_div(a: i32, b: i32) -> i32 {
     return select(a / b, (a - b + 1) / b, a < 0);
 }
@@ -660,7 +669,7 @@ fn fetch(s: Setup, l: Level, xi: i32, yi: i32, k: u32, hi: bool) -> u32 {
     }
     let x = texel_x(s, l, nx);
     let y = texel_y(s, l, ny);
-    if (l.dec != 0xFFFFFFFFu) {
+    if (DECODED || l.dec != 0xFFFFFFFFu) {
         return decoded[l.dec + (y << l.tw) + x];
     }
     var sk = k;
@@ -685,7 +694,7 @@ fn fetch(s: Setup, l: Level, xi: i32, yi: i32, k: u32, hi: bool) -> u32 {
 
 // One level, point or bilinear: 1 or 4 taps through the one fetch() above.
 fn sample(s: Setup, l: Level, uin: f32, vin: f32, k: u32, linear: bool) -> u32 {
-    let hi = RT_HIRES && rt_hires;
+    let hi = RT_HIRES && !DECODED && rt_hires;
     var x0: i32;
     var y0: i32;
     var fx = 0.0;
@@ -752,7 +761,7 @@ fn texture(s: Setup, u: f32, v: f32, q: f32, k: u32) -> u32 {
     var levels = 1u;
     var f = 0.0;
     var linear = has(s, F_BILINEAR);
-    if (has(s, F_REPLACED)) {
+    if (!DECODED && has(s, F_REPLACED)) {
         scale = f32(1u << data[s.mip_at]);
     } else if (mxl != 0u) {
         let lod = texture_lod(s, q);
@@ -1300,8 +1309,8 @@ fn shade_at(p: u32, s: Setup, x: i32, y: i32, k: u32, px: f32, py: f32) {
 }
 
 @compute @workgroup_size(64)
-// All of a batch's decodes in one dispatch: prm(1) records at data[prm(0)] (setup, decoded offset, texels, first
-// thread), prm(2) texels in all.
+// All of a batch's decodes in one dispatch: prm(1) records at data[prm(0)] (setup | mip level << 29, decoded offset,
+// texels, first thread), prm(2) texels in all.
 fn decode(@builtin(global_invocation_id) gid: vec3<u32>) {
     let i = gid.x + gid.y * 64u * 1024u;
     if (i >= prm(2u)) {
@@ -1320,10 +1329,11 @@ fn decode(@builtin(global_invocation_id) gid: vec3<u32>) {
     }
     let r = records + lo * 4u;
     let t = i - data[r + 3u];
-    let s = load_setup(data[r]);
-    let x = t & ((1u << s.tw) - 1u);
-    let y = t >> s.tw;
-    decoded[data[r + 1u] + t] = convert(s, load_at(addr(s.tf, x, y), 0u));
+    let s = load_setup(data[r] & 0x1FFFFFFFu);
+    let l = level(s, data[r] >> 29u);
+    let x = t & ((1u << l.tw) - 1u);
+    let y = t >> l.tw;
+    decoded[data[r + 1u] + t] = convert(s, load_at(addr(l.f, x, y), 0u));
 }
 
 @compute @workgroup_size(64)
