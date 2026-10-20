@@ -657,11 +657,11 @@ override RT_HIRES: bool = false;
 // 32 no frame write.
 override DIAG: u32 = 0u;
 
-// Hardware draws whose texture is a source (gpu.cpp kSource, kNativeSourced; source_of: CT32 / CT24, no mipmaps, no
-// texture pack), read from the target (native.wgsl source_texel; this stub is renamed out of that module): only the
-// source read and the CT24 alpha stay.
+// Hardware draws whose texture is a source (gpu.cpp kSource, kNativeSourced; source_of: CT32 / CT24, z_source_of: Z24; no
+// mipmaps, no texture pack), read from the target (native.wgsl source_texel; this stub is renamed out of that module):
+// only the source read and the 24-bit formats' alpha stay.
 override SOURCE: bool = false;
-fn source_texel(x: u32, y: u32, k: u32) -> u32 {
+fn source_texel(f: Fmt, x: u32, y: u32, k: u32) -> u32 {
     return 0u;
 }
 
@@ -703,7 +703,7 @@ fn fetch(s: Setup, l: Level, xi: i32, yi: i32, k: u32, hi: bool) -> u32 {
         sk = sy * SCALE + sx;
     }
     if (SOURCE) {
-        let raw = source_texel(x, y, sk);
+        let raw = source_texel(l.f, x, y, sk);
         if (s.tpsm == 0x00u) {
             return raw;
         }
