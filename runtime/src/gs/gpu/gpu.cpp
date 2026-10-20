@@ -100,6 +100,9 @@ bool g_rendered[512] = {};
 // Pages whose last write was rendering, with no upload since (not even into part of them): render targets whose samples
 // may differ, which F_RT_HIRES sprites read on the fine grid. Uploaded data holds one value per texel.
 bool g_rt_pages[512] = {};
+// Write generation per page, bumped by every render into it and every upload: a texture decoded earlier in the submit
+// is reused while the pages it read keep theirs (plan_decodes).
+std::uint32_t g_page_gen[512] = {};
 bool g_decode = true;
 std::uint64_t g_params_size = 0, g_data_size = 0;
 WGPUBindGroupLayout g_layout = nullptr;
@@ -553,8 +556,44 @@ Range pages(std::uint32_t bp, std::uint32_t bw, std::uint32_t psm, int x0, int y
     return r;
 }
 
+// Every physical page r touches (a buffer may start inside a page, so its pages straddle two).
+template <class F> void each_page(const Range &r, F f) {
+    if (r.lo < r.hi)
+        for (std::uint64_t p = r.lo >> 13; p <= (r.hi - 1) >> 13; ++p) f(static_cast<std::uint32_t>(p & 511u));
+}
+
+void mark_uploaded(const Range &r) {
+    each_page(r, [](std::uint32_t p) { ++g_page_gen[p]; });
+}
+
 void mark_rendered(const Range &r) {
     for (std::uint64_t at = r.lo; at < r.hi; at += 8192) g_rendered[(at >> 13) & 511u] = g_rt_pages[(at >> 13) & 511u] = true;
+    mark_uploaded(r);
+}
+
+std::uint64_t page_gens(const Range &r) {
+    std::uint64_t n = 0;
+    each_page(r, [&](std::uint32_t p) { n += g_page_gen[p]; });
+    return n;
+}
+
+std::uint64_t mix(std::uint64_t h, std::uint64_t v) {
+    h ^= v + 0x9E3779B97F4A7C15ull + (h << 6) + (h >> 2);
+    return h * 0xFF51AFD7ED558CCDull;
+}
+
+// CLUT contents by 16-entry block, per slot: the id of the load that last wrote the block (its registers and the
+// generations of the pages it read; gs.wgsl load_clut writes whole aligned blocks). A decode keys on the blocks it reads,
+// not on the slot: games reload the same CLUT before each draw, and every load takes a new slot.
+std::vector<std::array<std::uint64_t, 32>> g_clut_blocks(kClutSlots);
+
+std::uint64_t clut_key(const std::uint32_t *w) {
+    const std::array<std::uint64_t, 32> &b = g_clut_blocks[w[22] % kClutSlots];
+    if (w[14] == PSMT4 || w[14] == PSMT4HL || w[14] == PSMT4HH) return b[w[17] & 15u];
+    if (w[14] != PSMT8 && w[14] != PSMT8H) return 0;
+    std::uint64_t h = 0;
+    for (int k = 0; k < 16; ++k) h = mix(h, b[k]);
+    return h;
 }
 
 bool rendered(const Range &r) {
@@ -567,36 +606,43 @@ struct Decode {
     std::uint32_t setup, offset, words;
 };
 std::vector<Decode> g_decodes;
+// This submit's decodes (cleared with g_decoded_used): the setup words that key them, the generations of the pages they
+// read, where they sit. ponytail: linear scan, a hash map if it shows in a profile.
+struct Decoded {
+    std::uint32_t key[8];
+    std::uint64_t clut, gens;
+    std::uint32_t offset;
+};
+std::vector<Decoded> g_decode_cache;
 
 void plan_decodes(std::uint32_t prims, bool all = false) {
     Batch &b = g_batch;
     g_decodes.clear();
     if (!g_decode || (prims <= kDecodePrims && !all)) return;
     const std::uint32_t setups = static_cast<std::uint32_t>(b.setups.size() / kSetupWords);
-    static const int kKey[] = {12, 13, 14, 15, 16, 17, 20, 22};
+    static const int kKey[] = {12, 13, 14, 15, 16, 17, 20};
     for (std::uint32_t i = 0; i < setups; ++i) {
         std::uint32_t *w = b.setups.data() + i * kSetupWords;
         if (!(w[0] & 2u) || (w[0] & (kReplaced | kSource))) continue;
+        const std::uint32_t tw = w[15] & 0xFFu, th = w[15] >> 8;
+        Decoded e{{w[0] & 32768u}, clut_key(w), page_gens(pages(w[12], w[13], w[14], 0, 0, (1 << tw) - 1, (1 << th) - 1)), 0};
+        for (int k = 0; k < 7; ++k) e.key[k + 1] = w[kKey[k]];
         bool shared = false;
-        for (const Decode &d : g_decodes) {
-            const std::uint32_t *o = b.setups.data() + d.setup * kSetupWords;
-            bool same = (o[0] & 32768u) == (w[0] & 32768u);
-            for (int k : kKey) same = same && o[k] == w[k];
-            if (same) {
-                w[24] = d.offset;
-                shared = true;
-                break;
-            }
+        for (const Decoded &d : g_decode_cache) {
+            if (d.gens != e.gens || d.clut != e.clut || !std::equal(e.key, e.key + 8, d.key)) continue;
+            w[24] = d.offset;
+            shared = true;
+            break;
         }
         if (shared) continue;
-        const std::uint32_t tw = w[15] & 0xFFu, th = w[15] >> 8;
         const std::uint32_t mu = (w[7] >> 24) & 3u, mv = (w[7] >> 26) & 3u;
         const auto inside = [](std::uint32_t mode, std::uint32_t region, std::uint32_t size) { return mode < 2 || ((region & 0x3FFu) < (1u << size) && (region >> 16) < (1u << size)); };
         if (!inside(mu, w[18], tw) || !inside(mv, w[19], th)) continue;
         const std::uint32_t words = 1u << (tw + th);
         if (g_decoded_used + words > kDecodedWords) continue;
         if (g_samples > 1 && rendered(pages(w[12], w[13], w[14], 0, 0, (1 << tw) - 1, (1 << th) - 1))) continue;
-        w[24] = g_decoded_used;
+        w[24] = e.offset = g_decoded_used;
+        g_decode_cache.push_back(e);
         g_decodes.push_back({i, g_decoded_used, words});
         g_decoded_used += words;
     }
@@ -954,6 +1000,7 @@ void finish_image_if_done() {
     if (im.done < im.total) return;
     im.active = false;
     im.pending.clear();
+    mark_uploaded(pages(im.dbp, im.dbw, im.dpsm, static_cast<int>(im.dsax), static_cast<int>(im.dsay), static_cast<int>(im.dsax + im.rrw) - 1, static_cast<int>(im.dsay + im.total / im.rrw) - 1));
     const std::uint32_t psm = im.dpsm;
     if (im.rrw && im.total >= im.rrw) {
         std::uint32_t pw, ph;
@@ -1142,6 +1189,7 @@ void profile_submit() {
     g_param_records.clear();
     g_arena.clear();
     g_decoded_used = 0;
+    g_decode_cache.clear();
     g_clut_loads = 0;
 }
 
@@ -1332,6 +1380,7 @@ void after_submit() {
     g_command_info.clear();
     ++g_serial;
     g_decoded_used = 0;
+    g_decode_cache.clear();
     g_clut_loads = 0;
 }
 
@@ -3700,6 +3749,7 @@ void image_begin(const State &s) {
     im.bpp = bits_per_pixel(im.dpsm);
     im.id = ++g_image_ids ? g_image_ids : ++g_image_ids;
     im.active = im.total != 0;
+    if (im.active) mark_uploaded(pages(im.dbp, im.dbw, im.dpsm, static_cast<int>(im.dsax), static_cast<int>(im.dsay), static_cast<int>(im.dsax + im.rrw) - 1, static_cast<int>(im.dsay + im.total / im.rrw) - 1));
 }
 
 void image_data(const std::uint8_t *data, std::size_t bytes) {
@@ -3766,6 +3816,12 @@ void load_clut(std::uint64_t tex0, std::uint64_t texclut) {
     op.range = csm ? region(cbp, cbw, cpsm, static_cast<int>(cou * 16), static_cast<int>(cov), static_cast<int>(cou * 16 + 255), static_cast<int>(cov))
                    : region(cbp, 1, cpsm, 0, 0, 15, 15);
     queue_pre(op);
+    std::array<std::uint64_t, 32> blocks = g_clut_blocks[g_clut_slot];
+    std::uint64_t id = page_gens(op.range);
+    for (int k = 2; k < 10; ++k) id = mix(id, rec[k]);  // not the slots
+    const std::uint32_t csa = rec[5], first = csm ? csa : rec[6] ? 0u : csa & 15u, count = rec[6] ? 16u : 1u;
+    for (std::uint32_t k = 0; k < count; ++k) blocks[(first + k) & 31u] = mix(id, k);
+    g_clut_blocks[next] = blocks;
     g_clut_slot = next;
     ++g_clut_loads;
 }
