@@ -1784,7 +1784,7 @@ struct Native {
     WGPUBindGroupLayout xfer_layout = nullptr;
     WGPUPipelineLayout xfer_pipeline_layout = nullptr;
     std::map<WGPUTextureView, WGPUBindGroup> xfer_groups;
-    std::uint64_t xfer_tiles = 0, xfer_by[3][3] = {};
+    std::uint64_t xfer_tiles = 0, xfer_dead = 0, xfer_by[3][3] = {};
     std::uint64_t overwritten = 0;  // sprites whose tiles needed no import
     std::uint64_t clock = 0, made = 0, rebased = 0, retired = 0, switches = 0;
     std::uint64_t imports = 0, tile_writebacks = 0;
@@ -3212,13 +3212,15 @@ std::vector<XferGroup> g_xfers;
 // The tiles the batch's primitives (takes) will import into target x (tiles_take's walk on a copy of its VRAM-newer
 // bits) that another target holds newer in a view of the same memory in another format: they move into x instead
 // (xfer_emit), newer there. The other target keeps its copy, equal to x's until x draws over it (tiles_claim then
-// marks it VRAM-newer); the batch's sources, which it reads, keep their tiles.
+// marks it VRAM-newer); the batch's sources, which it reads, keep their tiles. Those x overwrites whole before reading
+// them are dead in the other target, which stops holding them newer without a write-back (tiles_claim's), unless x
+// writes 24 of their 32 bits and the other holds the top byte (a CT32 frame's alpha under a Z24 view).
 void xfer_plan(Binding &x, Binding *const (&src)[kSources], bool zuse, const std::vector<PrimTake> &takes) {
     g_xfers.clear();
     struct Alias {
         Binding *y;
         int ky, kx;
-        bool remap;
+        bool remap, kill;
     } al[8];
     int n = 0;
     for (int kx = 0; kx < 2; ++kx) {
@@ -3230,7 +3232,7 @@ void xfer_plan(Binding &x, Binding *const (&src)[kSources], bool zuse, const std
             for (int ky = 0; ky < 2 && n < 8; ++ky) {
                 const int yk = view_kind(y, ky);
                 if (yk < 0 || (!xk && !yk) || view_bp(y, ky) != view_bp(x, kx)) continue;
-                al[n++] = {&y, ky, kx, !xk != !yk};
+                al[n++] = {&y, ky, kx, !xk != !yk, yk != 0 || xk == 0};
             }
         }
     }
@@ -3249,10 +3251,10 @@ void xfer_plan(Binding &x, Binding *const (&src)[kSources], bool zuse, const std
                 any = any || (x.tv[al[i].kx][ty][w] & (al[i].remap ? swap_halves(theirs) : theirs));
             }
     if (!any) return;
-    static std::uint64_t tv[2][128][2], need[2][128][2];
+    static std::uint64_t tv[2][128][2], need[2][128][2], dead[2][128][2];
     for (int k = 0; k < 2; ++k)
         for (int y = lo; y <= hi; ++y)
-            for (int w = 0; w < 2; ++w) tv[k][y][w] = x.tv[k][y][w], need[k][y][w] = 0;
+            for (int w = 0; w < 2; ++w) tv[k][y][w] = x.tv[k][y][w], need[k][y][w] = dead[k][y][w] = 0;
     for (const PrimTake &p : takes) {
         int x0 = p.x0, y0 = p.y0, x1 = p.x1, y1 = p.y1;
         if (!tiles_clip(x, x0, y0, x1, y1)) continue;
@@ -3263,7 +3265,7 @@ void xfer_plan(Binding &x, Binding *const (&src)[kSources], bool zuse, const std
             for (int w = 0; w < 2; ++w)
                 for (int k = 0; k < 2; ++k) {
                     if (!(p.buffers & (1u << k))) continue;
-                    if (p.writes & (1u << k)) tv[k][y][w] &= ~(m[w] & skip[w]);
+                    if (p.writes & (1u << k)) dead[k][y][w] |= tv[k][y][w] & m[w] & skip[w], tv[k][y][w] &= ~(m[w] & skip[w]);
                     need[k][y][w] |= tv[k][y][w] & m[w];
                     tv[k][y][w] &= ~m[w];
                 }
@@ -3278,6 +3280,10 @@ void xfer_plan(Binding &x, Binding *const (&src)[kSources], bool zuse, const std
             const int my = a.remap ? ty ^ 1 : ty;
             for (int w = 0; w < 2; ++w) {
                 std::uint64_t &theirs = view_newer(*a.y, a.ky)[my][w];
+                if (const std::uint64_t kill = a.kill ? dead[a.kx][ty][w] & (a.remap ? swap_halves(theirs) : theirs) : 0) {
+                    theirs &= ~(a.remap ? swap_halves(kill) : kill);
+                    g_nat.xfer_dead += static_cast<std::uint64_t>(__builtin_popcountll(kill));
+                }
                 const std::uint64_t hit = need[a.kx][ty][w] & (a.remap ? swap_halves(theirs) : theirs);
                 if (!hit) continue;
                 if (!g) g = &g_xfers.emplace_back(XferGroup{a.y, a.ky, a.kx, a.remap, {}});
@@ -3721,8 +3727,8 @@ void native_stats() {
         std::fprintf(stderr, "\n[native] source: %.1f textures a frame read from a target, %.1f batches into the shadow, %.0f samples copied to it; %.1f sprites overwrite whole tiles",
                      static_cast<double>(g_nat.sourced) / per, static_cast<double>(g_nat.swapped) / per, static_cast<double>(g_nat.blitted) / per,
                      static_cast<double>(g_nat.overwritten) / per);
-        std::fprintf(stderr, "\n[native] transfers per frame: %.1f tiles; samples by view (CT32 frame, Z24 frame, Z24 Z buffer > that):",
-                     static_cast<double>(g_nat.xfer_tiles) / per);
+        std::fprintf(stderr, "\n[native] transfers per frame: %.1f tiles (%.1f overwritten); samples by view (CT32 frame, Z24 frame, Z24 Z buffer > that):",
+                     static_cast<double>(g_nat.xfer_tiles) / per, static_cast<double>(g_nat.xfer_dead) / per);
         static const char *const kViews[] = {"C", "F", "Z"};
         for (int i = 0; i < 3; ++i)
             for (int j = 0; j < 3; ++j)
