@@ -1690,9 +1690,10 @@ constexpr std::uint32_t kNativePremul = 8192u, kNativeHw = 4096u, kNativeTiles =
 // with the shader's alpha output As / 128 (§4.3). 0: not expressible without the destination alpha (C = Ad) or not seen.
 // kBlendDst (Cd·C): the shader outputs C/256 and blends Dst·src + Src·dst (= 2·Cd·C/256), so C up to 255 needs no clamp.
 // kBlendDstAlpha (0211, Cs·Ad + Cd): DstAlpha under the A/128 storage of the colour target's alpha (§4.3).
-enum NativeBlend : std::uint32_t { kBlendNone = 1, kBlendKeep, kBlendZero, kBlendLerp, kBlendAdd, kBlendSrc, kBlendDst, kBlendRevSub, kBlendDstAlpha };
+// kBlendSub (0x24 with FIX: (Cs - Cd)·FIX): Subtract with the constant as both factors, so only for FIX up to 128.
+enum NativeBlend : std::uint32_t { kBlendNone = 1, kBlendKeep, kBlendZero, kBlendLerp, kBlendAdd, kBlendSrc, kBlendDst, kBlendRevSub, kBlendDstAlpha, kBlendSub };
 
-std::uint32_t native_blend(std::uint32_t alpha, bool abe) {
+std::uint32_t native_blend(std::uint32_t alpha, bool abe, std::uint32_t fix = 256) {
     if (!abe) return kBlendNone;
     const std::uint32_t a = alpha & 3u, b = (alpha >> 2) & 3u, c = (alpha >> 4) & 3u, d = (alpha >> 6) & 3u;
     if (a == b) return d == 0 ? kBlendNone : d == 1 ? kBlendKeep : kBlendZero;
@@ -1702,6 +1703,7 @@ std::uint32_t native_blend(std::uint32_t alpha, bool abe) {
     if (a == 0 && b == 2 && d == 2) return kBlendSrc;
     if (a == 1 && b == 2 && d == 2) return kBlendDst;
     if (a == 2 && b == 0 && d == 1) return kBlendRevSub;
+    if (a == 0 && b == 1 && c == 2 && d == 2 && fix <= 128) return kBlendSub;
     return 0;
 }
 
@@ -1728,6 +1730,7 @@ WGPURenderPipeline native_pipeline(std::uint32_t key) {
     case kBlendDst: bs.color.srcFactor = WGPUBlendFactor_Dst, bs.color.dstFactor = WGPUBlendFactor_Src; break;
     case kBlendDstAlpha: bs.color.srcFactor = WGPUBlendFactor_DstAlpha, bs.color.dstFactor = WGPUBlendFactor_One; break;
     case kBlendRevSub: bs.color.operation = WGPUBlendOperation_ReverseSubtract, bs.color.srcFactor = f, bs.color.dstFactor = WGPUBlendFactor_One; break;
+    case kBlendSub: bs.color.operation = WGPUBlendOperation_Subtract, bs.color.srcFactor = f, bs.color.dstFactor = WGPUBlendFactor_Constant; break;
     case kBlendZero: bs.color.srcFactor = WGPUBlendFactor_Zero; break;
     default: break;
     }
@@ -2746,7 +2749,8 @@ std::uint8_t hw_setup(const std::uint32_t *w) {
     if (amsk && amsk != 0xFFu) return kHwAmsk;
     if (w[3] != PSMCT32 && w[3] != PSMCT24 && w[3] != PSMZ24) return kHwFormat;  // Z24 as a frame: CT24's colour, Z's swizzle
     if (w[2] == 0 || w[2] * 64u > 2048u) return kHwWidth;
-    if (!native_blend((w[7] >> 12) & 0xFFu, flags & 8u)) return kHwBlend;
+    const std::uint32_t blend = native_blend((w[7] >> 12) & 0xFFu, flags & 8u, w[9]);
+    if (!blend || (blend == kBlendSub && !(flags & 2048u))) return kHwBlend;  // a negative difference wraps without COLCLAMP
     if ((flags & 512u) && ((w[7] >> 8) & 3u) == 0) return kHwZNever;
     if ((flags & 64u) && (w[7] & 7u) == 0 && ((w[7] >> 4) & 3u) == 0) return kHwANever;
     return kHwOk;
@@ -2911,7 +2915,7 @@ void hw_flush() {
         while (i + n < prims && b.prims[(i + n) * kPrimWords] == rec[0] && b.prims[(i + n) * kPrimWords + 1] == rec[1]) ++n;
         const std::uint32_t *w = b.setups.data() + rec[0] * kSetupWords;
         const std::uint32_t flags = w[0], alpha = (w[7] >> 12) & 0xFFu;
-        std::uint32_t blend = native_blend(alpha, flags & 8u);
+        std::uint32_t blend = native_blend(alpha, flags & 8u, w[9]);
         if ((w[4] & 0xFFFFFFu) == 0xFFFFFFu) blend = kBlendKeep;
         const bool zte = flags & 512u, zwrite = zte && !(flags & 32u);
         const std::uint32_t ztst = (w[7] >> 8) & 3u, cmp = !zte || ztst == 1 ? 0u : ztst == 2 ? 1u : 2u;
@@ -2932,7 +2936,7 @@ void hw_flush() {
         const std::uint32_t csel = (alpha >> 4) & 3u;
         const bool factor_as = csel == 0 && (blend == kBlendLerp || blend == kBlendAdd || blend == kBlendSrc || blend == kBlendRevSub);
         // 128 / 256: the GS's floor instead of the hardware's rounding (native.wgsl shade_frag); 512: the factor is FIX
-        const bool floors = blend == kBlendLerp || blend == kBlendAdd || blend == kBlendSrc;
+        const bool floors = blend == kBlendLerp || blend == kBlendAdd || blend == kBlendSrc || blend == kBlendSub;
         const bool premul = blend == kBlendAdd || blend == kBlendSrc || blend == kBlendRevSub;  // Cs·C (+ Cd): C up to 255/128 exactly
         const std::uint32_t pflags = (factor_as ? 0u : 16u) | (blend == kBlendDst ? 32u : 0u) | (blend == kBlendDst && csel == 2 ? 64u : 0u) |
                                      (floors ? 128u : blend == kBlendRevSub ? 256u : 0u) | (csel == 2 ? 512u : 0u) | (premul ? 1024u : 0u);
@@ -3559,7 +3563,7 @@ void draw(const State &st, const Vertex *v, int count, texcache::Run run) {
     const bool hw = g_hw && why == kHwOk;
     if (g_hw) {
         ++g_nat.hw_prims[why];
-        const std::uint32_t detail = why == kHwBlend ? (setup[7] >> 12) & 0xFFu : why == kHwFbmsk || why == kHwAmsk ? setup[4] : why == kHwFormat ? setup[3]
+        const std::uint32_t detail = why == kHwBlend ? ((setup[7] >> 12) & 0xFFu) | setup[9] << 8 : why == kHwFbmsk || why == kHwAmsk ? setup[4] : why == kHwFormat ? setup[3]
                                    : why == kHwWidth ? setup[2] : why == kHwPrim ? prim : ~0u;
         if (detail != ~0u) ++g_nat.hw_detail[why][detail];
     }
