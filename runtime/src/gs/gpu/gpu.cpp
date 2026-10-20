@@ -60,6 +60,9 @@ constexpr std::uint32_t kReplaced = 1u << 16, kRtHires = 1u << 17;
 constexpr std::uint32_t kSource = 1u << 18, kSourceSlot = 1u << 19, kSources = 2;
 // a source read through VRAM's pages (source_of): kSourcePages, the first target's rows / 32 << kSourceSplit
 constexpr std::uint32_t kSourcePages = 1u << 20, kSourceSplit = 21;
+// a Z24 texture at a target's Z24 Z buffer, read from its depth (z_source_of, native.wgsl source_texel; one per batch);
+// setup word 26 (unused without mipmaps or a replacement) the GS pixels across | down << 16 of the Z buffer's tiles
+constexpr std::uint32_t kSourceZ = 1u << 28;
 // Texture-pack replacements live in this many words after kDecodedWords (PS2_TEX_PACK_MB, default 256 MB).
 const std::uint32_t kReplWords = [] {
     const char *e = std::getenv("PS2_TEX_PACK_MB");
@@ -1775,9 +1778,10 @@ struct Native {
     NativeTarget source;
     WGPUBindGroupLayout source_layout = nullptr;
     WGPUBindGroup none_group = nullptr;
-    std::map<std::pair<WGPUTextureView, WGPUTextureView>, WGPUBindGroup> source_groups;  // per colour view of each slot
+    std::map<std::array<WGPUTextureView, kSources + 1>, WGPUBindGroup> source_groups;  // per colour view of each slot, the Z source's depth
     WGPUPipelineLayout render_layout = nullptr;
     std::uint64_t sourced = 0, swapped = 0, blitted = 0;  // setups read from a target, batches drawn into the shadow, samples copied to it
+    std::uint64_t zsourced = 0;  // setups read from a target's depth (kSourceZ)
     // transfers: tiles one target holds newer moved into another target's view of the same memory in another format,
     // instead of a write-back and an import (xfer_plan); group 1 of the transfer pipelines per colour view of the target
     // read (xfer_group); samples per source view kind, destination view kind (0 CT32 frame, 1 Z24 frame, 2 Z24 Z buffer)
@@ -1802,7 +1806,7 @@ struct Native {
     std::map<std::string, std::uint64_t> unsupported;
 } g_nat;
 
-constexpr std::uint32_t kNativeDecoded = 32768u, kNativeBlit = 16384u, kNativePremul = 8192u, kNativeHw = 4096u, kNativeTiles = 2048u, kNativeAlpha = 1024u, kNativeImport = 512u, kNativeColor = 256u, kNativeZWrite = 128u, kNativeConstant = 16u;
+constexpr std::uint32_t kNativeSourceZ = 131072u, kNativeDecoded = 32768u, kNativeBlit = 16384u, kNativePremul = 8192u, kNativeHw = 4096u, kNativeTiles = 2048u, kNativeAlpha = 1024u, kNativeImport = 512u, kNativeColor = 256u, kNativeZWrite = 128u, kNativeConstant = 16u;
 
 // GS ALPHA (Cv = ((A - B) * C >> 7) + D; A, B, D: 0 Cs, 1 Cd, 2 zero; C: 0 As, 1 Ad, 2 FIX) as fixed-function blending,
 // with the shader's alpha output As / 128 (§4.3). 0: not expressible without the destination alpha (C = Ad) or not seen.
@@ -1890,7 +1894,8 @@ WGPURenderPipeline native_pipeline(std::uint32_t key) {
     WGPUColorTargetState targets[2] = {color, WGPU_COLOR_TARGET_STATE_INIT};
     targets[1].format = WGPUTextureFormat_R8Uint;
     targets[1].writeMask = import_color || (!import && (key & kNativeAlpha)) ? WGPUColorWriteMask_All : WGPUColorWriteMask_None;
-    WGPUConstantEntry constants[5] = {WGPU_CONSTANT_ENTRY_INIT, WGPU_CONSTANT_ENTRY_INIT, WGPU_CONSTANT_ENTRY_INIT, WGPU_CONSTANT_ENTRY_INIT, WGPU_CONSTANT_ENTRY_INIT};
+    WGPUConstantEntry constants[6] = {WGPU_CONSTANT_ENTRY_INIT, WGPU_CONSTANT_ENTRY_INIT, WGPU_CONSTANT_ENTRY_INIT,
+                                      WGPU_CONSTANT_ENTRY_INIT, WGPU_CONSTANT_ENTRY_INIT, WGPU_CONSTANT_ENTRY_INIT};
     constants[0].key = view("SCALE");
     constants[0].value = static_cast<double>(g_sx);
     constants[1].key = view("SCALE_Y");
@@ -1901,10 +1906,12 @@ WGPURenderPipeline native_pipeline(std::uint32_t key) {
     constants[3].value = 1.0;
     constants[4].key = view("DECODED");
     constants[4].value = (key & kNativeDecoded) ? 1.0 : 0.0;
+    constants[5].key = view("SOURCE_Z");
+    constants[5].value = (key & kNativeSourceZ) ? 1.0 : 0.0;
     WGPUFragmentState fs = WGPU_FRAGMENT_STATE_INIT;
     fs.module = g_nat.module;
     fs.entryPoint = view(import ? "native_import_fs" : (key & kNativeHw) ? "hw_fs" : "native_fs");
-    fs.constantCount = !import && (key & kNativeHw) ? 5 : 2;
+    fs.constantCount = !import && (key & kNativeHw) ? 6 : 2;
     fs.constants = constants;
     fs.targetCount = 2;
     fs.targets = targets;
@@ -2017,14 +2024,15 @@ WGPUBindGroup binding_group(Binding &b, const NativeDraw &d) {
     return b.group[k];
 }
 
-// Group 1 of a hardware batch's draws: the colour and alpha of the targets in its source slots (none: the 1 x 1 pair),
-// kept until a target is freed (render thread).
-WGPUBindGroup source_group(const NativeTarget *const (&slots)[kSources]) {
-    std::pair<WGPUTextureView, WGPUTextureView> key{slots[0] ? slots[0]->color_view : nullptr, slots[1] ? slots[1]->color_view : nullptr};
-    if (!key.first && !key.second) return g_nat.none_group;
+// Group 1 of a hardware batch's draws: the colour and alpha of the targets in its source slots and the depth of its Z
+// source (kSourceZ; none: the 1 x 1 textures), kept until a target is freed (render thread).
+WGPUBindGroup source_group(const NativeTarget *const (&slots)[kSources], const NativeTarget *z = nullptr) {
+    const std::array<WGPUTextureView, kSources + 1> key{slots[0] ? slots[0]->color_view : nullptr, slots[1] ? slots[1]->color_view : nullptr,
+                                                        z ? z->depth_view : nullptr};
+    if (!key[0] && !key[1] && !key[2]) return g_nat.none_group;
     WGPUBindGroup &g = g_nat.source_groups[key];
     if (g) return g;
-    WGPUBindGroupEntry e[kSources * 2];
+    WGPUBindGroupEntry e[kSources * 2 + 1];
     for (std::uint32_t i = 0; i < kSources; ++i) {
         const NativeTarget &t = slots[i] ? *slots[i] : g_nat.source;
         for (std::uint32_t k = 0; k < 2; ++k) {
@@ -2033,9 +2041,12 @@ WGPUBindGroup source_group(const NativeTarget *const (&slots)[kSources]) {
             e[i * 2 + k].textureView = k ? t.alpha_view : t.color_view;
         }
     }
+    e[kSources * 2] = WGPU_BIND_GROUP_ENTRY_INIT;
+    e[kSources * 2].binding = kSources * 2;
+    e[kSources * 2].textureView = (z ? *z : g_nat.source).depth_view;
     WGPUBindGroupDescriptor d = WGPU_BIND_GROUP_DESCRIPTOR_INIT;
     d.layout = g_nat.source_layout;
-    d.entryCount = kSources * 2;
+    d.entryCount = kSources * 2 + 1;
     d.entries = e;
     return g = wgpuDeviceCreateBindGroup(g_device, &d);
 }
@@ -2044,7 +2055,7 @@ WGPUBindGroup source_group(const NativeTarget *const (&slots)[kSources]) {
 void forget_source(WGPUTextureView v) {
     if (!v) return;
     std::erase_if(g_nat.source_groups, [v](const auto &e) {
-        if (e.first.first != v && e.first.second != v) return false;
+        if (std::find(e.first.begin(), e.first.end(), v) == e.first.end()) return false;
         if (e.second) wgpuBindGroupRelease(e.second);
         return true;
     });
@@ -2063,7 +2074,7 @@ WGPUBindGroup xfer_group(const NativeTarget &t) {
     const WGPUTextureView views[3] = {t.color_view, t.depth_view, t.alpha_view};
     for (std::uint32_t i = 0; i < 3; ++i) {
         e[i] = WGPU_BIND_GROUP_ENTRY_INIT;
-        e[i].binding = 4u + i;
+        e[i].binding = 5u + i;
         e[i].textureView = views[i];
     }
     WGPUBindGroupDescriptor d = WGPU_BIND_GROUP_DESCRIPTOR_INIT;
@@ -2620,7 +2631,7 @@ void tiles_retire(Binding &b) {
     tiles_flush(b);
     submit();
     drain();
-    for (const NativeTarget *t : {&b.target, &b.shadow}) forget_source(t->color_view);
+    for (WGPUTextureView v : {b.target.color_view, b.shadow.color_view, b.target.depth_view}) forget_source(v);
     free_target(b.target);
     free_target(b.shadow);
     for (WGPUBindGroup g : b.group)
@@ -3136,6 +3147,29 @@ bool source_of(const std::uint32_t *w, const TexelRect &t, Source &s) {
     return true;
 }
 
+// The target whose Z buffer a texture with setup w and texel rect t is read from (kSourceZ), or none: a Z24 texture at a
+// target's Z24 Z buffer (same TBP0, TBW) that holds tiles of the rect newer than VRAM (of the targets sharing that Z
+// buffer, the one holding the most), no mipmaps, its frame not on those pages (tiles_read skips the target). Texels past
+// the Z buffer's tiles read VRAM. Nothing newer: the whole texture reads VRAM.
+Binding *z_source_of(const std::uint32_t *w, const TexelRect &t) {
+    if (!t.ok || t.r[2] < 0 || (w[0] & kReplaced) || mip_levels(w) || w[14] != PSMZ24) return nullptr;
+    Binding *best = nullptr;
+    int most = 0;
+    const int k = static_cast<int>(kTilePx);
+    for (const auto &p : g_nat.bindings) {
+        Binding &y = *p;
+        if (!y.z || y.zpsm != PSMZ24 || y.zbp != w[12] || y.fbw != w[13]) continue;
+        if (region(w[12], w[13], w[14], t.r[0], t.r[1], t.r[2], t.r[3]).overlaps(y.bound_lo[0], y.bound_hi[0])) continue;
+        int x0 = t.r[0] / k, y0 = t.r[1] / k, x1 = t.r[2] / k, y1 = t.r[3] / k, n = 0;
+        if (!tiles_clip(y, x0, y0, x1, y1)) continue;
+        std::uint64_t m[2];
+        row_mask(x0, x1, m);
+        for (int ty = y0; ty <= y1; ++ty) n += __builtin_popcountll(y.tz[ty][0] & m[0]) + __builtin_popcountll(y.tz[ty][1] & m[1]);
+        if (n > most) best = &y, most = n;
+    }
+    return best;
+}
+
 // The tiles (over: x0 y0 x1 y1) a sprite overwrites whole, every sample's colour and alpha (and Z, when it writes Z), so
 // they need no import: no blend, alpha test, DATE, write mask, scan mask or Z test but ALWAYS. One GS pixel of slack.
 bool overwritten(const std::uint32_t *rec, const std::uint32_t *w, const Binding &x, int over[4]) {
@@ -3212,10 +3246,10 @@ std::vector<XferGroup> g_xfers;
 // The tiles the batch's primitives (takes) will import into target x (tiles_take's walk on a copy of its VRAM-newer
 // bits) that another target holds newer in a view of the same memory in another format: they move into x instead
 // (xfer_emit), newer there. The other target keeps its copy, equal to x's until x draws over it (tiles_claim then
-// marks it VRAM-newer); the batch's sources, which it reads, keep their tiles. Those x overwrites whole before reading
-// them are dead in the other target, which stops holding them newer without a write-back (tiles_claim's), unless x
-// writes 24 of their 32 bits and the other holds the top byte (a CT32 frame's alpha under a Z24 view).
-void xfer_plan(Binding &x, Binding *const (&src)[kSources], bool zuse, const std::vector<PrimTake> &takes) {
+// marks it VRAM-newer); a source of the batch has imported what it reads by then (hw_flush). Those x overwrites whole
+// before reading them are dead in the other target, which stops holding them newer without a write-back (tiles_claim's),
+// unless x writes 24 of their 32 bits and the other holds the top byte (a CT32 frame's alpha under a Z24 view).
+void xfer_plan(Binding &x, bool zuse, const std::vector<PrimTake> &takes) {
     g_xfers.clear();
     struct Alias {
         Binding *y;
@@ -3228,7 +3262,7 @@ void xfer_plan(Binding &x, Binding *const (&src)[kSources], bool zuse, const std
         if (xk < 0 || (kx && !zuse)) continue;
         for (const auto &p : g_nat.bindings) {
             Binding &y = *p;
-            if (&y == &x || &y == src[0] || &y == src[1] || y.fbw != x.fbw) continue;
+            if (&y == &x || y.fbw != x.fbw) continue;
             for (int ky = 0; ky < 2 && n < 8; ++ky) {
                 const int yk = view_kind(y, ky);
                 if (yk < 0 || (!xk && !yk) || view_bp(y, ky) != view_bp(x, kx)) continue;
@@ -3347,12 +3381,24 @@ void hw_flush() {
     Binding *src[kSources] = {};
     int sr[kSources][4];
     for (auto &r : sr) r[0] = r[1] = 1 << 30, r[2] = r[3] = -1;
+    Binding *zsrc = nullptr;  // the Z source (kSourceZ) and the GS pixels read of it
+    int zr[4] = {1 << 30, 1 << 30, -1, -1};
     bool zuse = false;  // a primitive reads or writes Z (ZTE with ZTST ALWAYS and ZMSK does neither)
     for (std::uint32_t i = 0; i < setups; ++i) {
         std::uint32_t *w = b.setups.data() + i * kSetupWords;
         zuse = zuse || ((w[0] & 512u) && (!(w[0] & 32u) || ((w[7] >> 8) & 3u) != 1u));
         if (!(w[0] & 2u)) continue;
         g_nat.read_key = w[14], g_nat.read_tbp = w[12], g_nat.read_tbw = w[13];
+        if (Binding *y = z_source_of(w, rects[i]); y && y != &x && (!zsrc || zsrc == y)) {
+            const int *r = rects[i].r;
+            zsrc = y;
+            w[0] |= kSource | kSourceZ;
+            w[26] = (y->target.width / g_sx) | std::min(y->ty * kTilePx, y->target.height / g_sy) << 16;
+            zr[0] = std::min(zr[0], r[0]), zr[1] = std::min(zr[1], r[1]), zr[2] = std::max(zr[2], r[2]), zr[3] = std::max(zr[3], r[3]);
+            tiles_read(region(w[12], w[13], w[14], r[0], r[1], r[2], r[3]), y);
+            ++g_nat.zsourced;
+            continue;
+        }
         Source so;
         std::uint32_t slot = 0;  // a split source (two targets) takes both slots, in order
         bool fits = source_of(w, rects[i], so);
@@ -3394,12 +3440,10 @@ void hw_flush() {
     }
     // what other targets hold newer of those tiles in another format comes over GPU-side; the rest of the pages drawn
     // goes back to VRAM
-    xfer_plan(x, src, zuse, takes);
-    tiles_claim(x, b.minx, b.miny, b.maxx, b.maxy, zuse, b.zwrite);
+    xfer_plan(x, zuse, takes);
+    // the VRAM-newer tiles the sources read come into them before the batch's pages are claimed: the batch reads what
+    // they hold then, which a transfer or an overwrite of their other views leaves in place
     tiles_writeback();
-    xfer_emit(x);
-    // the VRAM-newer tiles the sources read come into them, then those under the primitives into the target, which then
-    // holds them newer
     static std::vector<std::uint32_t> list;
     list.clear();
     bool self = false;  // the batch reads its own target: it draws into the shadow
@@ -3409,6 +3453,15 @@ void hw_flush() {
         tiles_import(*src[k], list);
         list.clear();
     }
+    if (zsrc) {
+        tiles_take(*zsrc, zr[0] / t, zr[1] / t, zr[2] / t, zr[3] / t, kTileZ, 0, list);
+        tiles_import(*zsrc, list);
+        list.clear();
+    }
+    tiles_claim(x, b.minx, b.miny, b.maxx, b.maxy, zuse, b.zwrite);
+    tiles_writeback();
+    xfer_emit(x);
+    // the VRAM-newer tiles under the primitives come into the target, which then holds them newer
     for (const PrimTake &p : takes) tiles_take(x, p.x0, p.y0, p.x1, p.y1, p.buffers, p.writes, list, p.over ? p.o : nullptr, p.writes);
     tiles_import(x, list);
     const NativeTarget *slots[kSources] = {};
@@ -3417,7 +3470,7 @@ void hw_flush() {
         slots[k] = src[k] ? &src[k]->target : nullptr;
         if (src[k] == &x) own = k;
     }
-    const WGPUBindGroup source = source_group(slots);
+    const WGPUBindGroup source = source_group(slots, zsrc ? &zsrc->target : nullptr);
     NativeTarget tg = x.target;  // what the draws go into
     if (self) {  // the shadow first gets what the target has newer (in the draws' pass)
         if (!x.shadow.color) make_shadow(x);
@@ -3494,6 +3547,7 @@ void hw_flush() {
             if (premul) key |= kNativePremul;
             else if (csel == 2u) key |= kNativeConstant;
             if (decoded) key |= kNativeDecoded;
+            if (flags & kSourceZ) key |= kNativeSourceZ;
             d.pipeline = native_pipeline(key);
             d.color = tg.color_view;
             d.depth = tg.depth_view;
@@ -3579,8 +3633,9 @@ bool native_init() {
     pld.bindGroupLayoutCount = 1;
     pld.bindGroupLayouts = &g_native_layout;
     g_nat.pipeline_layout = wgpuDeviceCreatePipelineLayout(g_device, &pld);
-    {  // the sources (kSource): group 1 of the render pipelines, kSources colour + alpha pairs; a 1 x 1 pair fills the slots not used
-        WGPUBindGroupLayoutEntry se[kSources * 2];
+    {  // the sources (kSource): group 1 of the render pipelines, kSources colour + alpha pairs and a depth (kSourceZ); 1 x 1
+       // textures fill the slots not used
+        WGPUBindGroupLayoutEntry se[kSources * 2 + 1];
         const WGPUTextureSampleType types[2] = {WGPUTextureSampleType_UnfilterableFloat, WGPUTextureSampleType_Uint};
         const WGPUTextureFormat formats[2] = {WGPUTextureFormat_RGBA8Unorm, WGPUTextureFormat_R8Uint};
         WGPUTexture *textures[2] = {&g_nat.source.color, &g_nat.source.alpha};
@@ -3601,8 +3656,21 @@ bool native_init() {
             *textures[i] = wgpuDeviceCreateTexture(g_device, &td);
             *views[i] = wgpuTextureCreateView(*textures[i], nullptr);
         }
+        se[kSources * 2] = WGPU_BIND_GROUP_LAYOUT_ENTRY_INIT;
+        se[kSources * 2].binding = kSources * 2;
+        se[kSources * 2].visibility = WGPUShaderStage_Fragment;
+        se[kSources * 2].texture.sampleType = WGPUTextureSampleType_Depth;
+        se[kSources * 2].texture.viewDimension = WGPUTextureViewDimension_2D;
+        {
+            WGPUTextureDescriptor td = WGPU_TEXTURE_DESCRIPTOR_INIT;
+            td.usage = WGPUTextureUsage_TextureBinding;
+            td.size = WGPUExtent3D{1, 1, 1};
+            td.format = WGPUTextureFormat_Depth32Float;
+            g_nat.source.depth = wgpuDeviceCreateTexture(g_device, &td);
+            g_nat.source.depth_view = wgpuTextureCreateView(g_nat.source.depth, nullptr);
+        }
         WGPUBindGroupLayoutDescriptor sld = WGPU_BIND_GROUP_LAYOUT_DESCRIPTOR_INIT;
-        sld.entryCount = kSources * 2;
+        sld.entryCount = kSources * 2 + 1;
         sld.entries = se;
         g_nat.source_layout = wgpuDeviceCreateBindGroupLayout(g_device, &sld);
         const NativeTarget *none[kSources] = {&g_nat.source};
@@ -3616,7 +3684,7 @@ bool native_init() {
         WGPUBindGroupLayoutEntry xe[3] = {WGPU_BIND_GROUP_LAYOUT_ENTRY_INIT, WGPU_BIND_GROUP_LAYOUT_ENTRY_INIT, WGPU_BIND_GROUP_LAYOUT_ENTRY_INIT};
         const WGPUTextureSampleType xtypes[3] = {WGPUTextureSampleType_UnfilterableFloat, WGPUTextureSampleType_Depth, WGPUTextureSampleType_Uint};
         for (std::uint32_t i = 0; i < 3; ++i) {
-            xe[i].binding = 4u + i;
+            xe[i].binding = 5u + i;
             xe[i].visibility = WGPUShaderStage_Fragment;
             xe[i].texture.sampleType = xtypes[i];
             xe[i].texture.viewDimension = WGPUTextureViewDimension_2D;
@@ -3727,8 +3795,8 @@ void native_stats() {
         std::fprintf(stderr, "\n[native] source: %.1f textures a frame read from a target, %.1f batches into the shadow, %.0f samples copied to it; %.1f sprites overwrite whole tiles",
                      static_cast<double>(g_nat.sourced) / per, static_cast<double>(g_nat.swapped) / per, static_cast<double>(g_nat.blitted) / per,
                      static_cast<double>(g_nat.overwritten) / per);
-        std::fprintf(stderr, "\n[native] transfers per frame: %.1f tiles (%.1f overwritten); samples by view (CT32 frame, Z24 frame, Z24 Z buffer > that):",
-                     static_cast<double>(g_nat.xfer_tiles) / per, static_cast<double>(g_nat.xfer_dead) / per);
+        std::fprintf(stderr, "\n[native] transfers per frame: %.1f tiles (%.1f overwritten), %.1f textures read from a target's depth; samples by view (CT32 frame, Z24 frame, Z24 Z buffer > that):",
+                     static_cast<double>(g_nat.xfer_tiles) / per, static_cast<double>(g_nat.xfer_dead) / per, static_cast<double>(g_nat.zsourced) / per);
         static const char *const kViews[] = {"C", "F", "Z"};
         for (int i = 0; i < 3; ++i)
             for (int j = 0; j < 3; ++j)

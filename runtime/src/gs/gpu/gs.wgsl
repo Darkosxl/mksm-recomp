@@ -645,7 +645,7 @@ override DIAG: u32 = 0u;
 // Hardware draws (native.wgsl hw_fs, on only there): a texture at a target's frame, read from a copy of the target
 // (gpu.cpp kSource, native.wgsl source_texel; this stub is renamed out of that module).
 override SOURCE: bool = false;
-fn source_texel(x: u32, y: u32, k: u32) -> u32 {
+fn source_texel(f: Fmt, x: u32, y: u32, k: u32) -> u32 {
     return 0u;
 }
 
@@ -687,7 +687,7 @@ fn fetch(s: Setup, l: Level, xi: i32, yi: i32, k: u32, hi: bool) -> u32 {
         sk = sy * SCALE + sx;
     }
     if (SOURCE && has(s, F_SOURCE)) {
-        return convert(s, source_texel(x, y, sk));
+        return convert(s, source_texel(l.f, x, y, sk));
     }
     return convert(s, load_texel(addr(l.f, x, y), sk));
 }

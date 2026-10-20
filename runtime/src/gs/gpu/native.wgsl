@@ -960,6 +960,9 @@ fn hw_vs(@builtin(vertex_index) index: u32) -> HwOut {
 fn hw_fs(in: HwOut) -> HwFrag {
     let s = load_setup(prm(4u));
     source_slot = select(0u, 1u, (s.flags & F_SOURCE_SLOT) != 0u);
+    if (SOURCE_Z) {
+        source_size = vec2<u32>(data[s.mip_at] & 0xFFFFu, data[s.mip_at] >> 16u);
+    }
     source_width = select(0u, s.tbw * 64u, (s.flags & F_SOURCE_PAGES) != 0u);
     source_split = ((s.flags >> 21u) & 127u) * 32u;
     let sx = u32(in.pos.x);
@@ -1030,6 +1033,11 @@ fn hw_fs(in: HwOut) -> HwFrag {
 @group(1) @binding(1) var source_alpha: texture_2d<u32>;
 @group(1) @binding(2) var source_color1: texture_2d<f32>;
 @group(1) @binding(3) var source_alpha1: texture_2d<u32>;
+// A Z24 texture at a target's Z24 Z buffer (pipelines with SOURCE_Z, gpu.cpp kSourceZ): its depth's 24 bits, as the
+// target's write-back gives them, inside its tiles (source_size: GS pixels across, down); VRAM past them.
+override SOURCE_Z: bool = false;
+@group(1) @binding(4) var source_depth: texture_depth_2d;
+var<private> source_size: vec2<u32>;
 var<private> source_slot: u32 = 0u;
 var<private> source_width: u32 = 0u;
 var<private> source_split: u32 = 0u;
@@ -1050,7 +1058,14 @@ fn source_load_alpha(at: vec2<i32>, slot: u32) -> u32 {
     return textureLoad(source_alpha, at, 0).x;
 }
 
-fn source_texel(x: u32, y: u32, k: u32) -> u32 {
+fn source_texel(f: Fmt, x: u32, y: u32, k: u32) -> u32 {
+    if (SOURCE_Z) {
+        if (x >= source_size.x || y >= source_size.y) {
+            return load_texel(addr(f, x, y), k);
+        }
+        let d = textureLoad(source_depth, vec2<i32>(i32(x * SCALE + k % SCALE), i32(y * SCALE_Y + k / SCALE)), 0);
+        return min(u32(round(d * 16777216.0)), 0xFFFFFFu);
+    }
     var tx = x;
     var ty = y;
     var slot = source_slot;
@@ -1137,9 +1152,9 @@ fn native_import_fs(in: ImportOut) -> NativeFrag {
 // read at (x ^ 32, y ^ 16) (a Z format's page against CT32's), 3, 4, 6 the destination pixel's word (base, width,
 // PSMCT32 or PSMZ32), 7, 8 the destination size, 9, 10 the size of the target read that its tiles cover, 13, 14 Z max,
 // depth per unit. Group 1 as the transfer pipelines bind it (past the source slots' bindings).
-@group(1) @binding(4) var xfer_color: texture_2d<f32>;
-@group(1) @binding(5) var xfer_depth: texture_depth_2d;
-@group(1) @binding(6) var xfer_alpha: texture_2d<u32>;
+@group(1) @binding(5) var xfer_color: texture_2d<f32>;
+@group(1) @binding(6) var xfer_depth: texture_depth_2d;
+@group(1) @binding(7) var xfer_alpha: texture_2d<u32>;
 
 // The word: Z24 keeps its top byte in VRAM (a Z24 view never holds it), so a CT32 frame into a Z24 view leaves its
 // alpha there, as its write-back would. Past the tiles of the target read, VRAM's word.
