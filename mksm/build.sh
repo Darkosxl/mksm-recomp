@@ -24,7 +24,9 @@ if [ "$web" = 0 ] || [ "$retranslate" = 1 ]; then
 fi
 if [ "$retranslate" = 1 ]; then
   # decomp/overrides.txt: the functions with a hand-written replacement get the decomp hook (decomp/README.md)
-  "$ROOT/build/tools/eerecomp" "$G/disc/SLUS_210.87" --entries "$M/entries.txt" --overrides "$ROOT/decomp/overrides.txt" --out "$M/generated" | tail -1
+  # mksm/idle.txt: wait loops charged their cycles at once instead of spinning (recomp/codegen.hpp)
+  "$ROOT/build/tools/eerecomp" "$G/disc/SLUS_210.87" --entries "$M/entries.txt" --overrides "$ROOT/decomp/overrides.txt" --idle "$M/idle.txt" \
+    --out "$M/generated" | tail -1
   # VU1 microprograms recorded with PS2_VU_RECORD=games/mksm/vu1 become SIMD C++ (unseen ones are JIT'd/interpreted)
   ! compgen -G "$G/vu1/*.bin" > /dev/null || "$ROOT/build/tools/vurecomp" "$G/vu1" "$M/generated" | tail -1
 fi

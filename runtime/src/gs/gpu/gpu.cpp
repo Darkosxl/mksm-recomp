@@ -1733,6 +1733,7 @@ struct Binding {
     bool z = false;
     std::uint32_t tx = 0, ty = 0;  // tiles across (<= 128) and down (<= 128)
     std::uint64_t tc[128][2] = {}, tz[128][2] = {}, tv[2][128][2] = {}, pr[2][128][2] = {}, pw[2][128][2] = {};
+    std::uint64_t newer[2] = {};  // rows whose tc or tz may have a bit set (bit y), so the others are skipped
     bool pending = false;
     std::vector<std::uint32_t> list;  // tiles waiting for a write-back (x | y << 8 | flags << 16)
     std::uint64_t bound_lo[2] = {}, bound_hi[2] = {};  // VRAM bytes of the frame and Z pages
@@ -2377,6 +2378,7 @@ void row_mask(int x0, int x1, std::uint64_t m[2]) {
 
 // Row y's native-newer tiles, colour under mc and Z under mz, go on the write-back list and stop being native-newer.
 void take_newer(Binding &b, int y, const std::uint64_t mc[2], const std::uint64_t mz[2]) {
+    if (!((b.newer[y >> 6] >> (y & 63)) & 1u)) return;
     for (int w = 0; w < 2; ++w) {
         const std::uint64_t c = b.tc[y][w] & mc[w], z = b.tz[y][w] & mz[w];
         std::uint64_t bits = c | z;
@@ -2393,6 +2395,7 @@ void take_newer(Binding &b, int y, const std::uint64_t mc[2], const std::uint64_
         b.tc[y][w] &= ~c;
         b.tz[y][w] &= ~z;
     }
+    if (!(b.tc[y][0] | b.tc[y][1] | b.tz[y][0] | b.tz[y][1])) b.newer[y >> 6] &= ~(1ull << (y & 63));
 }
 
 // Tiles [x0, x1] x [y0, y1] of these buffers (kTileColor, kTileZ), now: the native-newer ones go on the write-back
@@ -2400,9 +2403,9 @@ void take_newer(Binding &b, int y, const std::uint64_t mc[2], const std::uint64_
 void tiles_touch(Binding &b, int x0, int y0, int x1, int y1, bool mark, std::uint8_t buffers = kTileColor | kTileZ) {
     if (!tiles_clip(b, x0, y0, x1, y1)) return;
     const std::uint64_t none[2] = {};
+    std::uint64_t m[2];
+    row_mask(x0, x1, m);
     for (int y = y0; y <= y1; ++y) {
-        std::uint64_t m[2];
-        row_mask(x0, x1, m);
         take_newer(b, y, buffers & kTileColor ? m : none, buffers & kTileZ ? m : none);
         for (int k = 0; k < 2 && mark; ++k)
             if (buffers & (1u << k)) b.tv[k][y][0] |= m[0], b.tv[k][y][1] |= m[1];
@@ -2456,6 +2459,7 @@ template <class F> void tiles_pages(const Binding &b, const Range &r, F &&f) {
 }
 
 void tiles_range(Binding &b, const Range &r, bool mark) {
+    if (!mark && !(b.newer[0] | b.newer[1])) return;  // nothing native-newer to write back, nothing to mark
     tiles_pages(b, r, [&](int x0, int y0, int x1, int y1, std::uint8_t buffer) { tiles_touch(b, x0, y0, x1, y1, mark, buffer); });
 }
 
@@ -2465,6 +2469,7 @@ void tiles_reset(Binding &b) {
     std::memset(b.pr, 0, sizeof b.pr);
     std::memset(b.pw, 0, sizeof b.pw);
     std::memset(b.tv, 0, sizeof b.tv);
+    b.newer[0] = b.newer[1] = 0;
     for (std::uint32_t y = 0; y < b.ty; ++y)  // every tile VRAM-newer
         for (auto &v : b.tv) row_mask(0, static_cast<int>(b.tx) - 1, v[y]);
     b.pending = false;
@@ -2655,10 +2660,12 @@ void tiles_import(Binding &b, const std::vector<std::uint32_t> &list) {
 void tiles_take(Binding &b, int x0, int y0, int x1, int y1, std::uint8_t buffers, std::uint8_t writes, std::vector<std::uint32_t> &list,
                 const int *over = nullptr, std::uint8_t over_buffers = 0) {
     if (!tiles_clip(b, x0, y0, x1, y1)) return;
+    std::uint64_t m[2], over_mask[2] = {};
+    row_mask(x0, x1, m);
+    if (over) row_mask(over[0], over[2], over_mask);
     for (int y = y0; y <= y1; ++y) {
-        std::uint64_t m[2], skip[2] = {};
-        row_mask(x0, x1, m);
-        if (over && y >= over[1] && y <= over[3]) row_mask(over[0], over[2], skip);
+        const bool in = over && y >= over[1] && y <= over[3];
+        const std::uint64_t skip[2] = {in ? over_mask[0] : 0ull, in ? over_mask[1] : 0ull};
         for (int w = 0; w < 2; ++w) {
             std::uint64_t take[2] = {};
             for (int k = 0; k < 2; ++k) {
@@ -2677,6 +2684,7 @@ void tiles_take(Binding &b, int x0, int y0, int x1, int y1, std::uint8_t buffers
             if (writes & kTileColor) b.tc[y][w] |= m[w];
             if (writes & kTileZ) b.tz[y][w] |= m[w];
         }
+        if (writes & (kTileColor | kTileZ)) b.newer[y >> 6] |= 1ull << (y & 63);
     }
 }
 
