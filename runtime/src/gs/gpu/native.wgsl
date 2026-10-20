@@ -959,6 +959,9 @@ fn hw_vs(@builtin(vertex_index) index: u32) -> HwOut {
 @fragment
 fn hw_fs(in: HwOut) -> HwFrag {
     let s = load_setup(prm(4u));
+    source_slot = select(0u, 1u, (s.flags & F_SOURCE_SLOT) != 0u);
+    source_width = select(0u, s.tbw * 64u, (s.flags & F_SOURCE_PAGES) != 0u);
+    source_split = ((s.flags >> 21u) & 127u) * 32u;
     let sx = u32(in.pos.x);
     let sy = u32(in.pos.y);
     let x = i32(sx / SCALE);
@@ -1020,15 +1023,56 @@ fn hw_fs(in: HwOut) -> HwFrag {
     return HwFrag(f.color, f.alpha);
 }
 
-// The batch's source (gpu.cpp hw_flush, kSource): a copy of the target its texture sits on, texel (x, y) at the target's
-// GS pixel (x, y), sample k as in VRAM.
+// The batch's sources (gpu.cpp hw_flush, kSource): the targets its textures sit on, two slots (kSourceSlot: the second,
+// source_slot), texel (x, y) at the target's GS pixel (x, y), sample k as in VRAM. Through VRAM's pages (kSourcePages,
+// source_width): a texel past the buffer width is the one a page row down, and the rows from source_split on are slot 1's.
 @group(1) @binding(0) var source_color: texture_2d<f32>;
 @group(1) @binding(1) var source_alpha: texture_2d<u32>;
+@group(1) @binding(2) var source_color1: texture_2d<f32>;
+@group(1) @binding(3) var source_alpha1: texture_2d<u32>;
+var<private> source_slot: u32 = 0u;
+var<private> source_width: u32 = 0u;
+var<private> source_split: u32 = 0u;
+const F_SOURCE_SLOT: u32 = 524288u;
+const F_SOURCE_PAGES: u32 = 1048576u;
+
+fn source_load(at: vec2<i32>, slot: u32) -> vec4<f32> {
+    if (slot != 0u) {
+        return textureLoad(source_color1, at, 0);
+    }
+    return textureLoad(source_color, at, 0);
+}
+
+fn source_load_alpha(at: vec2<i32>, slot: u32) -> u32 {
+    if (slot != 0u) {
+        return textureLoad(source_alpha1, at, 0).x;
+    }
+    return textureLoad(source_alpha, at, 0).x;
+}
 
 fn source_texel(x: u32, y: u32, k: u32) -> u32 {
-    let at = vec2<i32>(i32(x * SCALE + k % SCALE), i32(y * SCALE_Y + k / SCALE));
-    let c = textureLoad(source_color, at, 0);
-    return u32(round(c.x * 255.0)) | (u32(round(c.y * 255.0)) << 8u) | (u32(round(c.z * 255.0)) << 16u) | (textureLoad(source_alpha, at, 0).x << 24u);
+    var tx = x;
+    var ty = y;
+    var slot = source_slot;
+    if (source_width != 0u) {
+        let rows = tx / source_width;
+        tx -= rows * source_width;
+        ty += rows * 32u;
+        if (source_split != 0u && ty >= source_split) {
+            ty -= source_split;
+            slot = 1u;
+        }
+    }
+    let at = vec2<i32>(i32(tx * SCALE + k % SCALE), i32(ty * SCALE_Y + k / SCALE));
+    let c = source_load(at, slot);
+    return u32(round(c.x * 255.0)) | (u32(round(c.y * 255.0)) << 8u) | (u32(round(c.z * 255.0)) << 16u) | (source_load_alpha(at, slot) << 24u);
+}
+
+// A target's colour and alpha into its shadow (gpu.cpp hw_flush), from source slot prm(9), sample for sample.
+@fragment
+fn native_blit_fs(in: ImportOut) -> HwFrag {
+    let at = vec2<i32>(i32(in.pos.x), i32(in.pos.y));
+    return HwFrag(source_load(at, prm(9u)), source_load_alpha(at, prm(9u)));
 }
 
 // ---- Import: the emulated frame and Z buffer into the native target at the start of a run of native draws
