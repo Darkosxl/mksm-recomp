@@ -1795,7 +1795,7 @@ struct Native {
     std::map<std::string, std::uint64_t> unsupported;
 } g_nat;
 
-constexpr std::uint32_t kNativeDecoded = 32768u, kNativeBlit = 16384u, kNativePremul = 8192u, kNativeHw = 4096u, kNativeTiles = 2048u, kNativeAlpha = 1024u, kNativeImport = 512u, kNativeColor = 256u, kNativeZWrite = 128u, kNativeConstant = 16u;
+constexpr std::uint32_t kNativeRtHires = 262144u, kNativePlain = 131072u, kNativeSourced = 65536u, kNativeDecoded = 32768u, kNativeBlit = 16384u, kNativePremul = 8192u, kNativeHw = 4096u, kNativeTiles = 2048u, kNativeAlpha = 1024u, kNativeImport = 512u, kNativeColor = 256u, kNativeZWrite = 128u, kNativeConstant = 16u;
 
 // GS ALPHA (Cv = ((A - B) * C >> 7) + D; A, B, D: 0 Cs, 1 Cd, 2 zero; C: 0 As, 1 Ad, 2 FIX) as fixed-function blending,
 // with the shader's alpha output As / 128 (§4.3). 0: not expressible without the destination alpha (C = Ad) or not seen.
@@ -1883,21 +1883,23 @@ WGPURenderPipeline native_pipeline(std::uint32_t key) {
     WGPUColorTargetState targets[2] = {color, WGPU_COLOR_TARGET_STATE_INIT};
     targets[1].format = WGPUTextureFormat_R8Uint;
     targets[1].writeMask = import_color || (!import && (key & kNativeAlpha)) ? WGPUColorWriteMask_All : WGPUColorWriteMask_None;
-    WGPUConstantEntry constants[5] = {WGPU_CONSTANT_ENTRY_INIT, WGPU_CONSTANT_ENTRY_INIT, WGPU_CONSTANT_ENTRY_INIT, WGPU_CONSTANT_ENTRY_INIT, WGPU_CONSTANT_ENTRY_INIT};
+    WGPUConstantEntry constants[6] = {WGPU_CONSTANT_ENTRY_INIT, WGPU_CONSTANT_ENTRY_INIT, WGPU_CONSTANT_ENTRY_INIT, WGPU_CONSTANT_ENTRY_INIT, WGPU_CONSTANT_ENTRY_INIT, WGPU_CONSTANT_ENTRY_INIT};
     constants[0].key = view("SCALE");
     constants[0].value = static_cast<double>(g_sx);
     constants[1].key = view("SCALE_Y");
     constants[1].value = static_cast<double>(g_sy);
     constants[2].key = view("SOURCE");
-    constants[2].value = 1.0;
+    constants[2].value = (key & kNativeSourced) ? 1.0 : 0.0;
     constants[3].key = view("RT_HIRES");
-    constants[3].value = 1.0;
+    constants[3].value = (key & kNativeRtHires) ? 1.0 : 0.0;
     constants[4].key = view("DECODED");
     constants[4].value = (key & kNativeDecoded) ? 1.0 : 0.0;
+    constants[5].key = view("PLAIN");
+    constants[5].value = (key & kNativePlain) ? 1.0 : 0.0;
     WGPUFragmentState fs = WGPU_FRAGMENT_STATE_INIT;
     fs.module = g_nat.module;
     fs.entryPoint = view(import ? "native_import_fs" : (key & kNativeHw) ? "hw_fs" : "native_fs");
-    fs.constantCount = !import && (key & kNativeHw) ? 5 : 2;
+    fs.constantCount = !import && (key & kNativeHw) ? 6 : 2;
     fs.constants = constants;
     fs.targetCount = 2;
     fs.targets = targets;
@@ -3252,6 +3254,9 @@ void hw_flush() {
             if (premul) key |= kNativePremul;
             else if (csel == 2u) key |= kNativeConstant;
             if (decoded) key |= kNativeDecoded;
+            else if ((flags & (2u | kSource | kReplaced)) == (2u | kSource)) key |= kNativeSourced;  // gs.wgsl SOURCE
+            else if (!(flags & 2u)) key |= kNativePlain;  // native.wgsl PLAIN
+            if ((flags & kRtHires) && rec[1] == 1) key |= kNativeRtHires;  // gs.wgsl RT_HIRES: sprites only (hw_fs)
             d.pipeline = native_pipeline(key);
             d.color = tg.color_view;
             d.depth = tg.depth_view;

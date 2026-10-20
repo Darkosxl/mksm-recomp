@@ -758,6 +758,10 @@ fn native_fs(in: NativeOut) -> NativeFrag {
     return out;
 }
 
+// Hardware draws without a texture (gpu.cpp kNativePlain): the texture path compiles out, whose registers every draw of a
+// pipeline pays for.
+override PLAIN: bool = false;
+
 // gs.wgsl plot() for one sample, the colour part: texture (TFX, TCC), fog, the alpha test (the split into pass and fail
 // pixels), then the colour as integer / 255 and the blend factor As / 128. fst: the coordinates are U, V (x 16).
 fn shade_frag(s: Setup, at: Attr, k: u32, fst: bool) -> NativeFrag {
@@ -765,7 +769,7 @@ fn shade_frag(s: Setup, at: Attr, k: u32, fst: bool) -> NativeFrag {
     var g = i32(at.g);
     var b = i32(at.b);
     var a = i32(at.a);
-    if (has(s, F_TME)) {
+    if (!PLAIN && has(s, F_TME)) {
         var u: f32;
         var v: f32;
         var q = 1.0;

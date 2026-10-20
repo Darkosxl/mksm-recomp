@@ -634,16 +634,17 @@ fn convert(s: Setup, raw: u32) -> u32 {
 // texel grid SCALE x SCALE_Y times finer, at its own sample's position, instead of its own sample index at a native
 // texel: a 2:1 downsample then covers its whole footprint and an upsample filters between neighbouring samples.
 var<private> rt_hires: bool = false;
-// Pipeline constant, on only for batches that hold F_RT_HIRES sprites (gpu.cpp kRasterHi): elsewhere the fine-grid
-// path compiles out and the common raster costs nothing extra.
+// Pipeline constant, on only for batches that hold F_RT_HIRES sprites (gpu.cpp kRasterHi, kNativeRtHires): elsewhere the
+// fine-grid path compiles out and the common raster costs nothing extra.
 override RT_HIRES: bool = false;
 // Profiling only (env PS2_RASTER_DIAG, gpu.cpp; never set otherwise): skip parts of the raster to attribute its time.
 // 1 no shading after the box test, 2 no plot after the edge test, 4 constant texel, 8 no destination read, 16 no Z,
 // 32 no frame write.
 override DIAG: u32 = 0u;
 
-// Hardware draws (native.wgsl hw_fs, on only there): a texture at a target's frame, read from a copy of the target
-// (gpu.cpp kSource, native.wgsl source_texel; this stub is renamed out of that module).
+// Hardware draws whose texture is a source (gpu.cpp kSource, kNativeSourced; source_of: CT32 / CT24, no mipmaps, no
+// texture pack), read from the target (native.wgsl source_texel; this stub is renamed out of that module): only the
+// source read and the CT24 alpha stay.
 override SOURCE: bool = false;
 fn source_texel(x: u32, y: u32, k: u32) -> u32 {
     return 0u;
@@ -669,7 +670,7 @@ fn fetch(s: Setup, l: Level, xi: i32, yi: i32, k: u32, hi: bool) -> u32 {
     }
     let x = texel_x(s, l, nx);
     let y = texel_y(s, l, ny);
-    if (DECODED || l.dec != 0xFFFFFFFFu) {
+    if (!SOURCE && (DECODED || l.dec != 0xFFFFFFFFu)) {
         return decoded[l.dec + (y << l.tw) + x];
     }
     var sk = k;
@@ -686,8 +687,12 @@ fn fetch(s: Setup, l: Level, xi: i32, yi: i32, k: u32, hi: bool) -> u32 {
         }
         sk = sy * SCALE + sx;
     }
-    if (SOURCE && has(s, F_SOURCE)) {
-        return convert(s, source_texel(x, y, sk));
+    if (SOURCE) {
+        let raw = source_texel(x, y, sk);
+        if (s.tpsm == 0x00u) {
+            return raw;
+        }
+        return (raw & 0xFFFFFFu) | (select(s.ta0, 0u, has(s, F_AEM) && (raw & 0xFFFFFFu) == 0u) << 24u);
     }
     return convert(s, load_texel(addr(l.f, x, y), sk));
 }
@@ -755,13 +760,13 @@ fn texture_lod(s: Setup, q: f32) -> f32 {
 // NEAREST/LINEAR stay on level 0, *_MIPMAP_NEAREST rounds the LOD to a level, *_MIPMAP_LINEAR blends floor(LOD) and the next level.
 // The level, its coordinate scale and the filter are chosen first; one sample() call (in a loop of 1 or 2 levels) does the rest.
 fn texture(s: Setup, u: f32, v: f32, q: f32, k: u32) -> u32 {
-    let mxl = (s.mip >> 1u) & 7u;
+    let mxl = select((s.mip >> 1u) & 7u, 0u, SOURCE);
     var n = 0u;
     var scale = 1.0;
     var levels = 1u;
     var f = 0.0;
     var linear = has(s, F_BILINEAR);
-    if (!DECODED && has(s, F_REPLACED)) {
+    if (!DECODED && !SOURCE && has(s, F_REPLACED)) {
         scale = f32(1u << data[s.mip_at]);
     } else if (mxl != 0u) {
         let lod = texture_lod(s, q);
