@@ -135,6 +135,13 @@ void write_pam(std::FILE *f, const std::uint32_t *rgba, std::uint32_t w, std::ui
     std::fwrite(rgba, 4, static_cast<std::size_t>(w) * h, f);
 }
 
+// PS2_FRAMES_Y4M: the GPU renderer's stream hands over I420 (gpu::FrameSink) and the pipe is a YUV4MPEG2 stream, 3/8
+// of the bytes of RGBA.
+bool frames_y4m() {
+    static const bool y4m = std::getenv("PS2_FRAMES_Y4M");
+    return y4m;
+}
+
 std::FILE *frames_pipe() {
     static std::FILE *pipe = [] {
         std::signal(SIGPIPE, SIG_IGN);  // a reader that quits ends the stream, not the run
@@ -178,7 +185,14 @@ void write_frames() {
             if (last.written) *last.written = true;
             last = std::move(f);
         }
-        if (frames_pipe() && last.px) write_pam(frames_pipe(), last.px, last.w, last.h);
+        if (frames_pipe() && last.px && frames_y4m()) {
+            static const bool head = std::fprintf(frames_pipe(), "YUV4MPEG2 W%u H%u F60:1 Ip A1:1 C420jpeg XCOLORRANGE=LIMITED\n", last.w, last.h) > 0;
+            (void)head;
+            std::fputs("FRAME\n", frames_pipe());
+            std::fwrite(last.px, 1, static_cast<std::size_t>(last.w) * last.h * 3 / 2, frames_pipe());
+        } else if (frames_pipe() && last.px) {
+            write_pam(frames_pipe(), last.px, last.w, last.h);
+        }
         lock.lock();
     }
 }
@@ -187,6 +201,7 @@ void pipe_frame(const std::uint32_t *rgba, std::uint32_t w, std::uint32_t h, std
     PipeFrames &q = g_pipe_frames;
     if (!q.writer.joinable()) q.writer = std::thread(write_frames);
     PipeFrames::Frame f{rgba, {}, w, h, written};
+    if (rgba && !written && frames_y4m()) halt("PS2_FRAMES_Y4M needs the GPU renderer");
     if (rgba && !written) f.own.assign(rgba, rgba + static_cast<std::size_t>(w) * h), f.px = f.own.data();
     std::lock_guard lock(q.m);
     q.frames.push_back(std::move(f));
@@ -197,6 +212,7 @@ void dump_frame() {
     if (!g_options.frames_pipe.empty()) {
         static const bool sink = (gs::stream_frames(pipe_frame), true);
         if (sink && gs::display_later()) return;
+        if (frames_y4m()) return halt("PS2_FRAMES_Y4M needs the render thread");
     }
     std::vector<std::uint32_t> rgba;
     std::uint32_t w = 0, h = 0;

@@ -48,8 +48,8 @@ void configure_surface();
 namespace {
 
 // kRasterHi: raster with RT_HIRES on, for batches holding F_RT_HIRES sprites (scale > 1 only).
-enum Pipeline { kUpload, kCopyRead, kCopyWrite, kLoadClut, kDisplay, kRaster, kResolve, kSnapshot, kDecode, kRasterHi, kFailArgs, kPipelines };
-const char *const kEntryPoints[kPipelines] = {"upload", "copy_read", "copy_write", "load_clut", "display", "raster", "resolve", "snapshot", "decode", "raster", "fail_args"};
+enum Pipeline { kUpload, kCopyRead, kCopyWrite, kLoadClut, kDisplay, kRaster, kResolve, kSnapshot, kDecode, kRasterHi, kFailArgs, kDisplayYuv, kPipelines };
+const char *const kEntryPoints[kPipelines] = {"upload", "copy_read", "copy_write", "load_clut", "display", "raster", "resolve", "snapshot", "decode", "raster", "fail_args", "display_yuv"};
 
 constexpr std::uint32_t kParamStride = 256;
 constexpr std::uint32_t kClutSlots = 2048;
@@ -1436,6 +1436,7 @@ void run_commands(Arena &arena, ParamRecords &params, std::vector<Command> &comm
 struct Copy {
     WGPUBuffer buffer = nullptr;
     std::uint64_t size = 0, order = 0;
+    std::uint64_t from = 0, bytes = 0;  // display_stream: the part of g_scratch copied
     std::uint32_t width = 0, height = 0;
     std::atomic<bool> busy = false, ready = false;  // map callbacks may run on the submit worker
     bool mapped = false;  // display_stream: set before ready
@@ -5535,9 +5536,9 @@ namespace {
 
 // Submitted with the display pass (by the worker when it is on), so the copy follows it on the queue.
 void copy_out(Copy &c) {
-    const std::uint64_t bytes = static_cast<std::uint64_t>(c.width) * c.height * 4;
+    const std::uint64_t bytes = c.bytes;
     WGPUCommandEncoder enc = wgpuDeviceCreateCommandEncoder(g_device, nullptr);
-    wgpuCommandEncoderCopyBufferToBuffer(enc, g_scratch, 0, c.buffer, 0, bytes);
+    wgpuCommandEncoderCopyBufferToBuffer(enc, g_scratch, c.from, c.buffer, 0, bytes);
     WGPUCommandBuffer cmd = wgpuCommandEncoderFinish(enc, nullptr);
     wgpuQueueSubmit(g_queue, 1, &cmd);
     wgpuCommandBufferRelease(cmd);
@@ -5576,8 +5577,7 @@ void stream_out(std::size_t keep, const FrameSink &sink) {
             }
         }
         if (c && c->mapped) {
-            const std::uint64_t bytes = static_cast<std::uint64_t>(c->width) * c->height * 4;
-            sink(static_cast<const std::uint32_t *>(wgpuBufferGetConstMappedRange(c->buffer, 0, bytes)), c->width, c->height, &c->written);
+            sink(static_cast<const std::uint32_t *>(wgpuBufferGetConstMappedRange(c->buffer, 0, c->bytes)), c->width, c->height, &c->written);
         } else {
             sink(nullptr, 0, 0, nullptr);
             if (c) c->ready = c->busy = false;
@@ -5605,18 +5605,28 @@ void display_stream(const DisplaySource *src, const FrameSink &sink) {
         split_sync();
         chain_flush();
         native_display(*src);
-        const std::uint64_t bytes = static_cast<std::uint64_t>(src->width) * src->height * g_sx * g_rows * 4;
-        if (slot->size < bytes) {
+        const std::uint32_t w = src->width * g_sx, h = src->height * g_rows;
+        // PS2_FRAMES_Y4M: I420 at the first frame's size (whole 8x2 blocks), after the RGBA in g_scratch: 3/8 of the bytes
+        static const bool yuv = std::getenv("PS2_FRAMES_Y4M");
+        static const std::uint32_t yw = w & ~7u, yh = h & ~1u;
+        slot->from = yuv ? static_cast<std::uint64_t>(w) * h * 4 : 0;
+        slot->bytes = yuv ? static_cast<std::uint64_t>(yw) * yh * 3 / 2 : static_cast<std::uint64_t>(w) * h * 4;
+        if (slot->from + slot->bytes > (static_cast<std::uint64_t>(g_copy_words) + 2ull * g_field_words) * 4) {
+            std::fprintf(stderr, "[gpu] display_stream: %ux%u doesn't fit the scratch buffer\n", w, h);
+            std::abort();
+        }
+        if (slot->size < slot->bytes) {
             if (slot->buffer) wgpuBufferRelease(slot->buffer);
-            slot->size = bytes;
-            slot->buffer = make_buffer(bytes, WGPUBufferUsage_MapRead | WGPUBufferUsage_CopyDst);
+            slot->size = slot->bytes;
+            slot->buffer = make_buffer(slot->bytes, WGPUBufferUsage_MapRead | WGPUBufferUsage_CopyDst);
         }
         flush_all();
         const std::uint32_t param = push_params({src->fbp, src->fbw, src->psm, src->dbx, src->dby, src->width, src->height, src->halved ? 1u : 0u, 0u, src->half ? 1u : 0u});
-        g_commands.push_back({kDisplay, (src->width * g_sx + 7) / 8, (src->height * g_rows + 7) / 8, param});
+        g_commands.push_back({kDisplay, (w + 7) / 8, (h + 7) / 8, param});
+        if (yuv) dispatch_linear(kDisplayYuv, yw / 8 * (yh / 2), push_params({w, h, yw, yh, static_cast<std::uint32_t>(slot->from / 4)}));
         slot->busy = true;
-        slot->width = src->width * g_sx;
-        slot->height = src->height * g_rows;
+        slot->width = yuv ? yw : w;
+        slot->height = yuv ? yh : h;
         g_copy_out = slot;
         submit();
     }

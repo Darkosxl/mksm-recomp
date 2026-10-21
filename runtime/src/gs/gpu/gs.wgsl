@@ -408,6 +408,54 @@ fn display(@builtin(global_invocation_id) gid: vec3<u32>) {
     scratch[prm(8u) + gid.y * w + gid.x] = c | 0xFF000000u;
 }
 
+// display's output (prm 0-1: its width and height), black outside it.
+fn shown_rgb(x: u32, y: u32) -> vec3<f32> {
+    if (x >= prm(0u) || y >= prm(1u)) {
+        return vec3<f32>(0.0);
+    }
+    return unpack4x8unorm(scratch[y * prm(0u) + x]).rgb;
+}
+
+const BT709 = vec3<f32>(0.2126, 0.7152, 0.0722);
+
+// display's output as BT.709 limited-range I420 at word prm(4), padded or cropped to prm 2-3 (PS2_FRAMES_Y4M: the
+// stream's size can't change). One thread per 8x2 pixels, so the planes fill whole words; chroma averages each 2x2.
+@compute @workgroup_size(64)
+fn display_yuv(@builtin(global_invocation_id) gid: vec3<u32>) {
+    let w = prm(2u);
+    let h = prm(3u);
+    let i = gid.x + gid.y * 64u * 1024u;
+    if (i >= w / 8u * (h / 2u)) {
+        return;
+    }
+    let x = i % (w / 8u) * 8u;
+    let y = i / (w / 8u) * 2u;
+    var luma = array<u32, 4>(0u, 0u, 0u, 0u);  // row y: words 0-1, row y + 1: 2-3
+    var cb = 0u;
+    var cr = 0u;
+    for (var k = 0u; k < 4u; k++) {
+        var sum = vec3<f32>(0.0);
+        for (var j = 0u; j < 4u; j++) {
+            let n = 2u * k + j % 2u;
+            let c = shown_rgb(x + n, y + j / 2u);
+            sum += c;
+            luma[j / 2u * 2u + n / 4u] |= u32(16.5 + 219.0 * dot(c, BT709)) << (8u * (n % 4u));
+        }
+        let c = sum * 0.25;
+        let l = dot(c, BT709);
+        cb |= u32(clamp(128.5 + 224.0 * (c.b - l) / 1.8556, 0.0, 255.0)) << (8u * k);
+        cr |= u32(clamp(128.5 + 224.0 * (c.r - l) / 1.5748, 0.0, 255.0)) << (8u * k);
+    }
+    let at = prm(4u) + (y * w + x) / 4u;
+    scratch[at] = luma[0];
+    scratch[at + 1u] = luma[1];
+    scratch[at + w / 4u] = luma[2];
+    scratch[at + w / 4u + 1u] = luma[3];
+    let chroma = prm(4u) + w * h / 4u + (y / 2u * (w / 2u) + x / 2u) / 4u;
+    scratch[chroma] = cb;
+    scratch[chroma + w * h / 16u] = cr;
+}
+
 // Primitive state (gpu.cpp make_setup). Frame and Z (words 1-3, 5, 6, 23) are the same for a whole batch and come from
 // the dispatch parameters instead (raster: fb_loc, z_loc, frame_psm, z_max).
 struct Setup {

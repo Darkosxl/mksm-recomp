@@ -47,7 +47,8 @@ bool display(const DisplaySource &src, std::vector<std::uint32_t> &rgba, std::ui
 bool display_async(const DisplaySource &src, std::vector<std::uint32_t> &rgba, std::uint32_t &width, std::uint32_t &height);
 // Every frame for a stream (--frames-pipe): the copy goes out with the display pass and sink gets the mapped pixels, in
 // order, a few frames late (null: nothing shown that frame), keeps them until it sets *done (any thread); finish hands
-// over the rest, waiting.
+// over the rest, waiting. With PS2_FRAMES_Y4M set the pixels are BT.709 limited-range I420 (width x height x 3/2 bytes),
+// padded or cropped to the first frame's size.
 using FrameSink = std::function<void(const std::uint32_t *rgba, std::uint32_t width, std::uint32_t height, std::atomic<bool> *done)>;
 void display_stream(const DisplaySource *src, const FrameSink &sink);
 void display_stream_finish(const FrameSink &sink);
