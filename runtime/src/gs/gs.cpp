@@ -1311,9 +1311,18 @@ bool copy_frame(const DisplayRegs &r, std::vector<std::uint32_t> &rgba, std::uin
 std::atomic<std::uint32_t> g_presented{0};
 std::uint32_t g_posted_presents = 0;
 
+std::atomic<std::uint32_t> g_flushed{0};
+
 void flush_and_wait() {
 #ifdef PS2_GPU
-    if (gpu_on()) gpu::wait_idle();
+    if (!gpu_on()) return;
+    if (queue::active() && queue::role() != queue::Role::Render) {  // the renderer is the render thread's: done there (kFlush)
+        const std::uint32_t seen = g_flushed.load();
+        queue::post(queue::kFlush, 0, 0, nullptr, 0);
+        while (g_flushed.load() == seen) queue::wait(g_flushed, seen);
+        return;
+    }
+    gpu::wait_idle();
 #endif
 }
 
@@ -1371,6 +1380,11 @@ Rendered render_pending(const std::function<void(const DisplayRegs &)> &on_prese
             queue::notify(g_stats_done);
             break;
         case queue::kNativeBegin: case queue::kNative: render_native(h.type, payload, h.bytes); break;
+        case queue::kFlush:
+            flush_and_wait();
+            g_flushed.fetch_add(1);
+            queue::notify(g_flushed);
+            break;
         case queue::kCapture: {
             if (h.arg0) {
                 DisplayRegs regs;
