@@ -1728,12 +1728,12 @@ struct NativeTarget {
 // when the batch goes into the stream, tiles_apply); the last three per buffer, [0] the frame, [1] the Z buffer, which
 // other targets can alias apart (the glow drawn over the Z buffer leaves the frame's colour in the target).
 // A hardware batch reading its own target (the glow's feedback) draws into the shadow, a second colour + alpha pair,
-// while it reads the target, then the two trade places (hw_flush): the shadow equals the target but in dirty (GS
-// pixels x0 y0 x1 y1; empty: x0 > x1), the bounding box of what went into the target since, which the batch first
-// copies over (a draw in its own pass, no copy between passes).
+// while it reads the target, then the two trade places (hw_flush): the shadow equals the target but in dirty (rects of
+// GS pixels x0 y0 x1 y1, mark_dirty), what went into the target since, which the batch first copies over (draws in its
+// own pass, no copy between passes).
 struct Binding {
     NativeTarget target, shadow;  // the shadow: colour and alpha only (the Z buffer stays with the target), made on first use
-    int dirty[4] = {1, 1, 0, 0};
+    int dirty[8][4] = {}, dirties = 0;
     // the tile write-back's bindings, per colour texture (binding_group: made when encoded, encoding thread only)
     WGPUBindGroup group[2] = {};
     WGPUTextureView group_view[2] = {};
@@ -2709,9 +2709,22 @@ void mark_dirty(Binding &b, int x0, int y0, int x1, int y1) {
     x0 = std::max(x0, 0), y0 = std::max(y0, 0);
     x1 = std::min(x1, static_cast<int>(b.target.width / g_sx) - 1), y1 = std::min(y1, static_cast<int>(b.target.height / g_sy) - 1);
     if (x0 > x1 || y0 > y1) return;
-    int *d = b.dirty;
-    if (d[0] > d[2]) d[0] = x0, d[1] = y0, d[2] = x1, d[3] = y1;
-    else d[0] = std::min(d[0], x0), d[1] = std::min(d[1], y0), d[2] = std::max(d[2], x1), d[3] = std::max(d[3], y1);
+    // into the rect whose bounding box with it outgrows the two least, unless that grows and another rect fits
+    int best = -1;
+    long grow = 0;
+    for (int k = 0; k < b.dirties; ++k) {
+        const int *d = b.dirty[k];
+        const long g = static_cast<long>(std::max(d[2], x1) - std::min(d[0], x0) + 1) * (std::max(d[3], y1) - std::min(d[1], y0) + 1) -
+                       static_cast<long>(d[2] - d[0] + 1) * (d[3] - d[1] + 1) - static_cast<long>(x1 - x0 + 1) * (y1 - y0 + 1);
+        if (best < 0 || g < grow) best = k, grow = g;
+    }
+    if (best < 0 || (grow > 0 && b.dirties < 8)) {
+        int *d = b.dirty[b.dirties++];
+        d[0] = x0, d[1] = y0, d[2] = x1, d[3] = y1;
+        return;
+    }
+    int *d = b.dirty[best];
+    d[0] = std::min(d[0], x0), d[1] = std::min(d[1], y0), d[2] = std::max(d[2], x1), d[3] = std::max(d[3], y1);
 }
 
 void tiles_import(Binding &b, const std::vector<std::uint32_t> &list) {
@@ -3508,15 +3521,16 @@ void hw_draw(Binding *const *src, Binding *zsrc, bool chained) {
     if (self) {  // the shadow first gets what the target has newer (in the draws' pass)
         if (!x.shadow.color) make_shadow(x);
         tg.color = x.shadow.color, tg.color_view = x.shadow.color_view, tg.alpha = x.shadow.alpha, tg.alpha_view = x.shadow.alpha_view;
-        const int *dr = x.dirty;
-        if (dr[0] <= dr[2]) {
+        const std::uint32_t param = x.dirties ? push_params({0u, 0u, 0u, 0u, 0u, 0u, 0u, tg.width, tg.height, own, 0u, 0u, 0u, 0u, 0u, 0u}) : 0u;
+        for (int k = 0; k < x.dirties; ++k) {
+            const int *dr = x.dirty[k];
             NativeDraw d;
             d.pipeline = native_pipeline(kNativeBlit);
             d.color = tg.color_view;
             d.depth = tg.depth_view;
             d.alpha = tg.alpha_view;
             d.source = source;
-            d.param = push_params({0u, 0u, 0u, 0u, 0u, 0u, 0u, tg.width, tg.height, own, 0u, 0u, 0u, 0u, 0u, 0u});
+            d.param = param;
             d.vertices = 3;
             d.scissor[0] = static_cast<std::uint32_t>(dr[0]) * g_sx;
             d.scissor[1] = static_cast<std::uint32_t>(dr[1]) * g_sy;
@@ -3525,7 +3539,7 @@ void hw_draw(Binding *const *src, Binding *zsrc, bool chained) {
             g_native_draws.push_back(d);
             g_nat.blitted += static_cast<std::uint64_t>(d.scissor[2]) * d.scissor[3];
         }
-        x.dirty[0] = 1, x.dirty[2] = 0;
+        x.dirties = 0;
         ++g_nat.swapped;
     }
     emit_native();  // the write-backs and the import go ahead of the decodes, which may read what they wrote back
@@ -3607,7 +3621,10 @@ void hw_draw(Binding *const *src, Binding *zsrc, bool chained) {
         std::swap(x.target.color, x.shadow.color), std::swap(x.target.color_view, x.shadow.color_view);
         std::swap(x.target.alpha, x.shadow.alpha), std::swap(x.target.alpha_view, x.shadow.alpha_view);
     }
-    mark_dirty(x, b.minx, b.miny, b.maxx, b.maxy);
+    if (!chained) mark_dirty(x, b.minx, b.miny, b.maxx, b.maxy);
+    for (std::uint32_t i = 0; chained && i < prims; ++i)  // a level's primitives lie apart: the boxes, not their bounding box
+        mark_dirty(x, static_cast<int>(b.prims[i * kPrimWords + 2] & 0xFFFFu), static_cast<int>(b.prims[i * kPrimWords + 2] >> 16),
+                   static_cast<int>(b.prims[i * kPrimWords + 3] & 0xFFFFu), static_cast<int>(b.prims[i * kPrimWords + 3] >> 16));
     ++g_nat.drawn;
     if (!chained) mark_rendered(b.fbp, b.fbw, b.fpsm, b.minx, b.miny, b.maxx, b.maxy);
     if (!chained && b.zwrite) mark_rendered(b.zbp, b.fbw, b.zpsm, b.minx, b.miny, b.maxx, b.maxy);
