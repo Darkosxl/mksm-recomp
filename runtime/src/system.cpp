@@ -34,14 +34,19 @@
 #include <cstdio>
 #include <cstring>
 #include <ctime>
+#include <filesystem>
+#include <format>
 #include <fstream>
+#include <map>
 #include <cstdlib>
 #include <iterator>
 #include <random>
 #include <thread>
 #ifdef __linux__
 #include <pthread.h>
+#include <unistd.h>
 #endif
+#include <sstream>
 #include <stdexcept>
 #include <string>
 #include <vector>
@@ -300,6 +305,29 @@ double thread_ms(const std::atomic<bool> &known, pthread_t thread) {
     if (!known.load(std::memory_order_acquire) || pthread_getcpuclockid(thread, &clock) || clock_gettime(clock, &ts)) return 0.0;
     return static_cast<double>(ts.tv_sec) * 1e3 + static_cast<double>(ts.tv_nsec) / 1e6;
 }
+
+// CPU ms of every thread by name (the renderer's and wgpu's as well), the kernel's share of it and page faults, from /proc
+struct TaskTime {
+    double ms = 0.0, sys_ms = 0.0, faults = 0.0;
+};
+std::map<std::string, TaskTime> task_ms() {
+    std::map<std::string, TaskTime> out;
+    static const double tick_ms = 1e3 / static_cast<double>(sysconf(_SC_CLK_TCK));
+    std::error_code ec;
+    for (const auto &t : std::filesystem::directory_iterator("/proc/self/task", ec)) {
+        std::ifstream comm(t.path() / "comm"), sched(t.path() / "schedstat"), stat(t.path() / "stat");
+        std::string name, line;
+        double ns = 0.0;
+        if (!std::getline(comm, name) || !(sched >> ns) || !std::getline(stat, line)) continue;
+        // after "pid (comm) ": state is field 3, minflt 10, stime 15
+        std::istringstream rest(line.substr(line.rfind(')') + 2));
+        std::vector<std::string> f{std::istream_iterator<std::string>(rest), {}};
+        TaskTime &o = out[name];
+        o.ms += ns / 1e6;
+        if (f.size() > 12) o.faults += std::stod(f[7]), o.sys_ms += std::stod(f[12]) * tick_ms;
+    }
+    return out;
+}
 #endif
 
 // PS2_FPS=from,to prints the emulated frame rate over that window of frames to stderr (remaster/perf.sh), and the CPU
@@ -312,16 +340,22 @@ void fps_window() {
     static double gpu0 = 0.0;
 #ifdef __linux__
     static double ee0 = 0.0, render0 = 0.0, vu0 = 0.0;
+    static std::map<std::string, TaskTime> tasks0;
     const auto self_ms = [] {
         timespec ts{};
         clock_gettime(CLOCK_THREAD_CPUTIME_ID, &ts);
         return static_cast<double>(ts.tv_sec) * 1e3 + static_cast<double>(ts.tv_nsec) / 1e6;
     };
-    if (g_frames == from) ee0 = self_ms(), render0 = thread_ms(g_render_known, g_render_thread), vu0 = thread_ms(g_vu_known, g_vu_thread);
+    if (g_frames == from) ee0 = self_ms(), render0 = thread_ms(g_render_known, g_render_thread), vu0 = thread_ms(g_vu_known, g_vu_thread), tasks0 = task_ms();
     if (g_frames == to && to > from) {
         const double n = static_cast<double>(to - from);
         std::fprintf(stderr, "[cpu] frames %llu-%llu ms/frame: ee %.3f render %.3f vu1 %.3f\n", static_cast<unsigned long long>(from), static_cast<unsigned long long>(to),
                      (self_ms() - ee0) / n, (thread_ms(g_render_known, g_render_thread) - render0) / n, (thread_ms(g_vu_known, g_vu_thread) - vu0) / n);
+        std::string line;
+        for (const auto &[name, t] : task_ms())
+            if (const double d = (t.ms - tasks0[name].ms) / n; d >= 0.05)
+                line += std::format(" {} {:.3f} (sys {:.2f}, {:.0f} faults)", name, d, (t.sys_ms - tasks0[name].sys_ms) / n, (t.faults - tasks0[name].faults) / n);
+        std::fprintf(stderr, "[cpu] threads ms/frame:%s\n", line.c_str());
     }
 #endif
     if (g_frames == from) {

@@ -72,6 +72,7 @@ constexpr std::uint32_t kDecodePrims = 64;
 
 Mode g_mode = Mode::off;
 std::uint64_t g_dispatches[kPipelines] = {}, g_submits = 0;
+std::atomic<std::uint64_t> g_uploaded[3];  // bytes handed to wgpuQueueWriteBuffer: arena, params, other writes (stats)
 
 WGPUInstance g_instance = nullptr;
 WGPUAdapter g_adapter = nullptr;
@@ -1273,6 +1274,8 @@ void run_commands(Arena &arena, ParamRecords &params, std::vector<Command> &comm
     ensure_capacity(arena.size(), params.size());
     wgpuQueueWriteBuffer(g_queue, g_data, 0, arena.data(), arena.size() * 4);
     wgpuQueueWriteBuffer(g_queue, g_params, 0, params.data(), params.size() * kParamStride);
+    g_uploaded[0].fetch_add(arena.size() * 4, std::memory_order_relaxed);
+    g_uploaded[1].fetch_add(params.size() * kParamStride, std::memory_order_relaxed);
     if (g_query_ready) {
         const void *mapped = wgpuBufferGetConstMappedRange(g_query_read, 0, 16);
         if (mapped) {
@@ -1392,7 +1395,7 @@ std::vector<Job> g_spare_jobs;
 bool g_job_running = false, g_worker_started = false;
 
 void run_job(Job &j) {
-    for (const Write &w : j.writes) wgpuQueueWriteBuffer(g_queue, w.buffer, w.offset, w.bytes.data(), w.bytes.size());
+    for (const Write &w : j.writes) wgpuQueueWriteBuffer(g_queue, w.buffer, w.offset, w.bytes.data(), w.bytes.size()), g_uploaded[2].fetch_add(w.bytes.size(), std::memory_order_relaxed);
     if (!j.present) {
         if (!j.commands.empty()) run_commands(j.arena, j.params, j.commands, j.natives, nullptr);
         return;
@@ -1589,7 +1592,8 @@ void read_back(WGPUBuffer source, std::uint64_t bytes, void *out, std::uint64_t 
     wgpuBufferUnmap(g_readback);
 }
 
-std::uint32_t make_setup(const State &st, std::uint64_t attr, std::uint32_t *w) {
+// clut: the CLUT slot the draw reads (g_clut_slot, or ahead of it on the render thread when split)
+std::uint32_t make_setup(const State &st, std::uint64_t attr, std::uint32_t *w, std::uint32_t clut) {
     const Context &c = st.ctx[(attr >> 9) & 1u];
     std::uint32_t flags = 0;
     if (attr & 0x8u) flags |= 1u;
@@ -1634,7 +1638,7 @@ std::uint32_t make_setup(const State &st, std::uint64_t attr, std::uint32_t *w) 
     w[19] = (static_cast<std::uint32_t>(c.clamp >> 24) & 0x3FFu) | ((static_cast<std::uint32_t>(c.clamp >> 34) & 0x3FFu) << 16);
     w[20] = (static_cast<std::uint32_t>(st.texa) & 0xFFu) | ((static_cast<std::uint32_t>(st.texa >> 32) & 0xFFu) << 8);
     w[21] = static_cast<std::uint32_t>(st.fogcol) & 0xFFFFFFu;
-    w[22] = g_clut_slot;
+    w[22] = clut;
     w[23] = z_max(zpsm);
     w[24] = 0xFFFFFFFFu;
     // Mipmapping (TEX1.MXL > 0): LCM | MXL << 1 | MMIN << 4 | L << 7 | K << 16, then TBP | TBW << 16 for levels 1-6.
@@ -2956,7 +2960,7 @@ void native_record(const State &st, const std::uint8_t *payload, std::uint32_t b
     }
     if (!g_nat.tiles && !g_nat.open) native_open(st);
     std::uint32_t w[kSetupWords];
-    const std::uint32_t flags = make_setup(st, attr, w);
+    const std::uint32_t flags = make_setup(st, attr, w, g_clut_slot);
     if (prim < 3 || prim > 5) return unsupported("primitive");
     if (flags & 128u) return unsupported("DATE");
     if ((flags & 8u) && (flags & 1024u)) return unsupported("PABE");
@@ -4046,6 +4050,8 @@ void native_stats() {
             std::fprintf(stderr, ")");
         }
     }
+    std::fprintf(stderr, "\n[native] uploaded per frame: %.2f MB arena, %.2f MB params, %.2f MB other", static_cast<double>(g_uploaded[0].load()) / per / 1048576.0,
+                 static_cast<double>(g_uploaded[1].load()) / per / 1048576.0, static_cast<double>(g_uploaded[2].load()) / per / 1048576.0);
     if (g_nat.tiles) {
         static const char *const kBy[] = {"emulated", "texture", "claim", "display", "access", "flush"};
         std::fprintf(stderr, "\n[native] source: %.1f textures a frame read from a target, %.1f batches into the shadow (%.1f of them chain levels, of %.1f batches chained), "
@@ -4300,23 +4306,438 @@ void replace_texture(const State &st, SetupCache &cache) {
     cache.mips = 0;
 }
 
-void draw(const State &st, const Vertex *v, int count, texcache::Run run) {
+// ---- The GS front end and the renderer on two threads (PS2_GS_SPLIT=1) ----
+// draw() builds a primitive's record from the GS state (the front half); draw_back() batches it (the back half). Split,
+// the render thread posts the records and the other GS ops that reach the renderer to a "gsdraw" thread in chunks, and
+// every other entry point first waits for that thread to run all of them (split_sync), so the renderer's state is never
+// used by two threads at once. Off, the back half runs inline, in the same order.
+
+namespace {
+
+struct PrimOp {
+    std::uint32_t rec[kPrimWords];
+    std::uint32_t prim;
+    std::int32_t count;
+    texcache::Run run;
+    bool hidden;  // a sprite outside the scissor: it draws nothing but still sets its setup's F_RT_HIRES (draw_rt)
+};
+
+enum SplitOp : std::uint32_t { kOpSetup, kOpPrim, kOpSkip, kOpImageBegin, kOpImageData, kOpLocalCopy, kOpClut, kOpFlush, kOpVblank };
+constexpr std::size_t kChunkWords = 32768;  // 256 KB
+
+struct Chunk {
+    std::vector<std::uint64_t> words;  // per op: op | arg << 8 | payload bytes << 32, then the payload in whole words
+    std::size_t used = 0;
+};
+
+struct Split {
+    bool on = false, checked = false;
+    std::uint32_t clut = 0;  // render thread: the CLUT slot a draw reads once the ops posted so far have run
+    SetupCache cache;        // gsdraw: the setup the posted primitives draw with
+    Chunk cur;               // render thread: being filled
+    std::mutex m;
+    std::condition_variable work, space, idle;
+    std::deque<Chunk> full;
+    std::vector<Chunk> spare;
+    std::uint64_t posted = 0, done = 0;
+} g_split;
+
+void draw_head() {
     if (g_nat.on) {  // an emulated primitive: inside a native batch's XGKICK, or the end of a run of native batches
         if (g_nat.in_kick) ++g_nat.kick_prims;
         else if (g_nat.open) native_close(kCloseDraw);
     }
     if (g_image.active && !g_image.pending.empty()) flush_image();
+}
+
+// A primitive that draws nothing; why: the setup that writes nothing (counted), kHwReasons: no setup to blame
+void draw_skip(std::uint8_t why) {
+    if (why != kHwReasons) ++g_nat.hw_prims[why];
+}
+
+// The texture coordinates of a primitive's vertices back from its record (attrs), for texel_rect
+void rec_vertices(const std::uint32_t *rec, int count, bool fst, Vertex *v) {
+    for (int i = 0; i < count; ++i) {
+        const float s = u2f(rec[15 + i * 3]), t = u2f(rec[16 + i * 3]);
+        if (fst) {
+            v[i].u = static_cast<std::uint32_t>(s);
+            v[i].v = static_cast<std::uint32_t>(t);
+        } else {
+            v[i].s = s;
+            v[i].t = t;
+            v[i].q = u2f(rec[17 + i * 3]);
+        }
+    }
+}
+
+// Scale > 1: a sprite sampling a render target in a direct format (g_rt_pages, or drawn by the batch still pending)
+// may read its samples on the fine grid (gs.wgsl F_RT_HIRES; the shader keeps 1:1 copies per sample). Uploaded
+// textures hold one value per texel and keep the native path (bilinear between texels, not between equal samples).
+bool rt_sprite(const SetupCache &cache, std::uint32_t prim) { return g_samples > 1 && prim == 6 && (cache.flags & 2u) && !(cache.flags & kReplaced); }
+
+void draw_rt(SetupCache &cache, const PrimOp &op) {
+    std::uint32_t *w = cache.setup;
+    const std::uint32_t psm = w[14];
+    bool rt = false;
+    int rect[4];
+    Vertex v[3] = {};
+    rec_vertices(op.rec, op.count, cache.flags & 16u, v);
+    if ((psm <= PSMCT16 || psm == PSMCT16S || psm >= PSMZ32) && texel_rect(w, v, op.count, op.prim, cache.flags & 16u, rect)) {
+        Batch &b = g_batch;
+        if (!b.prims.empty()) batch_ranges();
+        std::uint32_t pw, ph;
+        page_size(psm, pw, ph);
+        const std::uint64_t per_row = std::max<std::uint32_t>(1, w[13] * 64 / pw);
+        rt = true;  // every page under the texel rectangle
+        for (int py = rect[1] / static_cast<int>(ph); rt && py <= rect[3] / static_cast<int>(ph); ++py)
+            for (int px = rect[0] / static_cast<int>(pw); rt && px <= rect[2] / static_cast<int>(pw); ++px) {
+                const std::uint64_t at = static_cast<std::uint64_t>(w[12]) * 256 + (static_cast<std::uint64_t>(px) + static_cast<std::uint64_t>(py) * per_row) * 8192;
+                rt = g_rt_pages[(at >> 13) & 511u] ||
+                     (!b.prims.empty() && (b.fb_range.overlaps(at, at + 8192) || (b.zwrite && b.z_range.overlaps(at, at + 8192))));
+            }
+    }
+    w[0] = rt ? w[0] | kRtHires : w[0] & ~kRtHires;
+    cache.flags = w[0];
+}
+
+// After draw_head(): the primitive draw() built, into the batch.
+void draw_back(SetupCache &cache, const PrimOp &op) {
+    if (rt_sprite(cache, op.prim)) draw_rt(cache, op);
+    if (op.hidden) return;
+    const std::uint32_t *setup = cache.setup;
+    const std::uint32_t flags = cache.flags, prim = op.prim;
+    const bool fst = flags & 16u;
+    const std::uint32_t *rec = op.rec;
+    const int minx = static_cast<int>(rec[2] & 0xFFFFu), miny = static_cast<int>(rec[2] >> 16);
+    const int maxx = static_cast<int>(rec[3] & 0xFFFFu), maxy = static_cast<int>(rec[3] >> 16);
+
+    // the hardware GS renderer: triangles and sprites of a setup it can draw; a sprite that scales a render target at
+    // scale > 1 (F_RT_HIRES) stays emulated
+    const std::uint8_t why = cache.hw != kHwOk ? cache.hw : prim < 3 || prim > 6 ? kHwPrim : kHwOk;
+    const bool hw = g_hw && why == kHwOk;
+    if (g_hw) {
+        ++g_nat.hw_prims[why];
+        const std::uint32_t detail = why == kHwBlend ? ((setup[7] >> 12) & 0xFFu) | setup[9] << 8 : why == kHwFbmsk || why == kHwAmsk ? setup[4] : why == kHwFormat ? setup[3]
+                                   : why == kHwWidth ? setup[2] : why == kHwPrim ? prim : ~0u;
+        if (detail != ~0u) ++g_nat.hw_detail[why][detail];
+    }
+    // a switch between the two paths ends the batch first: the tile state an emulated primitive notes (tiles_emulated)
+    // must not reach a hardware batch's flush, which marks its tiles native-newer
+    if ((!g_batch.prims.empty() && g_batch.hw != hw) || (!hw && !g_chain.ends.empty())) emit_all();
+    if (hw) hw_bind(setup);
+    else if (native_bound()) tiles_emulated(setup, flags, minx, miny, maxx, maxy, cache.tex, cache.levels, (flags & 2u) ? cache.mips : 0u);
+    Batch &b = g_batch;
+    const bool zte = flags & 512u;
+    const std::uint64_t key = cache.key | (hw ? 1ull << 62 : 0ull);
+    if (b.key != ~0ull && b.key != key) emit_all();
+    const Range &tex = cache.tex;
+    if (flags & 2u) {
+        if (!b.prims.empty()) {
+            batch_ranges();
+            const auto written = [&](const Range &t) { return t.overlaps(b.fb_range.lo, b.fb_range.hi) || (b.zwrite && t.overlaps(b.z_range.lo, b.z_range.hi)); };
+            int rect[4];
+            if (written(tex)) {
+                Vertex v[3] = {};
+                rec_vertices(rec, op.count, fst, v);
+                if (!texel_rect(setup, v, op.count, prim, fst, rect)) {
+                    emit_all();
+                } else {
+                    // Within a texcache run the texture reads the run's starting state: only primitives batched before
+                    // the run began must have landed first.
+                    const Range used = region(setup[12], setup[13], setup[14], rect[0], rect[1], rect[2], rect[3]);
+                    const bool cached = op.run == texcache::Run::same;
+                    const bool frame = shares_frame(setup, b) ? drawn_under(b, rect, cached ? b.run_start : ~std::size_t{0})
+                                                              : !cached && used.overlaps(b.fb_range.lo, b.fb_range.hi);
+                    if (frame || (b.zwrite && used.overlaps(b.z_range.lo, b.z_range.hi))) {
+                        if (chainable()) chain_defer();
+                        else emit_all();
+                    }
+                }
+            }
+            for (std::uint32_t n = 1; n <= cache.mips && !b.prims.empty(); ++n)
+                if (written(cache.levels[n])) emit_all();
+        }
+    }
+    if (b.prims.empty()) {
+        b.run_start = 0;
+        b.key = key;
+        b.fbp = setup[1];
+        b.fbw = setup[2];
+        b.fpsm = setup[3];
+        b.zbp = setup[5];
+        b.zpsm = setup[6];
+        b.zte = false;
+        b.zwrite = false;
+        b.rx1 = -2;
+        b.hw = hw;
+        b.binding = hw ? g_nat.cur : nullptr;
+    }
+    b.zte = b.zte || zte;
+    b.zwrite = b.zwrite || (zte && !(flags & 32u));
+    const std::size_t setups = b.setups.size() / kSetupWords;
+    std::uint32_t setup_index;
+    if (setups && std::memcmp(b.setups.data() + (setups - 1) * kSetupWords, setup, kSetupWords * 4) == 0) {
+        setup_index = static_cast<std::uint32_t>(setups - 1);
+    } else {
+        setup_index = static_cast<std::uint32_t>(setups);
+        b.setups.insert(b.setups.end(), setup, setup + kSetupWords);
+    }
+    if (flags & 2u) {
+        for (std::uint32_t n = 0; n <= cache.mips; ++n) {
+            const Range &t = n ? cache.levels[n] : tex;
+            if (!g_batch_reads.empty() && g_batch_reads.back().lo == t.lo && g_batch_reads.back().hi == t.hi) continue;
+            bool known = false;
+            for (const Range &r : g_batch_reads) known = known || (r.lo <= t.lo && t.hi <= r.hi);
+            if (!known) g_batch_reads.push_back(t);
+        }
+    }
+    if (op.run != texcache::Run::same) b.run_start = b.boxes.size() / 2;
+    b.prims.insert(b.prims.end(), rec, rec + kPrimWords);
+    b.prims[b.prims.size() - kPrimWords] = setup_index;
+    if (drawdbg::enabled()) {
+        if (const std::uint32_t id = drawdbg::current_draw(); id != ~0u) {
+            if (!b.dbg_draws.empty() && b.dbg_draws.back().first == id) ++b.dbg_draws.back().second;
+            else b.dbg_draws.emplace_back(id, 1u);
+        }
+    }
+    b.boxes.push_back(rec[2]);
+    b.boxes.push_back(rec[3]);
+    b.minx = std::min(b.minx, minx);
+    b.miny = std::min(b.miny, miny);
+    b.maxx = std::max(b.maxx, maxx);
+    b.maxy = std::max(b.maxy, maxy);
+    if (b.prims.size() >= kPrimWords * 65536) emit_all();
+}
+
+void image_begin_back(std::uint64_t buf, std::uint64_t pos, std::uint64_t reg) {
+    chain_flush();  // anything but a draw finds the chain in the stream
+    flush_image();
+    Image &im = g_image;
+    im = Image{};
+    im.dbp = static_cast<std::uint32_t>(buf >> 32) & 0x3FFFu;
+    im.dbw = static_cast<std::uint32_t>(buf >> 48) & 0x3Fu;
+    im.dpsm = static_cast<std::uint32_t>(buf >> 56) & 0x3Fu;
+    im.dsax = static_cast<std::uint32_t>(pos >> 32) & 0x7FFu;
+    im.dsay = static_cast<std::uint32_t>(pos >> 48) & 0x7FFu;
+    im.rrw = static_cast<std::uint32_t>(reg) & 0xFFFu;
+    im.total = im.rrw * (static_cast<std::uint32_t>(reg >> 32) & 0xFFFu);
+    im.bpp = bits_per_pixel(im.dpsm);
+    im.id = ++g_image_ids ? g_image_ids : ++g_image_ids;
+    im.active = im.total != 0;
+    if (im.active) mark_uploaded(pages(im.dbp, im.dbw, im.dpsm, static_cast<int>(im.dsax), static_cast<int>(im.dsay), static_cast<int>(im.dsax + im.rrw) - 1, static_cast<int>(im.dsay + im.total / im.rrw) - 1));
+}
+
+void image_data_back(const std::uint8_t *data, std::size_t bytes) {
+    Image &im = g_image;
+    if (!im.active) return;
+    if (im.pending.empty() && !im.lead_bits) {
+        const std::uint64_t used = queue_upload(data, bytes, 0);
+        const std::size_t whole = static_cast<std::size_t>(used / 8);
+        if (im.done < im.total && whole < bytes) im.pending.assign(data + whole, data + bytes);
+        im.lead_bits = static_cast<std::uint32_t>(used % 8);
+        finish_image_if_done();
+        return;
+    }
+    im.pending.insert(im.pending.end(), data, data + bytes);
+}
+
+void local_copy_back(std::uint64_t buf, std::uint64_t pos, std::uint64_t reg) {
+    chain_flush();
+    const std::uint32_t w = static_cast<std::uint32_t>(reg) & 0xFFFu, h = static_cast<std::uint32_t>(reg >> 32) & 0xFFFu;
+    if (native_bound()) {  // the source is read, the destination written
+        if (w && h) {
+            tiles_access(pages(static_cast<std::uint32_t>(buf) & 0x3FFFu, static_cast<std::uint32_t>(buf >> 16) & 0x3Fu, static_cast<std::uint32_t>(buf >> 24) & 0x3Fu,
+                               static_cast<int>(pos) & 0x7FF, static_cast<int>(pos >> 16) & 0x7FF, (static_cast<int>(pos) & 0x7FF) + static_cast<int>(w) - 1,
+                               (static_cast<int>(pos >> 16) & 0x7FF) + static_cast<int>(h) - 1),
+                         false);
+            tiles_access(pages(static_cast<std::uint32_t>(buf >> 32) & 0x3FFFu, static_cast<std::uint32_t>(buf >> 48) & 0x3Fu, static_cast<std::uint32_t>(buf >> 56) & 0x3Fu,
+                               static_cast<int>(pos >> 32) & 0x7FF, static_cast<int>(pos >> 48) & 0x7FF, (static_cast<int>(pos >> 32) & 0x7FF) + static_cast<int>(w) - 1,
+                               (static_cast<int>(pos >> 48) & 0x7FF) + static_cast<int>(h) - 1),
+                         true);
+        }
+    } else {
+        native_sync();
+    }
+    flush_all();
+    if (!w || !h) return;
+    mark_rendered(static_cast<std::uint32_t>(buf >> 32) & 0x3FFFu, static_cast<std::uint32_t>(buf >> 48) & 0x3Fu, static_cast<std::uint32_t>(buf >> 56) & 0x3Fu,
+                  static_cast<int>(pos >> 32) & 0x7FF, static_cast<int>(pos >> 48) & 0x7FF, (static_cast<int>(pos >> 32) & 0x7FF) + static_cast<int>(w) - 1,
+                  (static_cast<int>(pos >> 48) & 0x7FF) + static_cast<int>(h) - 1);
+    const std::uint32_t read = push_params({static_cast<std::uint32_t>(buf) & 0x3FFFu, static_cast<std::uint32_t>(buf >> 16) & 0x3Fu, static_cast<std::uint32_t>(buf >> 24) & 0x3Fu,
+                                            static_cast<std::uint32_t>(pos) & 0x7FFu, static_cast<std::uint32_t>(pos >> 16) & 0x7FFu, w, h});
+    const std::uint32_t write = push_params({static_cast<std::uint32_t>(buf >> 32) & 0x3FFFu, static_cast<std::uint32_t>(buf >> 48) & 0x3Fu, static_cast<std::uint32_t>(buf >> 56) & 0x3Fu,
+                                             static_cast<std::uint32_t>(pos >> 32) & 0x7FFu, static_cast<std::uint32_t>(pos >> 48) & 0x7FFu, w, h,
+                                             static_cast<std::uint32_t>(pos >> 59) & 3u});
+    dispatch_linear(kCopyRead, w * h * g_samples, read);
+    dispatch_linear(kCopyWrite, w * h * g_samples, write);
+}
+
+void load_clut_back(std::uint64_t tex0, std::uint64_t texclut) {
+    chain_flush();
+    flush_image();
+    if (g_clut_loads + 2 >= kClutSlots) {
+        emit_all();
+        submit();
+    }
+    const std::uint32_t psm = static_cast<std::uint32_t>(tex0 >> 20) & 0x3Fu;
+    const std::uint32_t cpsm = (static_cast<std::uint32_t>(tex0 >> 51) & 0xFu) == 0 ? PSMCT32 : static_cast<std::uint32_t>(tex0 >> 51) & 0xFu;
+    const std::uint32_t next = (g_clut_slot + 1) % kClutSlots;
+    const std::uint32_t tc = static_cast<std::uint32_t>(texclut);
+    const std::uint32_t cbp = static_cast<std::uint32_t>(tex0 >> 37) & 0x3FFFu, csm = static_cast<std::uint32_t>(tex0 >> 55) & 1u;
+    const std::uint32_t cbw = tc & 0x3Fu, cou = (tc >> 6) & 0x3Fu, cov = (tc >> 12) & 0x3FFu;
+    PreOp op;
+    op.clut = true;
+    const std::uint32_t rec[10] = {g_clut_slot, next, cbp, cpsm, csm, static_cast<std::uint32_t>(tex0 >> 56) & 0x1Fu, (psm == PSMT8 || psm == PSMT8H) ? 1u : 0u, cbw, cou, cov};
+    std::memcpy(op.rec, rec, sizeof rec);
+    op.range = csm ? region(cbp, cbw, cpsm, static_cast<int>(cou * 16), static_cast<int>(cov), static_cast<int>(cou * 16 + 255), static_cast<int>(cov))
+                   : region(cbp, 1, cpsm, 0, 0, 15, 15);
+    queue_pre(op);
+    std::array<std::uint64_t, 32> blocks = g_clut_blocks[g_clut_slot];
+    std::uint64_t id = page_gens(op.range);
+    for (int k = 2; k < 10; ++k) id = mix(id, rec[k]);  // not the slots
+    const std::uint32_t csa = rec[5], first = csm ? csa : rec[6] ? 0u : csa & 15u, count = rec[6] ? 16u : 1u;
+    for (std::uint32_t k = 0; k < count; ++k) blocks[(first + k) & 31u] = mix(id, k);
+    g_clut_blocks[next] = blocks;
+    g_clut_slot = next;
+    ++g_clut_loads;
+}
+
+void flush_back() {
+    chain_flush();
+    native_sync(kCloseVblank);
+    if (g_mode == Mode::off) return;
+    flush_all();
+    submit();
+}
+
+void native_vblank_back(std::uint64_t frame) {
+    g_nat.frame = frame;
+    ++g_nat.frames;
+}
+
+void split_run(const Chunk &c) {
+    for (std::size_t i = 0; i < c.used;) {
+        const std::uint64_t head = c.words[i];
+        const auto *p = reinterpret_cast<const std::uint8_t *>(c.words.data() + i + 1);
+        const std::size_t bytes = static_cast<std::size_t>(head >> 32);
+        i += 1 + (bytes + 7) / 8;
+        std::uint64_t r[3];
+        switch (static_cast<std::uint32_t>(head) & 0xFFu) {
+        case kOpSetup: std::memcpy(static_cast<void *>(&g_split.cache), p, sizeof(SetupCache)); break;
+        case kOpPrim: {
+            PrimOp op;
+            std::memcpy(&op, p, sizeof op);
+            draw_head();
+            draw_back(g_split.cache, op);
+            break;
+        }
+        case kOpSkip: draw_head(), draw_skip(static_cast<std::uint8_t>(head >> 8)); break;
+        case kOpImageBegin: std::memcpy(r, p, 24), image_begin_back(r[0], r[1], r[2]); break;
+        case kOpImageData: image_data_back(p, bytes); break;
+        case kOpLocalCopy: std::memcpy(r, p, 24), local_copy_back(r[0], r[1], r[2]); break;
+        case kOpClut: std::memcpy(r, p, 16), load_clut_back(r[0], r[1]); break;
+        case kOpFlush: flush_back(); break;
+        case kOpVblank: std::memcpy(r, p, 8), native_vblank_back(r[0]); break;
+        }
+    }
+}
+
+void split_worker() {
+#ifdef __linux__
+    pthread_setname_np(pthread_self(), "gsdraw");
+#endif
+    std::unique_lock lock(g_split.m);
+    for (;;) {
+        g_split.work.wait(lock, [] { return !g_split.full.empty(); });
+        Chunk c = std::move(g_split.full.front());
+        g_split.full.pop_front();
+        lock.unlock();
+        g_split.space.notify_one();
+        split_run(c);
+        c.used = 0;
+        lock.lock();
+        g_split.spare.push_back(std::move(c));
+        if (++g_split.done == g_split.posted) g_split.idle.notify_all();
+    }
+}
+
+// the first call decides, for the run
+[[gnu::noinline]] bool split_check() {
+    g_split.checked = true;
+    const char *e = std::getenv("PS2_GS_SPLIT");
+    g_split.on = e && std::strcmp(e, "1") == 0 && queue::active() && g_mode == Mode::primary && !texpack::active() && !drawdbg::enabled() && !native::active();
+    g_split.clut = g_clut_slot;
+    if (g_split.on) std::thread(split_worker).detach();
+    if (e && std::strcmp(e, "1") == 0 && !g_split.on) std::fprintf(stderr, "[gpu] PS2_GS_SPLIT needs the render thread, PS2_GS=gpu, and no texture pack, frame debugger or native renderer\n");
+    return g_split.on;
+}
+
+inline bool split_on() { return g_split.checked ? g_split.on : split_check(); }
+
+// Render thread: hands the chunk being filled to gsdraw.
+void split_publish() {
+    Chunk &c = g_split.cur;
+    if (!c.used) return;
+    std::unique_lock lock(g_split.m);
+    g_split.space.wait(lock, [] { return g_split.full.size() < 64; });
+    g_split.full.push_back(std::move(c));
+    ++g_split.posted;
+    c = Chunk{};
+    if (!g_split.spare.empty()) {
+        c = std::move(g_split.spare.back());
+        g_split.spare.pop_back();
+    }
+    lock.unlock();
+    g_split.work.notify_one();
+}
+
+// Render thread: room for an op in the chunk being filled; returns where its payload goes.
+std::uint8_t *split_op(std::uint32_t op, std::size_t bytes) {
+    const std::size_t words = 1 + (bytes + 7) / 8;
+    Chunk &c = g_split.cur;
+    if (c.used + words > c.words.size()) {
+        split_publish();
+        if (c.words.size() < words) c.words.resize(std::max(words, kChunkWords));
+    }
+    std::uint64_t *at = c.words.data() + c.used;
+    at[0] = op | static_cast<std::uint64_t>(bytes) << 32;
+    c.used += words;
+    return reinterpret_cast<std::uint8_t *>(at + 1);
+}
+
+void split_post(std::uint32_t op, std::initializer_list<std::uint64_t> args) {
+    std::memcpy(split_op(op, args.size() * 8), args.begin(), args.size() * 8);
+}
+
+// Render thread: runs everything posted so far; the renderer's state is the render thread's until the next post.
+void split_sync() {
+    if (!g_split.on) return;
+    split_publish();
+    std::unique_lock lock(g_split.m);
+    g_split.idle.wait(lock, [] { return g_split.done == g_split.posted; });
+}
+
+}  // namespace
+
+void publish_draws() {
+    if (g_split.on) split_publish();
+}
+
+void draw(const State &st, const Vertex *v, int count, texcache::Run run) {
+    const bool split = split_on();
+    if (!split) draw_head();
     std::uint64_t attr = st.prim;
     if (!(st.prmodecont & 1u)) attr = (st.prim & 7u) | (st.prmode & ~7ull);
     const std::uint32_t prim = static_cast<std::uint32_t>(st.prim) & 7u;
     const Context &c = st.ctx[(attr >> 9) & 1u];
     SetupCache &cache = g_setup_cache;
-    if (cache.generation != g_setup_generation || cache.attr != attr || cache.clut != g_clut_slot) {
+    const std::uint32_t clut = split ? g_split.clut : g_clut_slot;
+    if (cache.generation != g_setup_generation || cache.attr != attr || cache.clut != clut) {
         cache.generation = g_setup_generation;
         cache.attr = attr;
-        cache.clut = g_clut_slot;
+        cache.clut = clut;
         const std::uint32_t *w = cache.setup;
-        cache.flags = make_setup(st, attr, cache.setup);
+        cache.flags = make_setup(st, attr, cache.setup, clut);
         cache.key = static_cast<std::uint64_t>(w[1]) | (static_cast<std::uint64_t>(w[2]) << 14) | (static_cast<std::uint64_t>(w[3]) << 20) |
                     (static_cast<std::uint64_t>(w[5]) << 26) | (static_cast<std::uint64_t>(w[6]) << 40);
         cache.mips = 0;
@@ -4327,34 +4748,11 @@ void draw(const State &st, const Vertex *v, int count, texcache::Run run) {
             if (texpack::active()) replace_texture(st, cache);
         }
         cache.hw = g_hw ? hw_setup(cache.setup) : kHwOk;
+        if (split) std::memcpy(split_op(kOpSetup, sizeof cache), static_cast<const void *>(&cache), sizeof cache);
     }
+    const auto skip = [&](std::uint8_t why) { split ? void(split_op(kOpSkip | static_cast<std::uint32_t>(why) << 8, 0)) : draw_skip(why); };
     // ZTST NEVER, or ATST NEVER with AFAIL KEEP: the primitive writes nothing, and would only end a hardware batch
-    if (cache.hw == kHwZNever || cache.hw == kHwANever) return void(++g_nat.hw_prims[cache.hw]);
-    // Scale > 1: a sprite sampling a render target in a direct format (g_rt_pages, or drawn by the batch still pending)
-    // may read its samples on the fine grid (gs.wgsl F_RT_HIRES; the shader keeps 1:1 copies per sample). Uploaded
-    // textures hold one value per texel and keep the native path (bilinear between texels, not between equal samples).
-    if (g_samples > 1 && prim == 6 && (cache.flags & 2u) && !(cache.flags & kReplaced)) {
-        std::uint32_t *w = cache.setup;
-        const std::uint32_t psm = w[14];
-        bool rt = false;
-        int rect[4];
-        if ((psm <= PSMCT16 || psm == PSMCT16S || psm >= PSMZ32) && texel_rect(w, v, count, prim, cache.flags & 16u, rect)) {
-            Batch &b = g_batch;
-            if (!b.prims.empty()) batch_ranges();
-            std::uint32_t pw, ph;
-            page_size(psm, pw, ph);
-            const std::uint64_t per_row = std::max<std::uint32_t>(1, w[13] * 64 / pw);
-            rt = true;  // every page under the texel rectangle
-            for (int py = rect[1] / static_cast<int>(ph); rt && py <= rect[3] / static_cast<int>(ph); ++py)
-                for (int px = rect[0] / static_cast<int>(pw); rt && px <= rect[2] / static_cast<int>(pw); ++px) {
-                    const std::uint64_t at = static_cast<std::uint64_t>(w[12]) * 256 + (static_cast<std::uint64_t>(px) + static_cast<std::uint64_t>(py) * per_row) * 8192;
-                    rt = g_rt_pages[(at >> 13) & 511u] ||
-                         (!b.prims.empty() && (b.fb_range.overlaps(at, at + 8192) || (b.zwrite && b.z_range.overlaps(at, at + 8192))));
-                }
-        }
-        w[0] = rt ? w[0] | kRtHires : w[0] & ~kRtHires;
-        cache.flags = w[0];
-    }
+    if (cache.hw == kHwZNever || cache.hw == kHwANever) return skip(cache.hw);
     const std::uint32_t *setup = cache.setup;
     const std::uint32_t flags = cache.flags;
     const bool fst = flags & 16u, iip = flags & 1u;
@@ -4367,14 +4765,16 @@ void draw(const State &st, const Vertex *v, int count, texcache::Run run) {
     const auto first = [&](float lo) { return static_cast<int>(std::floor(std::ceil(lo * samples) / samples)); };
     const auto first_y = [&](float lo) { return static_cast<int>(std::floor(std::ceil(lo * samples_y) / samples_y)); };
 
-    std::uint32_t rec[kPrimWords] = {};
+    PrimOp op;
+    std::uint32_t *rec = op.rec;
+    std::fill(std::begin(op.rec), std::end(op.rec), 0u);
     int minx, miny, maxx, maxy;
     switch (prim) {
     case 3: case 4: case 5: {
-        if (count < 3) return;
+        if (count < 3) return skip(kHwReasons);
         const float x0 = sx(v[0]), y0 = sy(v[0]), x1 = sx(v[1]), y1 = sy(v[1]), x2 = sx(v[2]), y2 = sy(v[2]);
         const float area = (x1 - x0) * (y2 - y0) - (x2 - x0) * (y1 - y0);
-        if (area == 0.0f) return;
+        if (area == 0.0f) return skip(kHwReasons);
         minx = std::max(scax0, first(std::min({x0, x1, x2})));
         maxx = std::min(scax1, static_cast<int>(std::ceil(std::max({x0, x1, x2}))) - 1);
         miny = std::max(scay0, first_y(std::min({y0, y1, y2})));
@@ -4434,7 +4834,7 @@ void draw(const State &st, const Vertex *v, int count, texcache::Run run) {
         const int x = static_cast<int>(sx(v[0])), y = static_cast<int>(sy(v[0]));
         minx = maxx = x;
         miny = maxy = y;
-        if (x < scax0 || x > scax1 || y < scay0 || y > scay1) return;
+        if (x < scax0 || x > scax1 || y < scay0 || y > scay1) return skip(kHwReasons);
         rec[1] = 3;
         rec[4] = static_cast<std::uint32_t>(x);
         rec[5] = static_cast<std::uint32_t>(y);
@@ -4443,217 +4843,54 @@ void draw(const State &st, const Vertex *v, int count, texcache::Run run) {
         break;
     }
     default:
-        return;
+        return skip(kHwReasons);
     }
     minx = std::max(minx, 0);
     miny = std::max(miny, 0);
     maxx = std::min(maxx, 2047);
     maxy = std::min(maxy, 2047);
-    if (minx > maxx || miny > maxy) return;
-
-    // the hardware GS renderer: triangles and sprites of a setup it can draw; a sprite that scales a render target at
-    // scale > 1 (F_RT_HIRES) stays emulated
-    const std::uint8_t why = cache.hw != kHwOk ? cache.hw : prim < 3 || prim > 6 ? kHwPrim : kHwOk;
-    const bool hw = g_hw && why == kHwOk;
-    if (g_hw) {
-        ++g_nat.hw_prims[why];
-        const std::uint32_t detail = why == kHwBlend ? ((setup[7] >> 12) & 0xFFu) | setup[9] << 8 : why == kHwFbmsk || why == kHwAmsk ? setup[4] : why == kHwFormat ? setup[3]
-                                   : why == kHwWidth ? setup[2] : why == kHwPrim ? prim : ~0u;
-        if (detail != ~0u) ++g_nat.hw_detail[why][detail];
-    }
-    // a switch between the two paths ends the batch first: the tile state an emulated primitive notes (tiles_emulated)
-    // must not reach a hardware batch's flush, which marks its tiles native-newer
-    if ((!g_batch.prims.empty() && g_batch.hw != hw) || (!hw && !g_chain.ends.empty())) emit_all();
-    if (hw) hw_bind(setup);
-    else if (native_bound()) tiles_emulated(setup, flags, minx, miny, maxx, maxy, cache.tex, cache.levels, (flags & 2u) ? cache.mips : 0u);
-    Batch &b = g_batch;
-    const bool zte = flags & 512u;
-    const std::uint64_t key = cache.key | (hw ? 1ull << 62 : 0ull);
-    if (b.key != ~0ull && b.key != key) emit_all();
-    const Range &tex = cache.tex;
-    if (flags & 2u) {
-        if (!b.prims.empty()) {
-            batch_ranges();
-            const auto written = [&](const Range &t) { return t.overlaps(b.fb_range.lo, b.fb_range.hi) || (b.zwrite && t.overlaps(b.z_range.lo, b.z_range.hi)); };
-            int rect[4];
-            if (written(tex)) {
-                if (!texel_rect(setup, v, count, prim, fst, rect)) {
-                    emit_all();
-                } else {
-                    // Within a texcache run the texture reads the run's starting state: only primitives batched before
-                    // the run began must have landed first.
-                    const Range used = region(setup[12], setup[13], setup[14], rect[0], rect[1], rect[2], rect[3]);
-                    const bool cached = run == texcache::Run::same;
-                    const bool frame = shares_frame(setup, b) ? drawn_under(b, rect, cached ? b.run_start : ~std::size_t{0})
-                                                              : !cached && used.overlaps(b.fb_range.lo, b.fb_range.hi);
-                    if (frame || (b.zwrite && used.overlaps(b.z_range.lo, b.z_range.hi))) {
-                        if (chainable()) chain_defer();
-                        else emit_all();
-                    }
-                }
-            }
-            for (std::uint32_t n = 1; n <= cache.mips && !b.prims.empty(); ++n)
-                if (written(cache.levels[n])) emit_all();
-        }
-    }
-    if (b.prims.empty()) {
-        b.run_start = 0;
-        b.key = key;
-        b.fbp = setup[1];
-        b.fbw = setup[2];
-        b.fpsm = setup[3];
-        b.zbp = setup[5];
-        b.zpsm = setup[6];
-        b.zte = false;
-        b.zwrite = false;
-        b.rx1 = -2;
-        b.hw = hw;
-        b.binding = hw ? g_nat.cur : nullptr;
-    }
-    b.zte = b.zte || zte;
-    b.zwrite = b.zwrite || (zte && !(flags & 32u));
-    const std::size_t setups = b.setups.size() / kSetupWords;
-    std::uint32_t setup_index;
-    if (setups && std::memcmp(b.setups.data() + (setups - 1) * kSetupWords, setup, kSetupWords * 4) == 0) {
-        setup_index = static_cast<std::uint32_t>(setups - 1);
-    } else {
-        setup_index = static_cast<std::uint32_t>(setups);
-        b.setups.insert(b.setups.end(), setup, setup + kSetupWords);
-    }
-    if (flags & 2u) {
-        for (std::uint32_t n = 0; n <= cache.mips; ++n) {
-            const Range &t = n ? cache.levels[n] : tex;
-            if (!g_batch_reads.empty() && g_batch_reads.back().lo == t.lo && g_batch_reads.back().hi == t.hi) continue;
-            bool known = false;
-            for (const Range &r : g_batch_reads) known = known || (r.lo <= t.lo && t.hi <= r.hi);
-            if (!known) g_batch_reads.push_back(t);
-        }
-    }
-    if (run != texcache::Run::same) b.run_start = b.boxes.size() / 2;
-    rec[0] = setup_index;
+    op.prim = prim;
+    op.count = count;
+    op.run = run;
+    op.hidden = minx > maxx || miny > maxy;
+    if (op.hidden && !rt_sprite(cache, prim)) return skip(kHwReasons);
     rec[2] = static_cast<std::uint32_t>(minx) | (static_cast<std::uint32_t>(miny) << 16);
     rec[3] = static_cast<std::uint32_t>(maxx) | (static_cast<std::uint32_t>(maxy) << 16);
-    b.prims.insert(b.prims.end(), rec, rec + kPrimWords);
-    if (drawdbg::enabled()) {
-        if (const std::uint32_t id = drawdbg::current_draw(); id != ~0u) {
-            if (!b.dbg_draws.empty() && b.dbg_draws.back().first == id) ++b.dbg_draws.back().second;
-            else b.dbg_draws.emplace_back(id, 1u);
-        }
-    }
-    b.boxes.push_back(rec[2]);
-    b.boxes.push_back(rec[3]);
-    b.minx = std::min(b.minx, minx);
-    b.miny = std::min(b.miny, miny);
-    b.maxx = std::max(b.maxx, maxx);
-    b.maxy = std::max(b.maxy, maxy);
-    if (b.prims.size() >= kPrimWords * 65536) emit_all();
+    if (split) std::memcpy(split_op(kOpPrim, sizeof op), &op, sizeof op);
+    else draw_back(cache, op);
 }
 
 void image_begin(const State &s) {
-    chain_flush();  // anything but a draw finds the chain in the stream
-    flush_image();
-    Image &im = g_image;
-    const std::uint64_t buf = s.bitbltbuf, pos = s.trxpos, reg = s.trxreg;
-    im = Image{};
-    im.dbp = static_cast<std::uint32_t>(buf >> 32) & 0x3FFFu;
-    im.dbw = static_cast<std::uint32_t>(buf >> 48) & 0x3Fu;
-    im.dpsm = static_cast<std::uint32_t>(buf >> 56) & 0x3Fu;
-    im.dsax = static_cast<std::uint32_t>(pos >> 32) & 0x7FFu;
-    im.dsay = static_cast<std::uint32_t>(pos >> 48) & 0x7FFu;
-    im.rrw = static_cast<std::uint32_t>(reg) & 0xFFFu;
-    im.total = im.rrw * (static_cast<std::uint32_t>(reg >> 32) & 0xFFFu);
-    im.bpp = bits_per_pixel(im.dpsm);
-    im.id = ++g_image_ids ? g_image_ids : ++g_image_ids;
-    im.active = im.total != 0;
-    if (im.active) mark_uploaded(pages(im.dbp, im.dbw, im.dpsm, static_cast<int>(im.dsax), static_cast<int>(im.dsay), static_cast<int>(im.dsax + im.rrw) - 1, static_cast<int>(im.dsay + im.total / im.rrw) - 1));
+    if (split_on()) return split_post(kOpImageBegin, {s.bitbltbuf, s.trxpos, s.trxreg});
+    image_begin_back(s.bitbltbuf, s.trxpos, s.trxreg);
 }
 
 void image_data(const std::uint8_t *data, std::size_t bytes) {
-    Image &im = g_image;
-    if (!im.active) return;
-    if (im.pending.empty() && !im.lead_bits) {
-        const std::uint64_t used = queue_upload(data, bytes, 0);
-        const std::size_t whole = static_cast<std::size_t>(used / 8);
-        if (im.done < im.total && whole < bytes) im.pending.assign(data + whole, data + bytes);
-        im.lead_bits = static_cast<std::uint32_t>(used % 8);
-        finish_image_if_done();
-        return;
-    }
-    im.pending.insert(im.pending.end(), data, data + bytes);
+    if (split_on()) return void(std::memcpy(split_op(kOpImageData, bytes), data, bytes));
+    image_data_back(data, bytes);
 }
 
 void local_copy(const State &s) {
-    chain_flush();
-    const std::uint64_t buf = s.bitbltbuf, pos = s.trxpos, reg = s.trxreg;
-    const std::uint32_t w = static_cast<std::uint32_t>(reg) & 0xFFFu, h = static_cast<std::uint32_t>(reg >> 32) & 0xFFFu;
-    if (native_bound()) {  // the source is read, the destination written
-        if (w && h) {
-            tiles_access(pages(static_cast<std::uint32_t>(buf) & 0x3FFFu, static_cast<std::uint32_t>(buf >> 16) & 0x3Fu, static_cast<std::uint32_t>(buf >> 24) & 0x3Fu,
-                               static_cast<int>(pos) & 0x7FF, static_cast<int>(pos >> 16) & 0x7FF, (static_cast<int>(pos) & 0x7FF) + static_cast<int>(w) - 1,
-                               (static_cast<int>(pos >> 16) & 0x7FF) + static_cast<int>(h) - 1),
-                         false);
-            tiles_access(pages(static_cast<std::uint32_t>(buf >> 32) & 0x3FFFu, static_cast<std::uint32_t>(buf >> 48) & 0x3Fu, static_cast<std::uint32_t>(buf >> 56) & 0x3Fu,
-                               static_cast<int>(pos >> 32) & 0x7FF, static_cast<int>(pos >> 48) & 0x7FF, (static_cast<int>(pos >> 32) & 0x7FF) + static_cast<int>(w) - 1,
-                               (static_cast<int>(pos >> 48) & 0x7FF) + static_cast<int>(h) - 1),
-                         true);
-        }
-    } else {
-        native_sync();
-    }
-    flush_all();
-    if (!w || !h) return;
-    mark_rendered(static_cast<std::uint32_t>(buf >> 32) & 0x3FFFu, static_cast<std::uint32_t>(buf >> 48) & 0x3Fu, static_cast<std::uint32_t>(buf >> 56) & 0x3Fu,
-                  static_cast<int>(pos >> 32) & 0x7FF, static_cast<int>(pos >> 48) & 0x7FF, (static_cast<int>(pos >> 32) & 0x7FF) + static_cast<int>(w) - 1,
-                  (static_cast<int>(pos >> 48) & 0x7FF) + static_cast<int>(h) - 1);
-    const std::uint32_t read = push_params({static_cast<std::uint32_t>(buf) & 0x3FFFu, static_cast<std::uint32_t>(buf >> 16) & 0x3Fu, static_cast<std::uint32_t>(buf >> 24) & 0x3Fu,
-                                            static_cast<std::uint32_t>(pos) & 0x7FFu, static_cast<std::uint32_t>(pos >> 16) & 0x7FFu, w, h});
-    const std::uint32_t write = push_params({static_cast<std::uint32_t>(buf >> 32) & 0x3FFFu, static_cast<std::uint32_t>(buf >> 48) & 0x3Fu, static_cast<std::uint32_t>(buf >> 56) & 0x3Fu,
-                                             static_cast<std::uint32_t>(pos >> 32) & 0x7FFu, static_cast<std::uint32_t>(pos >> 48) & 0x7FFu, w, h,
-                                             static_cast<std::uint32_t>(pos >> 59) & 3u});
-    dispatch_linear(kCopyRead, w * h * g_samples, read);
-    dispatch_linear(kCopyWrite, w * h * g_samples, write);
+    if (split_on()) return split_post(kOpLocalCopy, {s.bitbltbuf, s.trxpos, s.trxreg});
+    local_copy_back(s.bitbltbuf, s.trxpos, s.trxreg);
 }
 
 void load_clut(std::uint64_t tex0, std::uint64_t texclut) {
-    chain_flush();
-    flush_image();
-    if (g_clut_loads + 2 >= kClutSlots) {
-        emit_all();
-        submit();
+    if (split_on()) {
+        split_post(kOpClut, {tex0, texclut});
+        g_split.clut = (g_split.clut + 1) % kClutSlots;
+        return;
     }
-    const std::uint32_t psm = static_cast<std::uint32_t>(tex0 >> 20) & 0x3Fu;
-    const std::uint32_t cpsm = (static_cast<std::uint32_t>(tex0 >> 51) & 0xFu) == 0 ? PSMCT32 : static_cast<std::uint32_t>(tex0 >> 51) & 0xFu;
-    const std::uint32_t next = (g_clut_slot + 1) % kClutSlots;
-    const std::uint32_t tc = static_cast<std::uint32_t>(texclut);
-    const std::uint32_t cbp = static_cast<std::uint32_t>(tex0 >> 37) & 0x3FFFu, csm = static_cast<std::uint32_t>(tex0 >> 55) & 1u;
-    const std::uint32_t cbw = tc & 0x3Fu, cou = (tc >> 6) & 0x3Fu, cov = (tc >> 12) & 0x3FFu;
-    PreOp op;
-    op.clut = true;
-    const std::uint32_t rec[10] = {g_clut_slot, next, cbp, cpsm, csm, static_cast<std::uint32_t>(tex0 >> 56) & 0x1Fu, (psm == PSMT8 || psm == PSMT8H) ? 1u : 0u, cbw, cou, cov};
-    std::memcpy(op.rec, rec, sizeof rec);
-    op.range = csm ? region(cbp, cbw, cpsm, static_cast<int>(cou * 16), static_cast<int>(cov), static_cast<int>(cou * 16 + 255), static_cast<int>(cov))
-                   : region(cbp, 1, cpsm, 0, 0, 15, 15);
-    queue_pre(op);
-    std::array<std::uint64_t, 32> blocks = g_clut_blocks[g_clut_slot];
-    std::uint64_t id = page_gens(op.range);
-    for (int k = 2; k < 10; ++k) id = mix(id, rec[k]);  // not the slots
-    const std::uint32_t csa = rec[5], first = csm ? csa : rec[6] ? 0u : csa & 15u, count = rec[6] ? 16u : 1u;
-    for (std::uint32_t k = 0; k < count; ++k) blocks[(first + k) & 31u] = mix(id, k);
-    g_clut_blocks[next] = blocks;
-    g_clut_slot = next;
-    ++g_clut_loads;
+    load_clut_back(tex0, texclut);
 }
 
-
 void flush() {
-    chain_flush();
-    native_sync(kCloseVblank);
-    if (g_mode == Mode::off) return;
-    flush_all();
-    submit();
+    if (split_on()) return void(split_op(kOpFlush, 0));
+    flush_back();
 }
 
 void wait_idle() {
+    split_sync();
     chain_flush();
     flush_all();
     submit();
@@ -4684,6 +4921,7 @@ void collect_download() {
 }
 
 bool download_async(std::uint8_t *memory, std::uint32_t offset, std::uint32_t bytes, std::uint32_t serial) {
+    split_sync();
     chain_flush();
     if (native_bound()) tiles_access(Range{offset, static_cast<std::uint64_t>(offset) + bytes}, false);
     else native_sync();
@@ -4720,6 +4958,7 @@ bool download_async(std::uint8_t *memory, std::uint32_t offset, std::uint32_t by
 }
 
 bool finish_download(std::uint32_t serial) {
+    split_sync();
     if (!g_pending.busy || g_pending.serial != serial) return false;
     while (g_pending.busy && !g_pending.ready) pump();
     const bool done = g_pending.ready;
@@ -4728,6 +4967,7 @@ bool finish_download(std::uint32_t serial) {
 }
 
 void download(std::uint8_t *memory, std::uint32_t offset, std::uint32_t bytes) {
+    split_sync();
     chain_flush();
     if (native_bound()) tiles_access(Range{offset, static_cast<std::uint64_t>(offset) + bytes}, false);
     else native_sync();
@@ -4743,6 +4983,7 @@ void download(std::uint8_t *memory, std::uint32_t offset, std::uint32_t bytes) {
 }
 
 void read_state(std::vector<std::uint32_t> &vram, std::uint32_t &scale, std::vector<std::uint32_t> &clut) {
+    split_sync();
     chain_flush();
     tiles_flush();
     native_sync();
@@ -4756,6 +4997,7 @@ void read_state(std::vector<std::uint32_t> &vram, std::uint32_t &scale, std::vec
 }
 
 void write_state(const std::vector<std::uint32_t> &vram, std::uint32_t scale, const std::vector<std::uint32_t> &clut) {
+    split_sync();
     chain_flush();
     native_sync();
     wait_idle();
@@ -4779,6 +5021,7 @@ void write_state(const std::vector<std::uint32_t> &vram, std::uint32_t scale, co
 }
 
 void stats() {
+    split_sync();
     if (g_mode == Mode::off) return;
     drain();
     std::fprintf(stderr, "[gpu] %llu submits, dispatches:", static_cast<unsigned long long>(g_submits));
@@ -4788,6 +5031,7 @@ void stats() {
 }
 
 void native_begin(const State &st) {
+    split_sync();
     chain_flush();
     if (!g_nat.on || g_nat.replace) return;  // replace: no XGKICK follows; the batch opens the run itself
     g_nat.in_kick = true;
@@ -4796,13 +5040,14 @@ void native_begin(const State &st) {
 }
 
 void native_batch(const State &st, const std::uint8_t *payload, std::uint32_t bytes, std::uint32_t pass) {
+    split_sync();
     chain_flush();
     if (g_nat.on) native_record(st, payload, bytes, pass);
 }
 
 void native_vblank(std::uint64_t frame) {
-    g_nat.frame = frame;
-    ++g_nat.frames;
+    if (split_on()) return split_post(kOpVblank, {frame});
+    native_vblank_back(frame);
 }
 
 void configure_surface() {
@@ -4818,6 +5063,7 @@ void configure_surface() {
 }
 
 bool attach_surface(const SurfaceTarget &target) {
+    split_sync();
     if (g_mode != Mode::primary || !g_device) return false;
     WGPUSurfaceDescriptor sd = WGPU_SURFACE_DESCRIPTOR_INIT;
 #ifdef __EMSCRIPTEN__
@@ -4915,6 +5161,7 @@ bool attach_surface(const SurfaceTarget &target) {
 }
 
 void resize_surface(std::uint32_t width, std::uint32_t height) {
+    split_sync();
     if (!g_surface || (width == g_surface_width && height == g_surface_height)) return;
     drain();
     g_surface_width = width;
@@ -4925,6 +5172,7 @@ void resize_surface(std::uint32_t width, std::uint32_t height) {
 bool has_surface() { return g_surface != nullptr; }
 
 bool present(const DisplaySource &src) {
+    split_sync();
     chain_flush();
     native_display(src);
     if (!g_surface) return false;
@@ -4984,6 +5232,7 @@ Copy g_copies[3];
 std::uint64_t g_copy_order = 0;
 
 bool display_async(const DisplaySource &src, std::vector<std::uint32_t> &rgba, std::uint32_t &width, std::uint32_t &height) {
+    split_sync();
     chain_flush();
     native_display(src);
 #ifdef __EMSCRIPTEN__
@@ -5049,6 +5298,7 @@ bool display_async(const DisplaySource &src, std::vector<std::uint32_t> &rgba, s
 }
 
 bool display(const DisplaySource &src, std::vector<std::uint32_t> &rgba, std::uint32_t &width, std::uint32_t &height) {
+    split_sync();
     chain_flush();
     native_display(src);
     flush_all();

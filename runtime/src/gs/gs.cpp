@@ -42,6 +42,15 @@ void serve_state(const void *payload);
 void render_stats();
 extern std::atomic<std::uint32_t> g_stats_done;
 
+// display() asked for from another thread while the render thread runs: served there (the GPU renderer is not thread-safe)
+struct Capture {
+    DisplayRegs regs;
+    std::vector<std::uint32_t> *rgba;
+    std::uint32_t *width, *height;
+    bool ok;
+};
+std::atomic<std::uint32_t> g_captures{0};
+
 namespace {
 
 alignas(64) std::uint8_t g_memory[kMemorySize];
@@ -1163,7 +1172,15 @@ bool present(const DisplayRegs &r) {
 #endif
 }
 
-bool display(std::vector<std::uint32_t> &rgba, std::uint32_t &width, std::uint32_t &height) { return display(display_regs(), rgba, width, height); }
+bool display(std::vector<std::uint32_t> &rgba, std::uint32_t &width, std::uint32_t &height) {
+    if (!queue::active() || queue::role() == queue::Role::Render) return display(display_regs(), rgba, width, height);
+    Capture c{display_regs(), &rgba, &width, &height, false};
+    const Capture *at = &c;
+    const std::uint32_t seen = g_captures.load();
+    queue::post(queue::kCapture, 0, 0, &at, sizeof at);
+    while (g_captures.load() == seen) queue::wait(g_captures, seen);
+    return c.ok;
+}
 
 bool display(const DisplayRegs &r, std::vector<std::uint32_t> &rgba, std::uint32_t &width, std::uint32_t &height) {
     const int circuit = (r.pmode & 2u) ? 1 : (r.pmode & 1u) ? 0 : -1;
@@ -1273,7 +1290,12 @@ Rendered render_pending(const std::function<void(const DisplayRegs &)> &on_prese
     const auto start = std::chrono::steady_clock::now();
     for (std::uint32_t n = 1; queue::render().peek(h, payload); ++n) {
         debug::jitter(3);
-        if (!(n & 7u) && std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - start).count() > budget_ms) return Rendered::busy;
+        if (!(n & 7u) && std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - start).count() > budget_ms) {
+#ifdef PS2_GPU
+            if (gpu_on()) gpu::publish_draws();
+#endif
+            return Rendered::busy;
+        }
         bool presented = false;
         switch (h.type) {
         case queue::kGif: gif::render(static_cast<int>(h.arg0), payload, h.arg1); break;
@@ -1306,6 +1328,14 @@ Rendered render_pending(const std::function<void(const DisplayRegs &)> &on_prese
             queue::notify(g_stats_done);
             break;
         case queue::kNativeBegin: case queue::kNative: render_native(h.type, payload, h.bytes); break;
+        case queue::kCapture: {
+            Capture *c;
+            std::memcpy(&c, payload, sizeof c);
+            c->ok = display(c->regs, *c->rgba, *c->width, *c->height);
+            g_captures.fetch_add(1);
+            queue::notify(g_captures);
+            break;
+        }
         case queue::kDownload: {
             std::uintptr_t target;
             std::memcpy(&target, payload, sizeof target);
@@ -1333,6 +1363,9 @@ Rendered render_pending(const std::function<void(const DisplayRegs &)> &on_prese
             return Rendered::presented;
         }
     }
+#ifdef PS2_GPU
+    if (gpu_on()) gpu::publish_draws();
+#endif
     return Rendered::idle;
 }
 

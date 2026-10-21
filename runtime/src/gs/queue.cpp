@@ -93,8 +93,8 @@ void Ring::post(Type type, std::uint32_t arg0, std::uint32_t arg1, const void *d
     for (;;) {
         const std::uint64_t pos = head % capacity_;
         const std::uint64_t pad = pos + need > capacity_ ? capacity_ - pos : 0;
-        const std::uint32_t seen = freed_.load(std::memory_order_acquire);
-        if (head + pad + need - tail_.load(std::memory_order_acquire) <= capacity_) {
+        if (head + pad + need - seen_tail_ > capacity_) seen_tail_ = tail_.load(std::memory_order_acquire);
+        if (head + pad + need - seen_tail_ <= capacity_) {
             if (pad) {
                 const Header wrap{kWrap, 0, 0, 0};
                 std::memcpy(buffer_.get() + pos, &wrap, sizeof wrap);
@@ -102,6 +102,7 @@ void Ring::post(Type type, std::uint32_t arg0, std::uint32_t arg1, const void *d
             }
             break;
         }
+        const std::uint32_t seen = freed_.load(std::memory_order_acquire);
         producer_waiting_.store(1);
         if (head + pad + need - tail_.load() > capacity_) wait(freed_, seen);
     }
@@ -116,7 +117,8 @@ void Ring::post(Type type, std::uint32_t arg0, std::uint32_t arg1, const void *d
 
 bool Ring::peek(Header &header, const std::uint8_t *&payload) {
     std::uint64_t tail = tail_.load(std::memory_order_relaxed);
-    const std::uint64_t head = head_.load(std::memory_order_acquire);
+    if (tail == seen_head_) seen_head_ = head_.load(std::memory_order_acquire);
+    const std::uint64_t head = seen_head_;
     while (tail != head) {
         const std::uint64_t pos = tail % capacity_;
         std::memcpy(&header, buffer_.get() + pos, sizeof header);

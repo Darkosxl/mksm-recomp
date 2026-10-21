@@ -7,7 +7,7 @@
 
 namespace ps2::gs::queue {
 
-enum Type : std::uint32_t { kWrap, kGif, kGifReset, kReset, kVertexReset, kVblank, kPresent, kDownload, kVif1, kVif1Write, kVuReset, kState, kVuFence, kDownloadAsync, kTag, kNativeBegin, kNative, kStats };
+enum Type : std::uint32_t { kWrap, kGif, kGifReset, kReset, kVertexReset, kVblank, kPresent, kDownload, kVif1, kVif1Write, kVuReset, kState, kVuFence, kDownloadAsync, kTag, kNativeBegin, kNative, kStats, kCapture };
 
 enum class Role { Emulation, Vu, Render };
 
@@ -28,11 +28,16 @@ public:
 private:
     std::unique_ptr<std::uint8_t[]> buffer_;
     std::uint64_t capacity_ = 0;
+    // One cache line per side's own writes: the producer's (head_, with the tail it last read), the consumer's (tail_,
+    // with the head it last read), so each side reads the other's index only when its old copy runs out.
     alignas(64) std::atomic<std::uint64_t> head_{0};
+    std::uint64_t seen_tail_ = 0;
     alignas(64) std::atomic<std::uint64_t> tail_{0};
+    std::uint64_t seen_head_ = 0;
     alignas(64) std::atomic<std::uint32_t> posted_{0};
     alignas(64) std::atomic<std::uint32_t> freed_{0};
-    std::atomic<std::uint32_t> consumer_waiting_{0}, producer_waiting_{0};
+    alignas(64) std::atomic<std::uint32_t> consumer_waiting_{0};
+    alignas(64) std::atomic<std::uint32_t> producer_waiting_{0};
 };
 
 Ring &render();

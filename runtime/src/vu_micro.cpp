@@ -453,39 +453,45 @@ float u2f(std::uint32_t v) {
 // RGBA slots of the GIF packet, after the MSCNT that fills in the rest of it.
 struct PendingKick {
     std::uint32_t start, count;
-    std::vector<std::uint8_t> data;
+    std::size_t at;  // its qwords in g_kick_bytes
     gs::drawdbg::Source source{};
 };
 std::vector<PendingKick> g_pending_kicks;
+std::vector<std::uint8_t> g_kick_bytes;  // the pending kicks' packets, back to back
+
+std::uint8_t *kick_data(const PendingKick &k) { return g_kick_bytes.data() + k.at; }
 
 bool vu1_on_this_thread() { return !gs::queue::vu_active() || gs::queue::role() == gs::queue::Role::Vu; }
 
 void xgkick(Unit &u, std::uint32_t address) {
-    std::uint8_t buffer[16 * 1024 + 16];
-    std::uint32_t q = address & (u.data_qwords - 1), count = 0;
+    // the packet: GIF tags and their data from `address` on, wrapping, up to the tag with EOP (or all of memory)
+    const std::uint32_t start = address & (u.data_qwords - 1);
+    std::uint32_t count = 0;
     bool done = false;
     while (!done && count < u.data_qwords) {
         Reg128 tag;
-        std::memcpy(&tag, qword(u, q), 16);
-        std::memcpy(buffer + count * 16, &tag, 16);
-        ++q;
-        ++count;
+        std::memcpy(&tag, qword(u, start + count), 16);
         const std::uint32_t nloop = static_cast<std::uint32_t>(tag.d[0]) & 0x7FFFu;
         const bool eop = (tag.d[0] >> 15) & 1u;
         const std::uint32_t flg = static_cast<std::uint32_t>(tag.d[0] >> 58) & 3u;
         std::uint32_t nreg = static_cast<std::uint32_t>(tag.d[0] >> 60) & 0xFu;
         if (!nreg) nreg = 16;
-        std::uint32_t body = flg == 0 ? nloop * nreg : flg == 1 ? (nloop * nreg + 1) / 2 : nloop;
-        for (std::uint32_t i = 0; i < body && count < u.data_qwords; ++i, ++q, ++count)
-            std::memcpy(buffer + count * 16, qword(u, q), 16);
+        const std::uint32_t body = flg == 0 ? nloop * nreg : flg == 1 ? (nloop * nreg + 1) / 2 : nloop;
+        count += std::min(body + 1, u.data_qwords - count);
         done = eop;
     }
+    const std::uint32_t first = std::min(count, u.data_qwords - start);  // qwords before the wrap
+    const std::size_t at = g_kick_bytes.size();
+    g_kick_bytes.resize(at + static_cast<std::size_t>(count) * 16);
+    std::memcpy(g_kick_bytes.data() + at, qword(u, start), static_cast<std::size_t>(first) * 16);
+    std::memcpy(g_kick_bytes.data() + at + static_cast<std::size_t>(first) * 16, u.data, static_cast<std::size_t>(count - first) * 16);
     if (u.regs == &g_vu1) {
-        g_pending_kicks.push_back(PendingKick{address & (u.data_qwords - 1), count, std::vector<std::uint8_t>(buffer, buffer + count * 16),
-                                              gs::drawdbg::enabled() ? gs::drawdbg::vu1_source() : gs::drawdbg::Source{}});
+        g_pending_kicks.push_back(PendingKick{start, count, at, gs::drawdbg::enabled() ? gs::drawdbg::vu1_source() : gs::drawdbg::Source{}});
         return;
     }
-    gif::transfer(1, buffer, count);
+    std::vector<std::uint8_t> packet(g_kick_bytes.begin() + static_cast<std::ptrdiff_t>(at), g_kick_bytes.end());
+    g_kick_bytes.resize(at);
+    gif::transfer(1, packet.data(), count);
 }
 
 void lower(Unit &u, std::uint32_t w, std::uint32_t pc, std::uint32_t &npc, bool &branch) {
@@ -691,19 +697,27 @@ void flush_kicks() {
     if (native::g_r14_deferred) native::r14_run();
     if (g_pending_kicks.empty() && !native::g_pending) return;
     std::vector<PendingKick> kicks;
+    std::vector<std::uint8_t> bytes;
     kicks.swap(g_pending_kicks);
+    bytes.swap(g_kick_bytes);
     // native.hpp: a batch read at its program start goes to the renderer around its XGKICKs
     const bool native_batch = native::g_pending;
     if (native_batch) {
-        for (const PendingKick &k : kicks) native::kick(k.start, k.data.data(), k.count);
+        for (const PendingKick &k : kicks) native::kick(k.start, bytes.data() + k.at, k.count);
         if (kicks.empty()) native::kicks_none();
     }
     for (std::size_t i = 0; i < kicks.size(); ++i) {
         const PendingKick &k = kicks[i];
         if (native_batch) native::kick_begin(i);
         if (gs::drawdbg::enabled()) gs::drawdbg::set_kick_source(k.source);
-        gif::transfer(1, k.data.data(), k.count);
+        gif::transfer(1, bytes.data() + k.at, k.count);
         if (native_batch) native::kick_end(i, kicks.size());
+    }
+    if (g_pending_kicks.empty() && g_kick_bytes.empty()) {  // keep the capacity
+        kicks.clear();
+        bytes.clear();
+        kicks.swap(g_pending_kicks);
+        bytes.swap(g_kick_bytes);
     }
 }
 
@@ -715,7 +729,7 @@ void vif_wrote(std::uint32_t qword, std::uint32_t lanes) {
         const std::uint32_t at = (qword - k.start) & 1023u;
         if (at >= k.count) continue;
         for (std::uint32_t j = 0; j < 4; ++j)
-            if (lanes & (1u << j)) std::memcpy(k.data.data() + at * 16 + j * 4, g_vu1_mem + qword * 16 + j * 4, 4);
+            if (lanes & (1u << j)) std::memcpy(kick_data(k) + at * 16 + j * 4, g_vu1_mem + qword * 16 + j * 4, 4);
     }
 }
 
@@ -1094,7 +1108,7 @@ void hash(ps2::Hash64 &h) {
     for (const PendingKick &k : g_pending_kicks) {
         const std::uint32_t head[2] = {k.start, k.count};
         h.update(head, sizeof head);
-        h.update(k.data.data(), k.data.size());
+        h.update(kick_data(k), static_cast<std::size_t>(k.count) * 16);
     }
     const std::uint32_t tops[2] = {g_top, g_itop};
     h.update(tops, sizeof tops);
@@ -1110,7 +1124,7 @@ void hash_units(ps2::Hash64 &vu0, ps2::Hash64 &vu1) {
     for (const PendingKick &k : g_pending_kicks) {
         const std::uint32_t head[2] = {k.start, k.count};
         vu1.update(head, sizeof head);
-        vu1.update(k.data.data(), k.data.size());
+        vu1.update(kick_data(k), static_cast<std::size_t>(k.count) * 16);
     }
     vu1.update(g_vu1.vf, sizeof g_vu1.vf);
     vu1.update(&g_vu1.acc, sizeof g_vu1.acc);
@@ -1128,12 +1142,13 @@ void state(ps2::state::Stream &s) {
         for (PendingKick &k : g_pending_kicks) {
             s.pod(k.start);
             s.pod(k.count);
-            s.vec(k.data);
+            std::vector<std::uint8_t> data(kick_data(k), kick_data(k) + static_cast<std::size_t>(k.count) * 16);
+            s.vec(data);
         }
     } else if (s.saving()) {
         if (!g_pending_kicks.empty()) std::fprintf(stderr, "[state] the save sends %zu pending XGKICK packets early\n", g_pending_kicks.size());
         flush_kicks();
-    } else g_pending_kicks.clear();
+    } else g_pending_kicks.clear(), g_kick_bytes.clear();
     s.pod(g_vu1);
     s.pod(g_top);
     s.pod(g_itop);
