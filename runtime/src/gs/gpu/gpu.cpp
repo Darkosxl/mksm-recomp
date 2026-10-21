@@ -3682,11 +3682,14 @@ bool chainable() {
     const std::uint32_t prims = static_cast<std::uint32_t>(b.prims.size() / kPrimWords), setups = static_cast<std::uint32_t>(b.setups.size() / kSetupWords);
     // ponytail: 256 primitives, the in-batch level solve is quadratic
     if (!b.hw || !x || !prims || prims > 256 || (g_chain.x && g_chain.x != x) || !g_pre.empty() || g_native_draws.size() != g_native_emitted || tiles_queued()) return false;
-    static std::vector<TexelRect> rects;
-    texel_rects(prims, rects);
     for (std::uint32_t i = 0; i < setups; ++i) {
         const std::uint32_t *w = b.setups.data() + i * kSetupWords;
         if (((w[0] & 512u) && (!(w[0] & 32u) || ((w[7] >> 8) & 3u) != 1u)) || ((w[0] & 64u) && (w[7] & 7u) != 1u)) return false;
+    }
+    static std::vector<TexelRect> rects;
+    texel_rects(prims, rects);  // only then: most batches have Z or an alpha test
+    for (std::uint32_t i = 0; i < setups; ++i) {
+        const std::uint32_t *w = b.setups.data() + i * kSetupWords;
         Source so;
         if ((w[0] & 2u) && (!source_of(w, rects[i], so) || so.y[0] != x || so.y[1] || so.flags)) return false;
     }
@@ -3767,23 +3770,25 @@ void chain_flush(bool join) {
         for (int k = 0; k < 8; k += 4)
             if (r[k] <= r[k + 2]) gx0 = std::min(gx0, r[k]), gy0 = std::min(gy0, r[k + 1]), gx1 = std::max(gx1, r[k + 2]), gy1 = std::max(gy1, r[k + 3]);
     }
-    // per GS pixel, 1 + the highest level an earlier batch drew (read) it at
-    const int gw = gx1 - gx0 + 1, gh = gy1 - gy0 + 1;
+    // per cell of GS pixels, 1 + the highest level an earlier batch drew (read) in it: a whole cell for any pixel of it,
+    // so a level only errs high (a pass more, never a wrong read)
+    constexpr int cell = 3;  // 8x8: the glow's levels as with single pixels, at 1/64 the painting
+    const int gw = ((gx1 - gx0) >> cell) + 1, gh = ((gy1 - gy0) >> cell) + 1;
     static std::vector<std::uint16_t> drawn, read;
     drawn.assign(static_cast<std::size_t>(gw) * gh, 0);
     read.assign(static_cast<std::size_t>(gw) * gh, 0);
     const auto top = [&](const std::vector<std::uint16_t> &g, const int *r) {
         int m = 0;
-        for (int y = r[1]; r[0] <= r[2] && y <= r[3]; ++y) {
-            const std::uint16_t *row = g.data() + static_cast<std::size_t>(y - gy0) * gw + (r[0] - gx0);
-            m = std::max<int>(m, *std::max_element(row, row + (r[2] - r[0] + 1)));
+        for (int y = (r[1] - gy0) >> cell; r[0] <= r[2] && y <= (r[3] - gy0) >> cell; ++y) {
+            const std::uint16_t *row = g.data() + static_cast<std::size_t>(y) * gw;
+            m = std::max<int>(m, *std::max_element(row + ((r[0] - gx0) >> cell), row + ((r[2] - gx0) >> cell) + 1));
         }
         return m;
     };
     const auto paint = [&](std::vector<std::uint16_t> &g, const int *r, int v) {
-        for (int y = r[1]; r[0] <= r[2] && y <= r[3]; ++y) {
-            std::uint16_t *row = g.data() + static_cast<std::size_t>(y - gy0) * gw + (r[0] - gx0);
-            for (int k = 0; k <= r[2] - r[0]; ++k) row[k] = std::max<std::uint16_t>(row[k], static_cast<std::uint16_t>(v));
+        for (int y = (r[1] - gy0) >> cell; r[0] <= r[2] && y <= (r[3] - gy0) >> cell; ++y) {
+            std::uint16_t *row = g.data() + static_cast<std::size_t>(y) * gw;
+            for (int k = (r[0] - gx0) >> cell; k <= (r[2] - gx0) >> cell; ++k) row[k] = std::max<std::uint16_t>(row[k], static_cast<std::uint16_t>(v));
         }
     };
     const auto hit = [](const int *p, const int *q) { return p[0] <= p[2] && q[0] <= q[2] && p[0] <= q[2] && q[0] <= p[2] && p[1] <= q[3] && q[1] <= p[3]; };
