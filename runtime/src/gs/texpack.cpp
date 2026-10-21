@@ -37,9 +37,10 @@ const char *pack_dir() {
     return dir;
 }
 
-// Write generation of each 8 KB page of GS memory; a texture's key is reused while its pages' generations stay put.
+// Serial of the last write to each 8 KB page of GS memory (one serial per upload or local copy): a texture's key is
+// reused while the newest of its pages' serials stays put.
 constexpr std::uint32_t kPages = 512;
-std::uint32_t g_generation[kPages];
+std::uint32_t g_generation[kPages], g_serial = 0;
 bool g_drawn[kPages];
 
 void page_dims(std::uint32_t psm, std::uint32_t &pw, std::uint32_t &ph) {
@@ -83,6 +84,14 @@ std::uint64_t mix(std::uint64_t h, std::uint64_t v) {
 std::uint64_t fnv(std::uint64_t h, std::uint64_t v) {
     for (int i = 0; i < 8; ++i) h = (h ^ ((v >> (i * 8)) & 0xFFu)) * 0x100000001B3ull;
     return h;
+}
+
+// fnv() of a 32-bit value: its four zero high bytes only multiply by the prime, so they take one multiply by its fourth
+// power.
+std::uint64_t fnv32(std::uint64_t h, std::uint32_t v) {
+    constexpr std::uint64_t kPrime4 = 0x100000001B3ull * 0x100000001B3ull * 0x100000001B3ull * 0x100000001B3ull;
+    for (int i = 0; i < 4; ++i) h = (h ^ ((v >> (i * 8)) & 0xFFu)) * 0x100000001B3ull;
+    return h * kPrime4;
 }
 
 Stats g_stats;
@@ -198,9 +207,10 @@ std::uint64_t clut_hash(const State &st, bool eight, std::uint32_t csa) {
     static Memo memo[33];
     Memo &m = memo[eight ? 32 : csa & 31u];
     if (m.serial != g_clut_serial) {
-        std::uint64_t h = 0xCBF29CE484222325ull;
-        for (std::uint32_t i = 0; i < (eight ? 256u : 16u); ++i) h = mix(h, st.clut[eight ? i : (csa * 16 + i) & 511u]);
-        m = {g_clut_serial, h};
+        const std::uint32_t *e = eight ? st.clut : st.clut + ((csa * 16) & 511u);  // 16 entries at CSA stay inside 512
+        std::uint64_t lanes[4] = {0xCBF29CE484222325ull, 1, 2, 3};  // four chains over entry pairs, so the multiplies overlap
+        for (std::uint32_t i = 0; i < (eight ? 256u : 16u); i += 2) lanes[(i >> 1) & 3] = mix(lanes[(i >> 1) & 3], e[i] | static_cast<std::uint64_t>(e[i + 1]) << 32);
+        m = {g_clut_serial, mix(mix(mix(lanes[0], lanes[1]), lanes[2]), lanes[3])};
     }
     return m.hash;
 }
@@ -209,7 +219,8 @@ void touched(std::uint32_t bp, std::uint32_t bw, std::uint32_t psm, std::uint32_
     ++g_epoch;
     std::uint32_t first, last;
     page_span(bp, bw, psm, x, y, w, h, first, last);
-    for (std::uint32_t p = first; p <= last && p < first + kPages; ++p) ++g_generation[p % kPages], g_drawn[p % kPages] = false;
+    ++g_serial;
+    for (std::uint32_t p = first; p <= last && p < first + kPages; ++p) g_generation[p % kPages] = g_serial, g_drawn[p % kPages] = false;
 }
 
 void drawn(std::uint32_t bp, std::uint32_t bw, std::uint32_t psm, std::uint32_t x0, std::uint32_t y0, std::uint32_t x1, std::uint32_t y1) {
@@ -220,6 +231,21 @@ void drawn(std::uint32_t bp, std::uint32_t bw, std::uint32_t psm, std::uint32_t 
 }
 
 std::uint64_t key_uncounted(const State &st);
+
+// The newest write serial over pages [first, last] (mod kPages), and whether the CPU renderer drew to any: one max and
+// one or per page, which vectorize, where mixing every page's generation into the id was a multiply chain.
+std::uint32_t span_serial(std::uint32_t first, std::uint32_t last, bool &drawn) {
+    std::uint32_t newest = 0;
+    bool any = false;
+    const auto scan = [&](std::uint32_t from, std::uint32_t to) {
+        for (std::uint32_t p = from; p < to; ++p) newest = std::max(newest, g_generation[p]), any |= g_drawn[p];
+    };
+    const std::uint32_t n = std::min(last - first + 1, kPages), a = first % kPages;
+    if (a + n <= kPages) scan(a, a + n);
+    else scan(a, kPages), scan(0, a + n - kPages);
+    drawn = any;
+    return newest;
+}
 std::uint64_t key(const State &st) {
     const auto t0 = std::chrono::steady_clock::now();
     const std::uint64_t eff = (st.prmodecont & 1u) ? st.prim : st.prmode, tex0 = st.ctx[(eff >> 9) & 1u].tex0;
@@ -251,15 +277,16 @@ std::uint64_t key_uncounted(const State &st) {
     std::uint32_t first, last;
     page_span(tbp, tbw, psm, 0, 0, 1u << tw, 1u << th, first, last);
     std::uint64_t content = id;
-    for (std::uint32_t p = first; p <= last && p < first + kPages; ++p) {
-        if (g_drawn[p % kPages]) return 0;
-        id = mix(id, g_generation[p % kPages]);
-    }
+    bool drawn;
+    id = mix(id, span_serial(first, last, drawn));
+    if (drawn) return 0;
     static std::unordered_map<std::uint64_t, std::uint64_t> known, by_content;
     if (const auto it = known.find(id); it != known.end()) return it->second;
     // The pages were rewritten: the game cycles its textures through the same pages every frame, so look the content up
     // (a hash of the raw pages, microseconds) before decoding it (milliseconds).
-    for (std::uint32_t p = first; p <= last && p < first + kPages; ++p) content = mix(content, page_content(p));
+    std::uint64_t lanes[4] = {content, 1, 2, 3};  // four chains, so the multiplies overlap
+    for (std::uint32_t p = first, i = 0; p <= last && p < first + kPages; ++p, ++i) lanes[i & 3] = mix(lanes[i & 3], page_content(p));
+    content = mix(mix(mix(lanes[0], lanes[1]), lanes[2]), lanes[3]);
     if (known.size() > (1u << 20)) known.clear(), by_content.clear();
     if (const auto it = by_content.find(content); it != by_content.end()) return known[id] = it->second;
     const auto t0 = std::chrono::steady_clock::now();
@@ -267,7 +294,7 @@ std::uint64_t key_uncounted(const State &st) {
     std::uint32_t w = 0, h = 0;
     if (!raster::decode_texture(st, texels, w, h)) return known[id] = by_content[content] = 0;
     std::uint64_t k = fnv(fnv(0xCBF29CE484222325ull, w), h);
-    for (std::uint32_t t : texels) k = fnv(k, t);
+    for (std::uint32_t t : texels) k = fnv32(k, t);
     k = k ? k : 1;
     ++g_stats.decodes, g_stats.decode_ms += ms_since(t0);
     known[id] = by_content[content] = k;

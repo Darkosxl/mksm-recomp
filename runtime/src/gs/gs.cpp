@@ -459,6 +459,7 @@ void load_clut(std::uint64_t tex0) {
     const bool eight = psm == PSMT8 || psm == PSMT8H;
     const std::uint32_t entries = eight ? 256u : 16u;
     const std::uint32_t texclut = static_cast<std::uint32_t>(g_state.texclut);
+    bool changed = false;  // the game reloads the same CLUT for most draws: the texture pack keys again only on a change
     for (std::uint32_t i = 0; i < entries; ++i) {
         std::uint32_t x, y;
         if (csm) {
@@ -467,8 +468,9 @@ void load_clut(std::uint64_t tex0) {
             y = cov;
             const std::uint32_t c = read_pixel(cpsm == 0 ? PSMCT32 : cpsm, cbp, cbw, x, y);
             const std::uint32_t slot = (csa * 16 + i) & 511u;
+            changed |= g_state.clut[slot] != c;
             g_state.clut[slot] = c;
-            if (i + 1 == entries && texpack::active()) texpack::clut_loaded();
+            if (i + 1 == entries && texpack::active() && changed) texpack::clut_loaded();
             continue;
         }
         if (eight) {
@@ -484,9 +486,10 @@ void load_clut(std::uint64_t tex0) {
                                 : cpsm == PSMCT16 ? get<std::uint16_t>(cbp * 256 + g_off16[y][x])
                                                   : read_pixel(cpsm, cbp, 1, x, y);
         const std::uint32_t slot = eight ? i : ((csa & 15u) * 16u + i) & 255u;
+        changed |= g_state.clut[slot] != c;
         g_state.clut[slot] = c;
     }
-    if (texpack::active()) texpack::clut_loaded();
+    if (texpack::active() && changed) texpack::clut_loaded();
 }
 
 }
