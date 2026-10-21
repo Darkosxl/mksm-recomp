@@ -706,12 +706,17 @@ void flush_kicks() {
         for (const PendingKick &k : kicks) native::kick(k.start, bytes.data() + k.at, k.count);
         if (kicks.empty()) native::kicks_none();
     }
-    for (std::size_t i = 0; i < kicks.size(); ++i) {
-        const PendingKick &k = kicks[i];
-        if (native_batch) native::kick_begin(i);
-        if (gs::drawdbg::enabled()) gs::drawdbg::set_kick_source(k.source);
-        gif::transfer(1, bytes.data() + k.at, k.count);
-        if (native_batch) native::kick_end(i, kicks.size());
+    if (!native_batch && !gs::drawdbg::enabled()) {
+        // the packets lie back to back, and the GIF walks a path's tags across transfers alike: one transfer for all
+        if (!kicks.empty()) gif::transfer(1, bytes.data(), static_cast<std::uint32_t>(bytes.size() / 16));
+    } else {
+        for (std::size_t i = 0; i < kicks.size(); ++i) {
+            const PendingKick &k = kicks[i];
+            if (native_batch) native::kick_begin(i);
+            if (gs::drawdbg::enabled()) gs::drawdbg::set_kick_source(k.source);
+            gif::transfer(1, bytes.data() + k.at, k.count);
+            if (native_batch) native::kick_end(i, kicks.size());
+        }
     }
     if (g_pending_kicks.empty() && g_kick_bytes.empty()) {  // keep the capacity
         kicks.clear();
@@ -722,6 +727,13 @@ void flush_kicks() {
 }
 
 bool kicks_pending() { return !g_pending_kicks.empty(); }
+
+bool kicks_reached(std::uint32_t qword, std::uint32_t span) {
+    if (span >= 1024u) return !g_pending_kicks.empty();
+    for (const PendingKick &k : g_pending_kicks)  // two runs on the ring meet when either one's start lies in the other
+        if (((qword - k.start) & 1023u) < k.count || ((k.start - qword) & 1023u) < span) return true;
+    return false;
+}
 
 void vif_wrote(std::uint32_t qword, std::uint32_t lanes) {
     qword &= 1023u;

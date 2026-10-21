@@ -185,7 +185,9 @@ void unpack(int unit, std::uint32_t cmd, const std::uint32_t *data, std::uint32_
     std::uint32_t cycle = 0;
     std::uint8_t *mem = dry ? g_dry_run : vu_data(unit);
     const std::uint32_t wrap = vu_qwords(unit);
-    const bool reach_kicks = unit == 1 && !dry && vu::kicks_pending();
+    // the qwords the unpack can write: wl of every cl (or wl in a row when wl > cl)
+    const std::uint32_t span = wl ? (num + wl - 1) / wl * std::max(cl, wl) : 1024u;
+    const bool reach_kicks = unit == 1 && !dry && vu::kicks_reached(addr % wrap, span);
     if (!masked && u.mode == 0 && !(wl > cl) && !(vn == 3 && vl == 3) && vn != 2) {
         kFastUnpack[vl][vn][usn ? 1 : 0](mem, wrap - 1, addr, wl, cl - wl, reinterpret_cast<const std::uint8_t *>(data), num);
         for (std::uint32_t n = 0, cycle = 0; reach_kicks && n < num; ++n) {

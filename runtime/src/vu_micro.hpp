@@ -33,6 +33,8 @@ std::uint64_t jit_programs();
 // qwords before then reach the packet, as they would while the program runs on hardware.
 void flush_kicks();
 bool kicks_pending();
+// whether VIF writes inside the `span` qwords from `qword` on (VU1 data, wrapping) can reach a pending packet
+bool kicks_reached(std::uint32_t qword, std::uint32_t span);
 void vif_wrote(std::uint32_t qword, std::uint32_t lanes);
 
 }
