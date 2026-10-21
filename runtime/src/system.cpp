@@ -9,6 +9,7 @@
 #include "gs/queue.hpp"
 #include "gs/texpack.hpp"
 #include "hw.hpp"
+#include "native.hpp"
 #include "seamv.hpp"
 #include "iop/iop.hpp"
 #include "iop/sif.hpp"
@@ -282,13 +283,47 @@ void apply_pnach() {
     for (const Poke &p : pokes) std::memcpy(g_ram + p.addr, &p.value, 4);
 }
 
-// PS2_FPS=from,to prints the emulated frame rate over that window of frames to stderr (remaster/perf.sh).
+// CPU time of the render and VU1 threads (PS2_THREADS=1 layouts), for PS2_FPS
+#ifdef __linux__
+std::atomic<bool> g_render_known{false}, g_vu_known{false};
+pthread_t g_render_thread{}, g_vu_thread{};
+
+void note_thread(std::atomic<bool> &known, pthread_t &thread) {
+    if (known.load(std::memory_order_acquire)) return;
+    thread = pthread_self();
+    known.store(true, std::memory_order_release);
+}
+
+double thread_ms(const std::atomic<bool> &known, pthread_t thread) {
+    clockid_t clock;
+    timespec ts{};
+    if (!known.load(std::memory_order_acquire) || pthread_getcpuclockid(thread, &clock) || clock_gettime(clock, &ts)) return 0.0;
+    return static_cast<double>(ts.tv_sec) * 1e3 + static_cast<double>(ts.tv_nsec) / 1e6;
+}
+#endif
+
+// PS2_FPS=from,to prints the emulated frame rate over that window of frames to stderr (remaster/perf.sh), and the CPU
+// time per frame of the emulation (ee), render and VU1 threads.
 void fps_window() {
     static const char *spec = std::getenv("PS2_FPS");
     if (!spec || !std::strchr(spec, ',')) return;
     static const std::uint64_t from = std::strtoull(spec, nullptr, 10), to = std::strtoull(std::strchr(spec, ',') + 1, nullptr, 10);
     static std::chrono::steady_clock::time_point t0;
     static double gpu0 = 0.0;
+#ifdef __linux__
+    static double ee0 = 0.0, render0 = 0.0, vu0 = 0.0;
+    const auto self_ms = [] {
+        timespec ts{};
+        clock_gettime(CLOCK_THREAD_CPUTIME_ID, &ts);
+        return static_cast<double>(ts.tv_sec) * 1e3 + static_cast<double>(ts.tv_nsec) / 1e6;
+    };
+    if (g_frames == from) ee0 = self_ms(), render0 = thread_ms(g_render_known, g_render_thread), vu0 = thread_ms(g_vu_known, g_vu_thread);
+    if (g_frames == to && to > from) {
+        const double n = static_cast<double>(to - from);
+        std::fprintf(stderr, "[cpu] frames %llu-%llu ms/frame: ee %.3f render %.3f vu1 %.3f\n", static_cast<unsigned long long>(from), static_cast<unsigned long long>(to),
+                     (self_ms() - ee0) / n, (thread_ms(g_render_known, g_render_thread) - render0) / n, (thread_ms(g_vu_known, g_vu_thread) - vu0) / n);
+    }
+#endif
     if (g_frames == from) {
         t0 = std::chrono::steady_clock::now();
         gpu0 = gpu_busy_ms();
@@ -891,6 +926,7 @@ std::uint64_t vu1_jit_programs() { return vu::jit_programs(); }
 void run_vu_thread() {
 #ifdef __linux__
     pthread_setname_np(pthread_self(), "vu1");  // perf --sort comm
+    note_thread(g_vu_known, g_vu_thread);
 #endif
     gs::queue::role() = gs::queue::Role::Vu;
     gs::queue::Ring &in = gs::queue::vu();
@@ -899,6 +935,7 @@ void run_vu_thread() {
         const std::uint8_t *payload = nullptr;
         while (in.peek(h, payload)) {
             debug::jitter(2);
+            if (h.type == gs::queue::kVblank && native::active()) native::vblank(h.arg0);
             if (seamv::on()) {
                 if (h.type == gs::queue::kVblank) seamv::vblank(h.arg0);
                 else if (h.type == gs::queue::kGif) seamv::gif(static_cast<int>(h.arg0), payload, h.arg1);
@@ -967,6 +1004,9 @@ void log_frame() {
 Rendered render_pending(bool surface, const std::function<void(const std::uint32_t *, std::uint32_t, std::uint32_t)> &copy,
                         const std::function<void()> &before_present, double budget_ms) {
     static std::vector<std::uint32_t> frame;
+#ifdef __linux__
+    note_thread(g_render_known, g_render_thread);
+#endif
     return gs::render_pending([&](const gs::DisplayRegs &regs) {
         log_frame();
         if (before_present) before_present();

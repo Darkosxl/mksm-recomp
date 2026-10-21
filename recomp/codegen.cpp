@@ -189,6 +189,9 @@ private:
         hooks_.clear();
         if (!relocatable_)
             for (auto it = options_.overrides.lower_bound(base_); it != options_.overrides.end() && *it < end; ++it) hooks_.insert(*it);
+        idle_.clear();
+        if (!relocatable_)
+            for (auto it = options_.idle.lower_bound(base_); it != options_.idle.end() && *it < end; ++it) idle_cost(*it);
 
         out_.str({});
         out_ << "#include \"units.hpp\"\n";
@@ -265,6 +268,62 @@ private:
         write_if_changed(fs::path(options_.output) / std::format("{}.cpp", unit_name(u)), out_.str());
     }
 
+    // A wait loop (CodegenOptions::idle) at head: one straight block [head, branch] ending in a plain conditional branch
+    // back to head, of loads and integer ALU ops only (no stores, calls, COP ops), where no register carries a value from
+    // one iteration to the next. Then every iteration reads the same memory and computes the same registers, so the
+    // iterations between two preempt() checks are all the same and only their cost matters. Throws otherwise.
+    void idle_cost(std::uint32_t head) {
+        const auto refuse = [head](const std::string &why) {
+            return std::runtime_error(std::format("idle loop {:08X}: {}", head, why));
+        };
+        if (!p_.is_code(head) || !labels_.count(head)) throw refuse("not a branch target in the program");
+        if (hooks_.count(head) || options_.probes.count(head)) throw refuse("has a decomp hook or a probe");
+        std::uint64_t written = 0, defined = 0;  // registers the body writes; written so far in this iteration
+        std::vector<std::pair<std::uint64_t, std::uint64_t>> body;  // (uses, defs) in execution order
+        std::uint32_t a = head;
+        for (;; a += 4) {
+            if (a - head > 64 || !p_.is_code(a) || !in_unit(a)) throw refuse("no backward branch within 16 instructions");
+            if (a != head && labels_.count(a)) throw refuse(std::format("{:08X} is a branch target inside the loop", a));
+            const Insn i = at(a);
+            if (flow(i.op) != Flow::None) break;
+            body.push_back(uses_defs(i, refuse));
+        }
+        const Insn br = at(a), ds = p_.is_code(a + 4) ? at(a + 4) : Insn{a + 4, 0, Invalid};
+        if (flow(br.op) != Flow::Branch || dynamic_jump(a) || br.branch_target_of() != head) throw refuse("does not end in a conditional branch to its head");
+        if (labels_.count(a + 4) || labels_.count(a + 8)) throw refuse("its delay slot is a branch target");
+        std::uint64_t cond = 0;
+        switch (br.op) {
+        case Beq: case Bne: cond = bit(br.rs()) | bit(br.rt()); break;
+        case Blez: case Bgtz: case Bltz: case Bgez: cond = bit(br.rs()); break;
+        default: throw refuse(std::format("branch {} not supported", name(br.op)));
+        }
+        body.push_back({cond, 0});
+        body.push_back(uses_defs(ds, refuse));
+        for (const auto &[u, d] : body) written |= d;
+        for (const auto &[u, d] : body) {
+            if (u & written & ~defined) throw refuse("a register carries a value from one iteration to the next");
+            defined |= d;
+        }
+        idle_[a] = (a - head) / 4 + 2;  // what control() charges: the block, the branch and its delay slot
+    }
+
+    static std::uint64_t bit(std::uint32_t r) { return r ? 1ull << r : 0ull; }
+
+    template <class Refuse>
+    std::pair<std::uint64_t, std::uint64_t> uses_defs(const Insn &i, const Refuse &refuse) const {
+        switch (i.op) {
+        case Lb: case Lbu: case Lh: case Lhu: case Lw: case Lwu: case Ld:
+        case Addiu: case Daddiu: case Andi: case Ori: case Xori: case Slti: case Sltiu:
+            return {bit(i.rs()), bit(i.rt())};
+        case Lui: return {0, bit(i.rt())};
+        case Addu: case Daddu: case Subu: case Dsubu: case And: case Or: case Xor: case Nor: case Slt: case Sltu:
+            return {bit(i.rs()) | bit(i.rt()), bit(i.rd())};
+        case Sll: case Srl: case Sra: case Dsll: case Dsrl: case Dsra: case Dsll32: case Dsrl32: case Dsra32:
+            return {bit(i.rt()), bit(i.rd())};
+        default: throw refuse(std::format("{} at {:08X} is not a load or an integer ALU op", name(i.op), i.pc));
+        }
+    }
+
     void line(const std::string &text) {
         if (capture_) *capture_ += text + " ";
         else out_ << "    " << text << "\n";
@@ -286,6 +345,9 @@ private:
 
     std::string jump(std::uint32_t t, std::uint32_t from) {
         std::string check = t <= from ? std::format("if (c.budget < 0 && preempt(c)) {{ c.pc = {} | kUnwind; return; }} ", pc(t)) : "";
+        // a wait loop: the iterations left before the budget runs out, charged at once (each would compute the same)
+        if (const auto it = idle_.find(from); it != idle_.end())
+            check = std::format("if (c.budget >= 0) c.budget -= {0} * (c.budget / {0} + 1); ", it->second) + check;
         if (in_unit(t) && p_.is_code(t)) return check + "goto " + label(t) + ";";
         if (p_.is_code(t))
             return check + std::format("{}[[clang::musttail]] return {}(c, {}u, depth);", rebase(), unit_name(layout_.unit_of(t)), id_of(t));
@@ -800,6 +862,7 @@ private:
     std::uint32_t base_{};
     std::set<std::uint32_t> labels_;
     std::set<std::uint32_t> hooks_;
+    std::map<std::uint32_t, std::uint32_t> idle_;  // backward branch of a wait loop -> cycles per iteration
     std::string *capture_{};
     std::uint32_t pending_{};
     std::ostringstream out_;

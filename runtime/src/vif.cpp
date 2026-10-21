@@ -5,6 +5,7 @@
 #include "gs/gif.hpp"
 #include "gs/queue.hpp"
 #include "hw.hpp"
+#include "native.hpp"
 #include "seamv.hpp"
 #include "vu_micro.hpp"
 
@@ -76,6 +77,8 @@ void run_vu(int unit, std::uint32_t address, int kind) {
         if (seamv::on()) seamv::program(kind, address, u.base, u.ofst, u.tops, u.top, u.itop, u.dbf);
         vu::flush_kicks();
         vu::set_tops(u.top, u.itop);
+        if (native::active() && native::program(kind, u.top)) return;
+        if (native::r14() && native::r14_defer(kind, address)) return;
     } else {
         u.itop = u.itops;
         vu::set_tops(0, u.itop);
@@ -270,6 +273,9 @@ void execute(int unit, std::uint32_t cmd, const std::uint32_t *data, std::uint32
     const std::uint32_t op = (cmd >> 24) & 0x7Fu, imm = cmd & 0xFFFFu, num = (cmd >> 16) & 0xFFu;
     u.code = cmd;
     if (!on_vu_thread()) ++g_commands[unit][op];
+    // R14: a deferred body runs once the codes that follow its MSCNT stop being data for it (the colour UNPACK)
+    if (native::g_r14_deferred && unit == 1 && !shadow(unit) && (op & 0x60u) != 0x60u && op != 0x00 && op != 0x01 && op != 0x20 && op != 0x30)
+        native::r14_run();
     static const long long trace_frame = std::getenv("PS2_TRACE_GSFRAME") ? std::atoll(std::getenv("PS2_TRACE_GSFRAME")) : -1;
     if (unit == 1 && !shadow(unit) && trace_frame >= 0 && static_cast<long long>(ps2::frame_count()) == trace_frame && op != 0x50 && op != 0x51) {
         std::fprintf(stderr, "[vif] cmd %08x cycle %04x mode %u mask %08x tops %03x", cmd, u.cycle, u.mode, u.mask, u.tops);
@@ -295,6 +301,7 @@ void execute(int unit, std::uint32_t cmd, const std::uint32_t *data, std::uint32
         break;
     case 0x14: case 0x15:
         if (unit == 1 && !shadow(unit) && gs::drawdbg::enabled()) gs::drawdbg::vu1_start(imm * 8u, g_vu1_code);
+        if (unit == 1 && !shadow(unit) && (native::active() || native::r14())) native::mscal(imm * 8u);
         run_vu(unit, imm * 8u, op == 0x15 ? 1 : 0);
         break;
     case 0x17: run_vu(unit, shadow(unit) ? 0u : vu::tpc(unit), 2); break;

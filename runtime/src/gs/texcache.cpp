@@ -168,30 +168,39 @@ void record(const Context &c, std::uint64_t attr, const Vertex *v, int count) {
 }
 
 Run next(const State &st, const Vertex *v, int count) {
-    Key key{};
-    const std::uint64_t attr = attr_of(st);
-    key.ctx = st.ctx[(attr >> 9) & 1u];
-    key.attr = attr;
-    key.texa = st.texa;
-    key.fogcol = st.fogcol;
-    key.pabe = st.pabe;
-    key.colclamp = st.colclamp;
-    key.dthe = st.dthe;
-    key.dimx = st.dimx;
-    key.scanmsk = st.scanmsk;
-    key.texclut = st.texclut;
-    const Context &c = key.ctx;
+    // Every Key register is a non-vertex register, and each write of one bumps g_setup_generation: while it stands
+    // still since the last primitive, the key is still g.key, so it is neither rebuilt nor compared.
+    static std::uint32_t keyed = 0;
+    const bool unchanged = g.valid && keyed == g_setup_generation;
+    keyed = g_setup_generation;
     Run run = Run::same;
-    if (!g.valid || std::memcmp(&key, &g.key, sizeof key) != 0) {
-        // TEXFLUSH is dropped when TEX0 (TBP0..TFX) changes with it, as PCSX2 does.
-        const bool tex0_same = g.valid && !((g.key.ctx.tex0 ^ c.tex0) & 0x1FFFFFFFFFull);
-        g.flag = g.pending && tex0_same;
-        g.key = key;
-        g.valid = true;
-        g.relevant = relevant(c, attr);
-        g.prims.clear();
-        run = Run::new_draw;
-    } else {
+    if (!unchanged) {
+        Key key{};
+        const std::uint64_t attr = attr_of(st);
+        key.ctx = st.ctx[(attr >> 9) & 1u];
+        key.attr = attr;
+        key.texa = st.texa;
+        key.fogcol = st.fogcol;
+        key.pabe = st.pabe;
+        key.colclamp = st.colclamp;
+        key.dthe = st.dthe;
+        key.dimx = st.dimx;
+        key.scanmsk = st.scanmsk;
+        key.texclut = st.texclut;
+        if (!g.valid || std::memcmp(&key, &g.key, sizeof key) != 0) {
+            // TEXFLUSH is dropped when TEX0 (TBP0..TFX) changes with it, as PCSX2 does.
+            const bool tex0_same = g.valid && !((g.key.ctx.tex0 ^ key.ctx.tex0) & 0x1FFFFFFFFFull);
+            g.flag = g.pending && tex0_same;
+            g.key = key;
+            g.valid = true;
+            g.relevant = relevant(key.ctx, attr);
+            g.prims.clear();
+            run = Run::new_draw;
+        }
+    }
+    const Context &c = g.key.ctx;
+    const std::uint64_t attr = g.key.attr;
+    if (run == Run::same) {
         g.flag = g.flag || g.pending;
         if (g.relevant && !g.prims.empty() && must_reload(c, attr, v, count)) {
             g.prims.clear();

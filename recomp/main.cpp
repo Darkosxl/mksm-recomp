@@ -120,7 +120,7 @@ std::set<std::uint32_t> read_addresses(const std::string &path) {
 }
 
 int usage() {
-    std::fprintf(stderr, "usage: eerecomp <elf> [--entries file] [--modules dir] [--probes file] [--overrides file] [--out dir] [--stats]\n");
+    std::fprintf(stderr, "usage: eerecomp <elf> [--entries file] [--modules dir] [--probes file] [--overrides file] [--idle file] [--out dir] [--stats]\n");
     return 2;
 }
 
@@ -128,7 +128,7 @@ int usage() {
 
 int main(int argc, char **argv) {
     if (argc < 2) return usage();
-    std::string elf_path = argv[1], entries_path, out, probes_path, overrides_path, modules_dir;
+    std::string elf_path = argv[1], entries_path, out, probes_path, overrides_path, idle_path, modules_dir;
     bool stats = false;
     for (int i = 2; i < argc; ++i) {
         const std::string arg = argv[i];
@@ -137,6 +137,7 @@ int main(int argc, char **argv) {
         else if (arg == "--out" && i + 1 < argc) out = argv[++i];
         else if (arg == "--probes" && i + 1 < argc) probes_path = argv[++i];
         else if (arg == "--overrides" && i + 1 < argc) overrides_path = argv[++i];
+        else if (arg == "--idle" && i + 1 < argc) idle_path = argv[++i];
         else if (arg == "--modules" && i + 1 < argc) modules_dir = argv[++i];
         else return usage();
     }
@@ -180,6 +181,10 @@ int main(int argc, char **argv) {
             if (!overrides_path.empty()) {
                 options.overrides = read_addresses(overrides_path);
                 std::printf("%zu decompiled functions hooked\n", options.overrides.size());
+            }
+            if (!idle_path.empty()) {
+                options.idle = read_addresses(idle_path);
+                std::printf("%zu wait loops fast-forwarded\n", options.idle.size());
             }
             generate(translations, options);
         }

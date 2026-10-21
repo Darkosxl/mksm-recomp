@@ -43,6 +43,7 @@ add_library(ps2runtime STATIC
     runtime/src/dmac.cpp
     runtime/src/vif.cpp
     runtime/src/seamv.cpp
+    runtime/src/native.cpp
     runtime/src/vu_micro.cpp
     runtime/src/vu_jit.cpp
     runtime/src/vu_jit_web.cpp
@@ -84,7 +85,11 @@ if(EMSCRIPTEN OR EXISTS "${PS2_WGPU_DIR}/lib/libwgpu_native.a")
     add_custom_command(OUTPUT "${PS2_BLIT_WGSL}"
         COMMAND ${CMAKE_COMMAND} -DSRC=${CMAKE_SOURCE_DIR}/runtime/src/gs/gpu/blit.wgsl -DOUT=${PS2_BLIT_WGSL} -DNAME=kBlitShader -P ${CMAKE_SOURCE_DIR}/cmake/embed.cmake
         DEPENDS runtime/src/gs/gpu/blit.wgsl cmake/embed.cmake)
-    target_sources(ps2runtime PRIVATE runtime/src/gs/gpu/gpu.cpp "${PS2_GS_WGSL}" "${PS2_BLIT_WGSL}")
+    set(PS2_NATIVE_WGSL "${CMAKE_BINARY_DIR}/native_wgsl.cpp")
+    add_custom_command(OUTPUT "${PS2_NATIVE_WGSL}"
+        COMMAND ${CMAKE_COMMAND} -DSRC=${CMAKE_SOURCE_DIR}/runtime/src/gs/gpu/native.wgsl -DOUT=${PS2_NATIVE_WGSL} -DNAME=kNativeShader -P ${CMAKE_SOURCE_DIR}/cmake/embed.cmake
+        DEPENDS runtime/src/gs/gpu/native.wgsl cmake/embed.cmake)
+    target_sources(ps2runtime PRIVATE runtime/src/gs/gpu/gpu.cpp "${PS2_GS_WGSL}" "${PS2_BLIT_WGSL}" "${PS2_NATIVE_WGSL}")
     target_compile_definitions(ps2runtime PUBLIC PS2_GPU)
     if(EMSCRIPTEN)
         target_compile_options(ps2runtime PUBLIC --use-port=emdawnwebgpu)

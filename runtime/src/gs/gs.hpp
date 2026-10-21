@@ -61,6 +61,8 @@ void write_image(const std::uint8_t *data, std::uint32_t qwords);
 void read_image(std::uint8_t *data, std::uint32_t qwords);
 void render_read_image(std::uint8_t *data, std::uint32_t qwords);
 void render_reset();
+// Native renderer (native.hpp): a queue::kNativeBegin / kNative message, posted or (no render thread) handled here.
+void native_message(std::uint32_t type, const std::uint8_t *data, std::uint32_t bytes);
 
 std::uint64_t read_privileged(std::uint32_t address);
 void write_privileged(std::uint32_t address, std::uint64_t value);

@@ -963,7 +963,7 @@ L_00274790:
     c.r[2].d[0] = static_cast<std::uint64_t>(c.r[2].sd[0] >> 32);
     c.r[2].d[0] = c.r[2].d[0] & 1ull;
     c.budget -= 7;
-    { const bool t = c.r[3].d[0] != c.r[2].d[0];  if (t) { if (c.budget < 0 && preempt(c)) { c.pc = 0x00274790u | kUnwind; return; } goto L_00274790; } }
+    { const bool t = c.r[3].d[0] != c.r[2].d[0];  if (t) { if (c.budget >= 0) c.budget -= 7 * (c.budget / 7 + 1); if (c.budget < 0 && preempt(c)) { c.pc = 0x00274790u | kUnwind; return; } goto L_00274790; } }
     st32((c.r[16].w[0] + 19816u), c.r[3].w[0]);
     c.r[2].sd[0] = static_cast<std::int32_t>(0x00680000u);
     c.r[3].sd[0] = static_cast<std::int32_t>(0x00680000u);

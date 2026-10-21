@@ -1116,3 +1116,115 @@ MSCAL, the C and G records in force; then one 24-byte entry per UNPACK since the
 TOPS; the packed data of absolute UNPACKs above mem[45], i.e. the previous batch's colours; then the batch qwords at
 TOP), `R` the VU1 registers. Sizes: goro 836 program starts and 1.6 MB per frame (2.1 MB with `_REGS`), academy 1,767
 and 2.4 MB; about 2 KB per program start. A consumer must attach the colours in record k+1 to the batch of record k.
+
+### 7.2 Stage 1 results: world opaque, mirror and replace (2026-10-19)
+
+All on w5 with lavapipe (`PS2_GS=gpu PS2_GPU_FALLBACK=1`), 1x, compared with lavapipe runs of the same build or of the
+base commit `52840a5`, never with `golden.json` images. Outputs (not committed): `remaster-data/aws/w5/nat1-*`,
+`nat2-*`.
+
+**What is native.** The three world programs (567ce7d8, 002c80ed, 50bda0e2): each batch is captured on the VU thread at
+MSCNT (`runtime/src/native.cpp`: A+D, vf1..vf12, vf31, vi14, the 2n input qwords, the post-MSCNT colours) and drawn
+by a WebGPU render pipeline (`runtime/src/gs/gpu/native.wgsl`). The vertex shader is the VU1 body with the VU's
+arithmetic (IEEE RNE per op, no contraction, the VU clamps, DIV by chop, FTOI truncation, ESADD order); the fragment
+shader evaluates the compute raster's `shade_at()` case 0 on the triangle the provoking vertex carries (positions,
+1/area by RNE long division, inclusive edges, box), so barycentrics, colour, STQ, fog and Z are the compute raster's
+expressions; the hardware only decides coverage. Texture, TFX, fog and the alpha test are `plot()`'s; the AFAIL
+split, Z test and GS ALPHA map onto fixed-function state (C = Ad and PABE are refused).
+
+- `PS2_NATIVE=world PS2_NATIVE_MIRROR=1`: side by side; VU1 and the emulated path draw as today, the native target
+  only feeds `remaster/natdiff.sh <scene> world` (`PS2_NATIVE_CHECK=1` compares every vertex with the XGKICK).
+- `PS2_NATIVE=world`: replace. VU1 skips the batch, so its GIF packet and its compute raster never happen; the render
+  side applies the tags' PRIM and the A+D the packet would have set and draws natively. A run imports the frame and Z
+  buffer and writes the target back to compute VRAM (only words that changed) before anything else touches VRAM.
+  goro: 156,765 batches in 5,667 runs over 700 frames.
+
+**Per-vertex oracle: exact.** 0 mismatches in X, Y, Z, F, ADC, S, T, Q, RGBA over 22.3 M vertices (8 scenes), and the
+GS triangle count of every kick matches. ADC uses CLIP window 0 (windows 1 and 2 mismatch in goro and foundry).
+
+**natdiff, world opaque isolated (commit `75caef7`):** mask = pixels either path changed in the dumped run.
+
+| Scene | Mask px | max \|Δ\| R, G, B | % > 2 | % ≠ 0 | PSNR dB | Z mismatch px | Vertices checked |
+|---|---|---|---|---|---|---|---|
+| goro | 143,338 | 38, 48, 39 | 1.483 | 49.2 | 50.72 | 2 | 4,404,330 |
+| academy | 56,263 | 64, 69, 42 | 0.841 | 41.8 | 49.38 | 1 | 3,181,227 |
+| foundry | 143,358 | 33, 23, 20 | 0.098 | 14.0 | 56.68 | 1 | 3,213,742 |
+| nether | 125,689 | 139, 46, 5 | 0.261 | 16.9 | 54.00 | 2 | 5,600,061 |
+| raiden | 92,294 | 48, 40, 24 | 0.133 | 35.4 | 52.89 | 0 | 3,525,740 |
+| koop | 71,903 | 13, 15, 10 | 0.006 | 31.0 | 55.28 | 1 | 1,278,925 |
+| kahn | 42,436 | 1, 1, 1 | 0.000 | 0.02 | 88.77 | 1 | 806,676 |
+| forest | 39,028 | 40, 18, 8 | 2.178 | 33.2 | 47.49 | 1 | 272,556 |
+
+The compute-raster interpolation took Z mismatches from 2,227 px (goro, hardware interpolation, still available as
+`PS2_NATIVE_INTERP=hw`) to 1-2. What is left is the blender: 95-99.9 % of the differing pixels are native ≥
+emulated, by 1-2 per layer, because fixed-function blending rounds Cs·a + Cd·(1 − a) where the GS floors
+((Cs − Cd)·As >> 7) + Cd. Layers add up (+3..+6), and the few large values sit on triangle edges. Exact blending needs
+the destination in the shader (no framebuffer fetch in WebGPU) or the blended draws on the compute GS.
+
+**Replace mode, whole frame vs the emulated frame (`capture.sh`):** goro 46.81 dB (max 23, 5.6 % of pixels > 2),
+foundry 54.55, academy 52.68, nether 56.56; at `PS2_SCALE=3x6` goro 46.70 dB (1920×1344, max 64, 5.4 % > 2). No
+visible difference, the same +1 bias.
+
+**Hash gate (§6.2), `remaster/nullsink.sh` + `nullsink.py`, 12 scenes, capture + 300 frames, lavapipe: PASS.** Mirror
+(`sts`/`ths`) equal in every section on every frame; replace (`stk`/`thk`, against `st` and `th`) differs only in
+`vu`/`vu1x` (goro 700 of 700 frames, kahn from 10392, raiden from 6030; menu, charsel, fmv, forest equal). Switch off:
+image and state hash equal to the base commit in all 12 scenes, `statecheck.sh` PASS.
+
+**CPU per frame, replace vs emulated** (`PS2_THREADS=1 PS2_FPS`, the `[cpu]` line, 600 frames from capture, w5):
+
+| Scene | render thread ms | VU1 thread ms | EE thread ms |
+|---|---|---|---|
+| goro | 4.05 → 3.07 (−24 %) | 4.45 → 3.44 (−23 %) | 7.21 → 7.31 |
+| foundry | 7.83 → 6.67 (−15 %) | 7.55 → 6.37 (−16 %) | 8.57 → 8.55 |
+| academy | 4.64 → 3.58 (−23 %) | 5.30 → 4.56 (−14 %) | 7.08 → 7.20 |
+
+lavapipe's frame rate drops in replace mode (goro 12.5 → 8.6 fps: llvmpipe runs the fragment shader on the CPU); the
+GPU side has to be measured on a real GPU.
+
+**R14, goro's point light.** `PS2_R14=1` (bodies @3778/@3288 after their colour UNPACK, as hardware orders it)
+changes 3,354 pixels of goro 8000 by up to 10, all in the light's area (x 44-146, y 332-411): `nat1-diff4/r14-goro-side.png`
+(today, R14, difference ×16) and `r14-goro-zoom.png` (4×). The native light (`PS2_NATIVE_PLIGHT=1`) matches R14
+exactly (oracle RGBA 0 of 4.4 M vertices) and differs from today's output in 82 vertices. Default unchanged.
+
+**Left for replacing the emulated world for good:** exact blending (above); the characters and the other categories
+(the run boundaries are where they cut in: about 8 runs per frame, each an import and a write-back pass); a fallback
+when the render side refuses a batch VU1 has already skipped (none seen: `unsupported` is empty in all scenes, but a
+GS-state shadow on the VU side would make the decision safe); vertex buffers keyed by source address instead of
+per-batch uploads; `hash_part` part 24 and lockstep as a local-only setting (§6.5); savestates taken mid-run (the run is
+written back first, but the VU1 state of skipped batches is not what VU1 would have left).
+
+### 7.3 Replace mode without the round trip per run (2026-10-19)
+
+On the laptop (RTX 4050) stage 1's replace mode was slower than the emulated path at 3x6 (academy 52.0 → 30.1 fps) while
+every thread's CPU time went down: the GPU was the cap. Each run imported the whole target (frame and Z, a full-screen
+pass) and wrote back the union of its batches' scissors (the whole screen), and every emulated draw between native
+batches ended a run. Counted on w5 (1x, `PS2_THREADS=1`, capture + 600 frames, `[native] per frame` line):
+
+| Scene | runs / frame | samples imported / frame | written back / frame |
+|---|---|---|---|
+| goro | 8.55 | 1,225,714 | 1,225,714 |
+| foundry | 10.58 | 1,516,899 | 1,516,899 |
+| academy | 20.00 | 2,867,200 | 2,867,200 |
+
+×18 at 3x6 (academy: 52 M samples each way per frame).
+
+**Now** (`gpu.cpp` `tiles_*`): the target stays bound to one frame + Z buffer (a new FBP/ZBP writes the old one back and
+rebinds; the double buffer makes it once a frame) and is kept coherent with compute VRAM per tile of 16 × 16 GS pixels.
+A tile is native-newer (colour, Z) or VRAM-newer, never both. A native batch imports the VRAM-newer tiles of its scissor
+(one instanced draw over a tile list) and marks its scissor native-newer (the CPU does not know where its triangles
+land). An emulated primitive (its box, on the bound frame/Z; by pages when it uses other buffers that alias them, and
+for texture reads), an upload or CLUT load, a local copy, a download, a savestate and the display first write back the
+native-newer tiles they touch (one compute dispatch over a tile list, queued ahead of the emulated batch that needs it)
+and, if they write, mark them VRAM-newer. `PS2_NATIVE_RUNS=1` keeps stage 1's round trip for A/B.
+
+| Scene | bindings / frame | samples imported / frame | written back / frame | import draws / write-back dispatches per frame |
+|---|---|---|---|---|
+| goro | 1.00 | 486,321 (−60 %) | 486,321 (−60 %) | 8.3 / 32.7 |
+| foundry | 0.99 | 554,720 (−63 %) | 554,720 (−63 %) | 10.6 / 43.8 |
+| academy | 1.00 | 606,796 (−79 %) | 606,796 (−79 %) | 19.3 / 84.9 |
+
+What remains is about one full frame each way (the clear sprite at the start of the frame makes every tile VRAM-newer;
+the glow and the display read it all at the end) plus the boxes of the emulated characters between world batches, which
+stage 2 removes. Gate: the image and state hash at the capture frame are identical to `PS2_NATIVE_RUNS=1` in all 12
+scenes (`capture.sh`, lavapipe 1x); the switch-off build is unchanged (no code runs without `PS2_NATIVE`).
+

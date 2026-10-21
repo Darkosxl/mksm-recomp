@@ -7,6 +7,7 @@
 #include "gs/queue.hpp"
 #include "vu_jit_web.hpp"
 #include "hw.hpp"
+#include "native.hpp"
 #include "seamv.hpp"
 #include "ps2/fpu.hpp"
 #include "ps2/system.hpp"
@@ -686,12 +687,23 @@ void lower(Unit &u, std::uint32_t w, std::uint32_t pc, std::uint32_t &npc, bool 
 }
 
 void flush_kicks() {
-    if (g_pending_kicks.empty() || !vu1_on_this_thread()) return;
+    if (!vu1_on_this_thread()) return;
+    if (native::g_r14_deferred) native::r14_run();
+    if (g_pending_kicks.empty() && !native::g_pending) return;
     std::vector<PendingKick> kicks;
     kicks.swap(g_pending_kicks);
-    for (const PendingKick &k : kicks) {
+    // native.hpp: a batch read at its program start goes to the renderer around its XGKICKs
+    const bool native_batch = native::g_pending;
+    if (native_batch) {
+        for (const PendingKick &k : kicks) native::kick(k.start, k.data.data(), k.count);
+        if (kicks.empty()) native::kicks_none();
+    }
+    for (std::size_t i = 0; i < kicks.size(); ++i) {
+        const PendingKick &k = kicks[i];
+        if (native_batch) native::kick_begin(i);
         if (gs::drawdbg::enabled()) gs::drawdbg::set_kick_source(k.source);
         gif::transfer(1, k.data.data(), k.count);
+        if (native_batch) native::kick_end(i, kicks.size());
     }
 }
 

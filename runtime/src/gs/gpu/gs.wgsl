@@ -346,46 +346,39 @@ fn copy_write(@builtin(global_invocation_id) gid: vec3<u32>) {
     write_sample(prm(2u), prm(0u), prm(1u), (prm(3u) + x) & 0x7FFu, (prm(4u) + y) & 0x7FFu, k, scratch[(sy * w + sx) * n + k]);
 }
 
-// A group of prm(1) chained CLUT loads (record n turns slot src_n into dst_n = src_n+1), one thread per CLUT entry
-// walking the records in order: vram doesn't change within a group, so entry e of dst_n is the one read by the newest
-// record m <= n that covers it, else the group's base slot.
+// A group of prm(1) chained CLUT loads (record n turns slot src_n into dst_n = src_n+1), one thread per CLUT entry e
+// and record n (gid.y): vram doesn't change within a group, so entry e of dst_n is the one read by the newest record
+// m <= n that covers it (gpu.cpp emit_pre's table at prm(2): m per record and 16-entry block, two a word, 0xFFFF none),
+// else the group's base slot.
 @compute @workgroup_size(256)
 fn load_clut(@builtin(global_invocation_id) gid: vec3<u32>) {
     let e = gid.x;
+    let m = (data[prm(2u) + gid.y * 16u + e / 32u] >> (((e / 16u) & 1u) * 16u)) & 0xFFFFu;
     var value = clut[data[prm(0u)] * CLUT_ENTRIES + e];
-    for (var m = 0u; m < prm(1u); m = m + 1u) {
+    if (m != 0xFFFFu) {
         let r = prm(0u) + m * 12u;
         let cbp = data[r + 2u];
         let cpsm = data[r + 3u];
         let csa = data[r + 5u];
         let eight = data[r + 6u] != 0u;
-        var entries = 16u;
-        if (eight) {
-            entries = 256u;
-        }
         if (data[r + 4u] != 0u) {
-            let i = (e - csa * 16u) & 511u;
-            if (i < entries) {
-                value = read_pixel(cpsm, cbp, data[r + 7u], data[r + 8u] * 16u + i, data[r + 9u]);
-            }
-        } else if (e < 256u) {
+            value = read_pixel(cpsm, cbp, data[r + 7u], data[r + 8u] * 16u + ((e - csa * 16u) & 511u), data[r + 9u]);
+        } else {
             var i = e;
             if (!eight) {
                 i = (e - (csa & 15u) * 16u) & 255u;
             }
-            if (i < entries) {
-                var x = i & 7u;
-                var y = i >> 3u;
-                if (eight) {
-                    let j = (i & ~0x18u) | ((i & 0x08u) << 1u) | ((i & 0x10u) >> 1u);
-                    x = j & 15u;
-                    y = j >> 4u;
-                }
-                value = read_pixel(cpsm, cbp, 1u, x, y);
+            var x = i & 7u;
+            var y = i >> 3u;
+            if (eight) {
+                let j = (i & ~0x18u) | ((i & 0x08u) << 1u) | ((i & 0x10u) >> 1u);
+                x = j & 15u;
+                y = j >> 4u;
             }
+            value = read_pixel(cpsm, cbp, 1u, x, y);
         }
-        clut[data[r + 1u] * CLUT_ENTRIES + e] = value;
     }
+    clut[data[prm(0u) + gid.y * 12u + 1u] * CLUT_ENTRIES + e] = value;
 }
 
 @compute @workgroup_size(8, 8)
@@ -463,35 +456,51 @@ const F_BILINEAR: u32 = 16384u;
 const F_AEM: u32 = 32768u;
 const F_REPLACED: u32 = 65536u;
 const F_RT_HIRES: u32 = 131072u;
+const F_SOURCE: u32 = 262144u;
+
+// Hardware draws (gpu.cpp hw_flush): the setup also sits in the draw's parameters from prm(32) on, read there as constants
+// instead of loaded into registers. Words 26 on: the mip levels' TBP and TBW, or a texture pack's scale (mip_word).
+override SETUP_PRM: bool = false;
+
+fn setup_word(at: u32, i: u32) -> u32 {
+    if (SETUP_PRM) {
+        return prm(32u + i);
+    }
+    return data[at + i];
+}
+
+fn mip_word(s: Setup, j: u32) -> u32 {
+    return setup_word(s.mip_at - 26u, 26u + j);
+}
 
 fn load_setup(at: u32) -> Setup {
     var s: Setup;
-    s.flags = data[at];
-    s.fbmsk = data[at + 4u];
-    s.modes = data[at + 7u];
-    s.aref = data[at + 8u];
-    s.fix = data[at + 9u];
-    s.scax0 = i32(data[at + 10u] & 0xFFFFu);
-    s.scax1 = i32(data[at + 10u] >> 16u);
-    s.scay0 = i32(data[at + 11u] & 0xFFFFu);
-    s.scay1 = i32(data[at + 11u] >> 16u);
-    s.tbp = data[at + 12u];
-    s.tbw = data[at + 13u];
-    s.tpsm = data[at + 14u];
-    s.tw = data[at + 15u] & 0xFFu;
-    s.th = data[at + 15u] >> 8u;
-    s.cpsm = data[at + 16u];
-    s.csa = data[at + 17u];
-    s.minu = data[at + 18u] & 0xFFFFu;
-    s.maxu = data[at + 18u] >> 16u;
-    s.minv = data[at + 19u] & 0xFFFFu;
-    s.maxv = data[at + 19u] >> 16u;
-    s.ta0 = data[at + 20u] & 0xFFu;
-    s.ta1 = (data[at + 20u] >> 8u) & 0xFFu;
-    s.fogcol = data[at + 21u];
-    s.clut = data[at + 22u];
-    s.dec = data[at + 24u];
-    s.mip = data[at + 25u];
+    s.flags = setup_word(at, 0u);
+    s.fbmsk = setup_word(at, 4u);
+    s.modes = setup_word(at, 7u);
+    s.aref = setup_word(at, 8u);
+    s.fix = setup_word(at, 9u);
+    s.scax0 = i32(setup_word(at, 10u) & 0xFFFFu);
+    s.scax1 = i32(setup_word(at, 10u) >> 16u);
+    s.scay0 = i32(setup_word(at, 11u) & 0xFFFFu);
+    s.scay1 = i32(setup_word(at, 11u) >> 16u);
+    s.tbp = setup_word(at, 12u);
+    s.tbw = setup_word(at, 13u);
+    s.tpsm = setup_word(at, 14u);
+    s.tw = setup_word(at, 15u) & 0xFFu;
+    s.th = setup_word(at, 15u) >> 8u;
+    s.cpsm = setup_word(at, 16u);
+    s.csa = setup_word(at, 17u);
+    s.minu = setup_word(at, 18u) & 0xFFFFu;
+    s.maxu = setup_word(at, 18u) >> 16u;
+    s.minv = setup_word(at, 19u) & 0xFFFFu;
+    s.maxv = setup_word(at, 19u) >> 16u;
+    s.ta0 = setup_word(at, 20u) & 0xFFu;
+    s.ta1 = (setup_word(at, 20u) >> 8u) & 0xFFu;
+    s.fogcol = setup_word(at, 21u);
+    s.clut = setup_word(at, 22u);
+    s.dec = setup_word(at, 24u);
+    s.mip = setup_word(at, 25u);
     s.mip_at = at + 26u;
     s.tf = fmt_of(s.tpsm, s.tbp, s.tbw);
     return s;
@@ -555,14 +564,19 @@ struct Level {
 fn level(s: Setup, n: u32) -> Level {
     if (n == 0u) {
         if (has(s, F_REPLACED)) {
-            let r = data[s.mip_at];
+            let r = mip_word(s, 0u);
             return Level(s.tf, s.tw + r, s.th + r, s.minu << r, ((s.maxu + 1u) << r) - 1u, s.minv << r, ((s.maxv + 1u) << r) - 1u, s.dec);
         }
         return Level(s.tf, s.tw, s.th, s.minu, s.maxu, s.minv, s.maxv, s.dec);
     }
-    let w = data[s.mip_at + n - 1u];
+    let w = mip_word(s, n - 1u);
+    // a decode holds every level, each right after the one before (gpu.cpp plan_decodes)
+    var dec = s.dec;
+    for (var j = 0u; j < n && dec != 0xFFFFFFFFu; j = j + 1u) {
+        dec = dec + (1u << (select(0u, s.tw - j, s.tw > j) + select(0u, s.th - j, s.th > j)));
+    }
     return Level(fmt_of(s.tpsm, w & 0x3FFFu, (w >> 16u) & 0x3Fu), select(0u, s.tw - n, s.tw > n), select(0u, s.th - n, s.th > n),
-                 s.minu >> n, s.maxu >> n, s.minv >> n, s.maxv >> n, 0xFFFFFFFFu);
+                 s.minu >> n, s.maxu >> n, s.minv >> n, s.maxv >> n, dec);
 }
 
 fn texel_x(s: Setup, l: Level, xi: i32) -> u32 {
@@ -628,13 +642,25 @@ fn convert(s: Setup, raw: u32) -> u32 {
 // texel grid SCALE x SCALE_Y times finer, at its own sample's position, instead of its own sample index at a native
 // texel: a 2:1 downsample then covers its whole footprint and an upsample filters between neighbouring samples.
 var<private> rt_hires: bool = false;
-// Pipeline constant, on only for batches that hold F_RT_HIRES sprites (gpu.cpp kRasterHi): elsewhere the fine-grid
-// path compiles out and the common raster costs nothing extra.
+// Pipeline constant, on only for batches that hold F_RT_HIRES sprites (gpu.cpp kRasterHi, kNativeRtHires): elsewhere the
+// fine-grid path compiles out and the common raster costs nothing extra.
 override RT_HIRES: bool = false;
 // Profiling only (env PS2_RASTER_DIAG, gpu.cpp; never set otherwise): skip parts of the raster to attribute its time.
 // 1 no shading after the box test, 2 no plot after the edge test, 4 constant texel, 8 no destination read, 16 no Z,
 // 32 no frame write.
 override DIAG: u32 = 0u;
+
+// Hardware draws whose texture is a source (gpu.cpp kSource, kNativeSourced; source_of: CT32 / CT24, z_source_of: Z24; no
+// mipmaps, no texture pack), read from the target (native.wgsl source_texel; this stub is renamed out of that module):
+// only the source read and the 24-bit formats' alpha stay.
+override SOURCE: bool = false;
+fn source_texel(f: Fmt, x: u32, y: u32, k: u32) -> u32 {
+    return 0u;
+}
+
+// Hardware draws whose texture sits decoded, without a texture pack or F_RT_HIRES (gpu.cpp kNativeDecoded): the swizzled
+// and CLUT paths compile out, which a draw pays for even when it skips them.
+override DECODED: bool = false;
 
 fn floor_div(a: i32, b: i32) -> i32 {
     return select(a / b, (a - b + 1) / b, a < 0);
@@ -652,7 +678,7 @@ fn fetch(s: Setup, l: Level, xi: i32, yi: i32, k: u32, hi: bool) -> u32 {
     }
     let x = texel_x(s, l, nx);
     let y = texel_y(s, l, ny);
-    if (l.dec != 0xFFFFFFFFu) {
+    if (!SOURCE && (DECODED || l.dec != 0xFFFFFFFFu)) {
         return decoded[l.dec + (y << l.tw) + x];
     }
     var sk = k;
@@ -669,12 +695,19 @@ fn fetch(s: Setup, l: Level, xi: i32, yi: i32, k: u32, hi: bool) -> u32 {
         }
         sk = sy * SCALE + sx;
     }
+    if (SOURCE) {
+        let raw = source_texel(l.f, x, y, sk);
+        if (s.tpsm == 0x00u) {
+            return raw;
+        }
+        return (raw & 0xFFFFFFu) | (select(s.ta0, 0u, has(s, F_AEM) && (raw & 0xFFFFFFu) == 0u) << 24u);
+    }
     return convert(s, load_texel(addr(l.f, x, y), sk));
 }
 
 // One level, point or bilinear: 1 or 4 taps through the one fetch() above.
 fn sample(s: Setup, l: Level, uin: f32, vin: f32, k: u32, linear: bool) -> u32 {
-    let hi = RT_HIRES && rt_hires;
+    let hi = RT_HIRES && !DECODED && rt_hires;
     var x0: i32;
     var y0: i32;
     var fx = 0.0;
@@ -735,14 +768,14 @@ fn texture_lod(s: Setup, q: f32) -> f32 {
 // NEAREST/LINEAR stay on level 0, *_MIPMAP_NEAREST rounds the LOD to a level, *_MIPMAP_LINEAR blends floor(LOD) and the next level.
 // The level, its coordinate scale and the filter are chosen first; one sample() call (in a loop of 1 or 2 levels) does the rest.
 fn texture(s: Setup, u: f32, v: f32, q: f32, k: u32) -> u32 {
-    let mxl = (s.mip >> 1u) & 7u;
+    let mxl = select((s.mip >> 1u) & 7u, 0u, SOURCE);
     var n = 0u;
     var scale = 1.0;
     var levels = 1u;
     var f = 0.0;
     var linear = has(s, F_BILINEAR);
-    if (has(s, F_REPLACED)) {
-        scale = f32(1u << data[s.mip_at]);
+    if (!DECODED && !SOURCE && has(s, F_REPLACED)) {
+        scale = f32(1u << mip_word(s, 0u));
     } else if (mxl != 0u) {
         let lod = texture_lod(s, q);
         if (lod > 0.0) {
@@ -1289,8 +1322,8 @@ fn shade_at(p: u32, s: Setup, x: i32, y: i32, k: u32, px: f32, py: f32) {
 }
 
 @compute @workgroup_size(64)
-// All of a batch's decodes in one dispatch: prm(1) records at data[prm(0)] (setup, decoded offset, texels, first
-// thread), prm(2) texels in all.
+// All of a batch's decodes in one dispatch: prm(1) records at data[prm(0)] (setup | mip level << 29, decoded offset,
+// texels, first thread), prm(2) texels in all.
 fn decode(@builtin(global_invocation_id) gid: vec3<u32>) {
     let i = gid.x + gid.y * 64u * 1024u;
     if (i >= prm(2u)) {
@@ -1309,10 +1342,11 @@ fn decode(@builtin(global_invocation_id) gid: vec3<u32>) {
     }
     let r = records + lo * 4u;
     let t = i - data[r + 3u];
-    let s = load_setup(data[r]);
-    let x = t & ((1u << s.tw) - 1u);
-    let y = t >> s.tw;
-    decoded[data[r + 1u] + t] = convert(s, load_at(addr(s.tf, x, y), 0u));
+    let s = load_setup(data[r] & 0x1FFFFFFFu);
+    let l = level(s, data[r] >> 29u);
+    let x = t & ((1u << l.tw) - 1u);
+    let y = t >> l.tw;
+    decoded[data[r + 1u] + t] = convert(s, load_at(addr(l.f, x, y), 0u));
 }
 
 @compute @workgroup_size(64)
