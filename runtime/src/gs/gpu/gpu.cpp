@@ -1935,8 +1935,47 @@ std::uint32_t native_blend(std::uint32_t alpha, bool abe, std::uint32_t fix = 25
 // key: blend (bits 0-3), FIX factor (16), depth compare (bits 5-6: always, gequal, greater), Z write (128), colour (256),
 // the import (512), alpha (1024: the frame's alpha, As | FBA, into the r8uint target, unblended as the GS writes it),
 // decoded (32768: gs.wgsl DECODED, every level of the draw's texture is in decoded[])
+WGPURenderPipeline make_native_pipeline(std::uint32_t key);
+
+// Render pipelines are made on first use: 20-90 ms each while the driver's shader cache is cold (~2 ms warm), a hitch
+// mid-game. The keys made before are listed in a file (PS2_PIPELINES, default in ~/.cache) and made at start instead
+// (native_warm).
+std::string pipeline_list() {
+    if (const char *path = std::getenv("PS2_PIPELINES")) return path;
+    const char *cache = std::getenv("XDG_CACHE_HOME"), *home = std::getenv("HOME");
+    if (!cache && !home) return {};
+    return (cache ? std::string(cache) : std::string(home) + "/.cache") + (g_hw ? "/ps2-rea-pipelines-hw.txt" : "/ps2-rea-pipelines.txt");
+}
+bool g_warming = false;
+
 WGPURenderPipeline native_pipeline(std::uint32_t key) {
     if (const auto it = g_nat.pipelines.find(key); it != g_nat.pipelines.end()) return it->second;
+    const auto t0 = std::chrono::steady_clock::now();
+    WGPURenderPipeline p = make_native_pipeline(key);
+    if (g_warming || !p) return p;
+    std::fprintf(stderr, "[native] pipeline %x made mid-run: %.1f ms\n", key, std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - t0).count());
+    if (std::FILE *f = std::fopen(pipeline_list().c_str(), "a")) std::fprintf(f, "%x\n", key), std::fclose(f);
+    return p;
+}
+
+void native_warm() {
+    std::FILE *f = std::fopen(pipeline_list().c_str(), "r");
+    if (!f) return;
+    const auto t0 = std::chrono::steady_clock::now();
+    std::size_t n = 0;
+    unsigned key = 0;
+    g_warming = true;
+    while (std::fscanf(f, "%x", &key) == 1)
+        if (!g_nat.pipelines.count(key)) {
+            if (native_pipeline(key)) ++n;
+            else g_nat.pipelines.erase(key);  // a key this build doesn't make any more
+        }
+    g_warming = false;
+    std::fclose(f);
+    std::fprintf(stderr, "[native] %zu pipelines made at start: %.0f ms\n", n, std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - t0).count());
+}
+
+WGPURenderPipeline make_native_pipeline(std::uint32_t key) {
     if (key == kNativeBlit) {  // a target's colour and alpha to its shadow (native_blit_fs), the scissor rect of it
         WGPUColorTargetState targets[2] = {WGPU_COLOR_TARGET_STATE_INIT, WGPU_COLOR_TARGET_STATE_INIT};
         targets[0].format = WGPUTextureFormat_RGBA8Unorm;
@@ -4142,6 +4181,7 @@ bool native_init() {
     cd.compute.entryPoint = view("native_writeback_tiles");
     g_nat.writeback_tiles = wgpuDeviceCreateComputePipeline(g_device, &cd);
     g_nat.tiles = g_nat.replace && (g_hw || !on("PS2_NATIVE_RUNS"));
+    if (g_nat.module) native_warm();
     if (!g_nat.module || !g_native_check || !g_nat.writeback || !g_nat.writeback_tiles || !native_pipeline(kNativeImport) ||
         !native_pipeline(kNativeImport | kNativeTiles) || (g_hw && (!xfer_pipeline(kXferFrame) || !xfer_pipeline(kXferZ)))) {
         std::fprintf(stderr, "[native] shader or pipelines not created; native drawing off\n");
