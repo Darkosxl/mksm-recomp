@@ -2219,6 +2219,9 @@ void encode_native(WGPUCommandEncoder enc, const Command &c, const std::vector<N
     WGPUTextureView view = nullptr;
     WGPURenderPipeline current = nullptr;
     WGPUBindGroup source = nullptr;
+    std::uint32_t scissor[4] = {};  // the pass's dynamic state, set again only when a draw changes it
+    double constant = 0.0;
+    std::uint32_t bound = 0;  // group 0's dynamic offset
     const WGPURenderPipeline import = g_prof_on ? native_pipeline(kNativeImport) : nullptr;
     ProfPass *prof_pass = nullptr;  // PS2_GPU_PROFILE: a = draws, b = instances (the import draws are instanced over tiles)
     const auto end = [&] {
@@ -2270,6 +2273,9 @@ void encode_native(WGPUCommandEncoder enc, const Command &c, const std::vector<N
             view = d[i].color;
             current = nullptr;
             source = nullptr;
+            scissor[0] = ~0u;  // no draw's
+            constant = -1.0;
+            bound = ~0u;
         }
         if (const WGPUBindGroup g = d[i].source ? d[i].source : g_nat.none_group; g != source) {
             wgpuRenderPassEncoderSetBindGroup(rp, 1, g, 0, nullptr);
@@ -2279,10 +2285,19 @@ void encode_native(WGPUCommandEncoder enc, const Command &c, const std::vector<N
             wgpuRenderPassEncoderSetPipeline(rp, d[i].pipeline);
             current = d[i].pipeline;
         }
-        wgpuRenderPassEncoderSetBindGroup(rp, 0, g_native_group, 1, &offset);
-        wgpuRenderPassEncoderSetScissorRect(rp, d[i].scissor[0], d[i].scissor[1], d[i].scissor[2], d[i].scissor[3]);
-        const WGPUColor constant{d[i].constant, d[i].constant, d[i].constant, d[i].constant};
-        wgpuRenderPassEncoderSetBlendConstant(rp, &constant);
+        if (offset != bound) {
+            wgpuRenderPassEncoderSetBindGroup(rp, 0, g_native_group, 1, &offset);
+            bound = offset;
+        }
+        if (std::memcmp(scissor, d[i].scissor, sizeof scissor) != 0) {
+            wgpuRenderPassEncoderSetScissorRect(rp, d[i].scissor[0], d[i].scissor[1], d[i].scissor[2], d[i].scissor[3]);
+            std::memcpy(scissor, d[i].scissor, sizeof scissor);
+        }
+        if (d[i].constant != constant) {
+            const WGPUColor blend{d[i].constant, d[i].constant, d[i].constant, d[i].constant};
+            wgpuRenderPassEncoderSetBlendConstant(rp, &blend);
+            constant = d[i].constant;
+        }
         if (d[i].indirect != ~0u) wgpuRenderPassEncoderDrawIndirect(rp, g_fail, d[i].indirect * 4ull);
         else wgpuRenderPassEncoderDraw(rp, d[i].vertices, d[i].instances, 0, 0);
         if (prof_pass) {
