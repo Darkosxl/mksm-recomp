@@ -51,6 +51,9 @@ constexpr std::uint32_t kParamStride = 256;
 constexpr std::uint32_t kClutSlots = 2048;
 constexpr std::uint32_t kClutEntries = 512;
 constexpr std::uint32_t kPrimWords = 28;
+// hw_draw's records (native.wgsl hw_vs): only the words the render pipeline reads, xy (record words 4-9), then fog, the
+// colours, STQ and Z (11-26)
+constexpr std::uint32_t kHwPrimWords = 22;
 constexpr std::uint32_t kSetupWords = 32;
 constexpr std::uint32_t kDecodedWords = 4u << 20;
 // g_fail (gs.wgsl fail): a word per decode of the submit (its slot, g_decode_cache order; the last one takes the
@@ -464,6 +467,19 @@ std::uint32_t arena_append(const void *bytes, std::size_t size) {
     to[words - 2] = 0;
     to[words - 1] = 0;
     std::memcpy(to, bytes, size);
+    return offset;
+}
+
+std::uint32_t arena_hw_prims(const std::vector<std::uint32_t> &prims) {
+    const std::uint32_t offset = static_cast<std::uint32_t>(g_arena.size());
+    const std::size_t n = prims.size() / kPrimWords;
+    std::uint32_t *to = g_arena.grow(n * kHwPrimWords + 1);
+    for (std::size_t i = 0; i < n; ++i, to += kHwPrimWords) {
+        const std::uint32_t *rec = prims.data() + i * kPrimWords;
+        std::memcpy(to, rec + 4, 6 * 4);
+        std::memcpy(to + 6, rec + 11, 16 * 4);
+    }
+    *to = 0;
     return offset;
 }
 
@@ -3607,7 +3623,7 @@ void hw_draw(Binding *const *src, Binding *zsrc, bool chained) {
     float scale;
     native_depth(x.zpsm, zmax, scale);
     plan_decodes(prims, true);
-    const std::uint32_t prim_offset = arena_append(b.prims.data(), b.prims.size() * 4);
+    const std::uint32_t prim_offset = arena_hw_prims(b.prims);
     const std::uint32_t setup_offset = arena_append(b.setups.data(), b.setups.size() * 4);
     emit_decodes(setup_offset);
     static std::vector<std::array<std::uint32_t, 4>> fails;  // gs.wgsl fail_args records
@@ -3660,7 +3676,7 @@ void hw_draw(Binding *const *src, Binding *zsrc, bool chained) {
         for (int k = 0; k < count && sx0 < sx1 && sy0 < sy1; ++k) {
             if (splits[k].split == 2 && !passing) continue;
             NativeDraw d;
-            d.param = push_params({prim_offset + i * kPrimWords, n, 0u, rec[1], setup_offset + rec[0] * kSetupWords, 0u, 0u, tg.width, tg.height, splits[k].split, 0u, pflags,
+            d.param = push_params({prim_offset + i * kHwPrimWords, n, 0u, rec[1], setup_offset + rec[0] * kSetupWords, 0u, 0u, tg.width, tg.height, splits[k].split, 0u, pflags,
                                    0u, zmax, f2u(scale), 0u});
             std::memcpy(g_param_records[d.param].data() + 32, w, kSetupWords * 4);  // gs.wgsl SETUP_PRM
             std::uint32_t key = kNativeHw | blend | (cmp << 5) | (splits[k].zwrite ? kNativeZWrite : 0u) | (splits[k].color ? kNativeColor : 0u) |

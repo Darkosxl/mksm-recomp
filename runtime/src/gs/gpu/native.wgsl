@@ -900,8 +900,19 @@ fn shade_frag(s: Setup, at: Attr, k: u32, fst: bool) -> NativeFrag {
 // draw() records, PRIM_WORDS each) drawn by the render pipeline into the native target. Coverage, the Z test and write
 // and the blend are the hardware's (no discard, no frag_depth); colour, texture and fog interpolate linearly in screen
 // space as the GS does. Sprites take their attributes per sample as gs.wgsl shade_at() case 1.
+// Records (gpu.cpp kHwPrimWords): x y of 3 vertices (sprites: x0 y0 dx dy), fog bytes, RGBA x 3, S T Q x 3, Z, dZ1, dZ2.
 // Draw parameters: 0 first record (word offset in data), 3 kind (0 triangles, 1 sprites), 4 setup, 7, 8 target size,
 // 9 split (as native_fs), 11 flags (16, 32, 64 as native_fs), 13 Z max, 14 depth per Z unit.
+
+const HW_PRIM_WORDS: u32 = 22u;
+
+fn hw_attr(p: u32, n: u32) -> vec4<f32> {
+    return unpack_rgba(data[p + 7u + n]);
+}
+
+fn hw_tex(p: u32, n: u32) -> vec4<f32> {
+    return vec4<f32>(fat(p + 10u + n * 3u), fat(p + 11u + n * 3u), fat(p + 12u + n * 3u), f32((data[p + 6u] >> (n * 8u)) & 0xFFu));
+}
 
 struct HwOut {
     @builtin(position) pos: vec4<f32>,
@@ -922,7 +933,7 @@ struct HwFrag {
 fn hw_vs(@builtin(vertex_index) index: u32) -> HwOut {
     let sprite = prm(3u) == 1u;
     let per = select(3u, 6u, sprite);
-    let p = prm(0u) + (index / per) * PRIM_WORDS;
+    let p = prm(0u) + (index / per) * HW_PRIM_WORDS;
     let corner = index % per;
     var out: HwOut;
     var x: f32;
@@ -931,27 +942,27 @@ fn hw_vs(@builtin(vertex_index) index: u32) -> HwOut {
     if (sprite) {
         // (0, 1, 2), (2, 1, 3) of the corners (x0, y0), (x1, y0), (x0, y1), (x1, y1)
         let c = select(select(corner, 2u, corner == 3u), select(1u, 3u, corner == 5u), corner >= 4u);
-        let x0 = fat(p + 4u);
-        let y0 = fat(p + 5u);
-        x = x0 + select(0.0, fat(p + 6u), (c & 1u) != 0u);
-        y = y0 + select(0.0, fat(p + 7u), (c & 2u) != 0u);
+        let x0 = fat(p);
+        let y0 = fat(p + 1u);
+        x = x0 + select(0.0, fat(p + 2u), (c & 1u) != 0u);
+        y = y0 + select(0.0, fat(p + 3u), (c & 2u) != 0u);
         // at scale > 1 the raster covers whole GS pixels of a sprite, x0 <= x < x1 (gs.wgsl shade_at case 1)
         if (SCALE * SCALE_Y > 1u) {
             x = ceil(x);
             y = ceil(y);
         }
-        z = f32(min(data[p + 24u], prm(13u)));
-        out.rect = vec4<f32>(x0, y0, fat(p + 6u), fat(p + 7u));
-        out.ta = vertex_tex(p, 0u);
-        out.tb = vertex_tex(p, 1u);
-        out.zc = vec2<u32>(data[p + 13u], data[p + 24u]);
+        z = f32(min(data[p + 19u], prm(13u)));
+        out.rect = vec4<f32>(x0, y0, fat(p + 2u), fat(p + 3u));
+        out.ta = hw_tex(p, 0u);
+        out.tb = hw_tex(p, 1u);
+        out.zc = vec2<u32>(data[p + 8u], data[p + 19u]);
     } else {
-        x = fat(p + 4u + corner * 2u);
-        y = fat(p + 5u + corner * 2u);
-        let dz = select(select(0.0, fat(p + 26u), corner == 2u), fat(p + 25u), corner == 1u);
-        z = min(f32(data[p + 24u]) + dz, f32(prm(13u)));
-        out.color = vertex_attr(p, corner);
-        out.stqf = vertex_tex(p, corner);
+        x = fat(p + corner * 2u);
+        y = fat(p + 1u + corner * 2u);
+        let dz = select(select(0.0, fat(p + 21u), corner == 2u), fat(p + 20u), corner == 1u);
+        z = min(f32(data[p + 19u]) + dz, f32(prm(13u)));
+        out.color = hw_attr(p, corner);
+        out.stqf = hw_tex(p, corner);
     }
     // a sample sits at the top left of its fine cell (gs.wgsl raster px, py), the hardware's at its centre
     let fx = x * f32(SCALE) + 0.5;
