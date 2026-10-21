@@ -7,6 +7,7 @@
 # usage: remaster/record.sh <out> original|remaster <scene>:<frames>...   (scenes: remaster/scenes.tsv)   env: CAP, PS2RUN
 #   original: the unmodified game at 1x, 4:3 in 2560x1440; remaster: play.sh's look (3x6, widescreen, texture pack v2)
 #   A scene without inputs gets the story's fight loop (walk up, combo, step left) from its state on.
+#   Record-only scenes outside scenes.tsv: tym (Foundry Test Your Might, won).
 #   The 2-minute route (cutscenes skipped by cutting between states): menu:900 goro:1500 academy:1200 forest:1200 nether:1200 foundry:1200
 set -euo pipefail
 here=$(cd "$(dirname "$0")/.." && pwd)
@@ -27,7 +28,8 @@ mkdir -p "$out"
 i=0
 for spec in "$@"; do
   scene=${spec%%:*} n=${spec#*:} i=$((i + 1))
-  IFS=$'\t' read -r _ state _ args < <(awk -F'\t' -v s="$scene" '$1 == s' "$here/remaster/scenes.tsv")
+  # a scene not in scenes.tsv (record-only: no golden, kept out of the gates) is states/<scene>.state + inputs/<scene>.args
+  IFS=$'\t' read -r _ state _ args < <(awk -F'\t' -v s="$scene" '$1 == s' "$here/remaster/scenes.tsv") || { state=$scene.state args=@$scene; }
   start=$(python3 -I -c "import json, sys; print(json.load(open(sys.argv[1]))['frame'])" "$D/states/${state%.state}.json")
   for w in $args; do [[ $w == @* ]] && args=${args//$w/$(tr '\n' ' ' < "$here/mksm/inputs/${w#@}.args")}; done
   [ -n "$args" ] || args=$(fight $((start + 30)) $((start + n)) | tr '\n' ' ')
