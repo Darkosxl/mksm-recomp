@@ -38,6 +38,7 @@ struct Options {
     bool trace_iop_modules = false;
     bool trace_iop_hle = false;
     std::string frames_dir;
+    std::string frames_pipe;  // --frames-pipe: the frames, as PPMs one after another, onto one stream (a FIFO into ffmpeg)
     std::uint32_t frame_every = 60;
     std::vector<Press> presses;
     std::function<void()> on_vblank;

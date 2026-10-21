@@ -67,7 +67,7 @@ int usage() {
     std::fprintf(stderr,
                  "usage: ps2run <elf> [--arg text]... [--frames n] [--ntsc] [--misses file]\n"
                  "              [--disc image.iso] [--memcard card.ps2] [--pal | --ntsc] [--trace-syscalls] [--trace-io] [--trace-threads]\n"
-                 "              [--trace-iop] [--trace-iop-hle] [--frames-dir dir] [--frame-every n]\n"
+                 "              [--trace-iop] [--trace-iop-hle] [--frames-dir dir] [--frames-pipe path] [--frame-every n]\n"
                  "              [--press frame:[p2:]button[+button][:frames]]... [--press2 frame:button[+button][:frames]]...\n"
                  "              [--stick frame:[p2:]lx,ly[:frames]]... [--stick2 frame:lx,ly[:frames]]... [--pad2]\n"
                  "              [--window] [--fullscreen]\n"
@@ -111,6 +111,7 @@ int main(int argc, char **argv) {
         else if (a == "--trace-iop") ps2::g_options.trace_iop_modules = true;
         else if (a == "--trace-iop-hle") ps2::g_options.trace_iop_hle = true;
         else if (a == "--frames-dir" && i + 1 < argc) ps2::g_options.frames_dir = argv[++i];
+        else if (a == "--frames-pipe" && i + 1 < argc) ps2::g_options.frames_pipe = argv[++i];
         else if ((a == "--press" || a == "--press2" || a == "--stick" || a == "--stick2") && i + 1 < argc) {
             ps2::Press press;
             const bool stick = a.compare(0, 7, "--stick") == 0;

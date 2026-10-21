@@ -31,6 +31,7 @@
 #include <atomic>
 #include <cctype>
 #include <chrono>
+#include <csignal>
 #include <cstdio>
 #include <cstring>
 #include <ctime>
@@ -116,18 +117,31 @@ void refill(Cpu &c) {
 std::uint64_t frame_cycles() { return kEeClock / (g_options.pal ? 50u : 60u); }
 
 void dump_frame() {
+    static std::vector<std::uint8_t> ppm;  // the last frame shown: a stream repeats it while there is none, to keep time
     std::vector<std::uint32_t> rgba;
     std::uint32_t w = 0, h = 0;
-    if (!gs::display(rgba, w, h)) return;
+    const bool shown = gs::display(rgba, w, h);
+    if (shown) {
+        const std::string head = std::format("P6\n{} {}\n255\n", w, h);
+        ppm.resize(head.size() + rgba.size() * 3);
+        std::memcpy(ppm.data(), head.data(), head.size());
+        std::uint8_t *o = ppm.data() + head.size();
+        for (std::uint32_t p : rgba) *o++ = static_cast<std::uint8_t>(p), *o++ = static_cast<std::uint8_t>(p >> 8), *o++ = static_cast<std::uint8_t>(p >> 16);
+    }
+    if (!g_options.frames_pipe.empty()) {
+        static std::FILE *pipe = [] {
+            std::signal(SIGPIPE, SIG_IGN);  // a reader that quits ends the stream, not the run
+            return std::fopen(g_options.frames_pipe.c_str(), "wb");
+        }();
+        if (pipe && !ppm.empty()) std::fwrite(ppm.data(), 1, ppm.size(), pipe);
+        return;
+    }
+    if (!shown) return;
     char name[512];
     std::snprintf(name, sizeof name, "%s/frame_%05llu.ppm", g_options.frames_dir.c_str(), static_cast<unsigned long long>(g_frames));
     std::FILE *f = std::fopen(name, "wb");
     if (!f) return;
-    std::fprintf(f, "P6\n%u %u\n255\n", w, h);
-    for (std::uint32_t p : rgba) {
-        const std::uint8_t px[3] = {static_cast<std::uint8_t>(p), static_cast<std::uint8_t>(p >> 8), static_cast<std::uint8_t>(p >> 16)};
-        std::fwrite(px, 1, 3, f);
-    }
+    std::fwrite(ppm.data(), 1, ppm.size(), f);
     std::fclose(f);
 }
 
@@ -369,19 +383,38 @@ void fps_window() {
                      (gpu_busy_ms() - gpu0) / static_cast<double>(to - from));
 }
 
+// PS2_FPS_CAP=<fps> runs the emulation at most that many frames a second (recordings, a cooler laptop): each vblank waits
+// for its frame's time. A run that falls behind goes on from where it is instead of catching up.
+void pace_frames() {
+#ifndef __EMSCRIPTEN__
+    static const double cap = [] {
+        const char *spec = std::getenv("PS2_FPS_CAP");
+        return spec ? std::strtod(spec, nullptr) : 0.0;
+    }();
+    if (cap <= 0.0) return;
+    using Clock = std::chrono::steady_clock;
+    static const Clock::duration period = std::chrono::duration_cast<Clock::duration>(std::chrono::duration<double>(1.0 / cap));
+    static Clock::time_point next = Clock::now();
+    next += period;
+    if (const Clock::time_point now = Clock::now(); next < now) next = now;
+    else std::this_thread::sleep_until(next);
+#endif
+}
+
 void vblank() {
     ++g_frames;
     debug::jitter(4);
     hash_frame();
     time_frames();
     fps_window();
+    pace_frames();
     apply_pnach();
     watch_frame();
     apply_presses();
     if (g_options.on_vblank) g_options.on_vblank();
     iop::sio2::flush_cards();
     if (g_options.trace_iop_modules && g_frames % 25 == 0) std::fprintf(stderr, "[frame] %llu prims %llu\n", static_cast<unsigned long long>(g_frames), static_cast<unsigned long long>(gs::primitives_drawn()));
-    if (!g_options.frames_dir.empty() && g_options.frame_every && g_frames % g_options.frame_every == 0) dump_frame();
+    if ((!g_options.frames_dir.empty() || !g_options.frames_pipe.empty()) && g_options.frame_every && g_frames % g_options.frame_every == 0) dump_frame();
     hw::vblank_start();
     iop::vblank(true);
     schedule(hw::kEventVblankEnd + 100, now() + hblank_cycles() * 22u, [] { iop::vblank(false); });
