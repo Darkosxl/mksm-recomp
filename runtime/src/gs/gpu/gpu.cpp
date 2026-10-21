@@ -4306,7 +4306,7 @@ void replace_texture(const State &st, SetupCache &cache) {
     cache.mips = 0;
 }
 
-// ---- The GS front end and the renderer on two threads (PS2_GS_SPLIT=1) ----
+// ---- The GS front end and the renderer on two threads (desktop default with a render thread; PS2_GS_SPLIT=0 off) ----
 // draw() builds a primitive's record from the GS state (the front half); draw_back() batches it (the back half). Split,
 // the render thread posts the records and the other GS ops that reach the renderer to a "gsdraw" thread in chunks, and
 // every other entry point first waits for that thread to run all of them (split_sync), so the renderer's state is never
@@ -4665,7 +4665,12 @@ void split_worker() {
 [[gnu::noinline]] bool split_check() {
     g_split.checked = true;
     const char *e = std::getenv("PS2_GS_SPLIT");
-    g_split.on = e && std::strcmp(e, "1") == 0 && queue::active() && g_mode == Mode::primary && !texpack::active() && !drawdbg::enabled() && !native::active();
+#ifdef __EMSCRIPTEN__
+    const bool want = e && std::strcmp(e, "1") == 0;
+#else
+    const bool want = !e || std::strcmp(e, "0") != 0;  // on by default on the desktop
+#endif
+    g_split.on = want && queue::active() && g_mode == Mode::primary && !texpack::active() && !drawdbg::enabled() && !native::active();
     g_split.clut = g_clut_slot;
     if (g_split.on) std::thread(split_worker).detach();
     if (e && std::strcmp(e, "1") == 0 && !g_split.on) std::fprintf(stderr, "[gpu] PS2_GS_SPLIT needs the render thread, PS2_GS=gpu, and no texture pack, frame debugger or native renderer\n");
