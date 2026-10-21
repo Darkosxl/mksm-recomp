@@ -3,6 +3,7 @@
 #include "ps2/cpu.hpp"
 #include "ps2/system.hpp"
 
+#include <atomic>
 #include <cstdint>
 #include <functional>
 #include <vector>
@@ -85,9 +86,10 @@ DisplayRegs display_regs();
 bool display(std::vector<std::uint32_t> &rgba, std::uint32_t &width, std::uint32_t &height);
 bool display(const DisplayRegs &regs, std::vector<std::uint32_t> &rgba, std::uint32_t &width, std::uint32_t &height);
 // Frames for a stream (--frames-pipe) without waiting for them: display_later() (EE) queues the displayed frame and the
-// render thread hands it to the sink set by stream_frames(), in order, a few frames late (null: nothing shown). False
-// when there is no render thread (use display()). frames_finish() (render thread, after the EE stopped): the rest.
-void stream_frames(std::function<void(const std::uint32_t *rgba, std::uint32_t width, std::uint32_t height)> sink);
+// render thread hands it to the sink set by stream_frames(), in order, a few frames late (null: nothing shown). The sink
+// may keep the pixels until it sets *done; with done null they are gone after the call. False when there is no render
+// thread (use display()). frames_finish() (render thread, after the EE stopped): the rest.
+void stream_frames(std::function<void(const std::uint32_t *rgba, std::uint32_t width, std::uint32_t height, std::atomic<bool> *done)> sink);
 bool display_later();
 void frames_finish();
 // Frame for hosts that draw it themselves, with interlaced fields blended like present(); may lag a frame.

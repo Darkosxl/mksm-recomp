@@ -1439,6 +1439,7 @@ struct Copy {
     std::uint32_t width = 0, height = 0;
     std::atomic<bool> busy = false, ready = false;  // map callbacks may run on the submit worker
     bool mapped = false;  // display_stream: set before ready
+    std::atomic<bool> written = false;  // display_stream: the sink is done with the mapped pixels
 };
 void copy_out(Copy &c);
 Copy *g_copy_out = nullptr;  // display_stream: the copy of g_scratch the next submit ends with
@@ -5554,10 +5555,11 @@ void copy_out(Copy &c) {
 
 }
 
-Copy g_stream[4];
-std::deque<Copy *> g_streamed;  // display order; null: nothing shown that frame
+Copy g_stream[6];
+std::deque<Copy *> g_streamed;  // display order, not handed to the sink yet; null: nothing shown that frame
 
-// Hands streamed frames to sink, oldest first: those already mapped, and the rest until at most `keep` are in flight.
+// Hands streamed frames to sink, oldest first: those already mapped, and the rest until at most `keep` are waiting.
+// The sink writes them from the mapping and sets `written` when done; the render thread unmaps (stream_slot).
 void stream_out(std::size_t keep, const FrameSink &sink) {
     while (!g_streamed.empty()) {
         Copy *c = g_streamed.front();
@@ -5575,22 +5577,31 @@ void stream_out(std::size_t keep, const FrameSink &sink) {
         }
         if (c && c->mapped) {
             const std::uint64_t bytes = static_cast<std::uint64_t>(c->width) * c->height * 4;
-            sink(static_cast<const std::uint32_t *>(wgpuBufferGetConstMappedRange(c->buffer, 0, bytes)), c->width, c->height);
-            wgpuBufferUnmap(c->buffer);
+            sink(static_cast<const std::uint32_t *>(wgpuBufferGetConstMappedRange(c->buffer, 0, bytes)), c->width, c->height, &c->written);
         } else {
-            sink(nullptr, 0, 0);
+            sink(nullptr, 0, 0, nullptr);
+            if (c) c->ready = c->busy = false;
         }
-        if (c) c->mapped = c->ready = c->busy = false;
         g_streamed.pop_front();
+    }
+}
+
+// A slot for the next frame: unmaps the ones the sink is done with, and waits for one while all are busy.
+Copy *stream_slot(const FrameSink &sink) {
+    for (;;) {
+        for (Copy &c : g_stream)
+            if (c.written) wgpuBufferUnmap(c.buffer), c.written = false, c.mapped = c.ready = c.busy = false;
+        for (Copy &c : g_stream)
+            if (!c.busy) return &c;
+        if (!g_streamed.empty()) stream_out(g_streamed.size() - 1, sink);
+        else std::this_thread::sleep_for(std::chrono::microseconds(200));
     }
 }
 
 void display_stream(const DisplaySource *src, const FrameSink &sink) {
     Copy *slot = nullptr;
     if (src) {
-        stream_out(std::size(g_stream) - 1, sink);
-        for (Copy &c : g_stream)
-            if (!c.busy) slot = &c;
+        slot = stream_slot(sink);
         split_sync();
         chain_flush();
         native_display(*src);

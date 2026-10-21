@@ -47,6 +47,7 @@
 #include <random>
 #include <thread>
 #ifdef __linux__
+#include <fcntl.h>
 #include <pthread.h>
 #include <unistd.h>
 #endif
@@ -128,25 +129,36 @@ void to_ppm(const std::uint32_t *rgba, std::uint32_t w, std::uint32_t h, std::ve
         *o++ = static_cast<std::uint8_t>(*p), *o++ = static_cast<std::uint8_t>(*p >> 8), *o++ = static_cast<std::uint8_t>(*p >> 16);
 }
 
+// RGBA as it is in memory (R first): a PAM's RGB_ALPHA tuples.
+void write_pam(std::FILE *f, const std::uint32_t *rgba, std::uint32_t w, std::uint32_t h) {
+    std::fprintf(f, "P7\nWIDTH %u\nHEIGHT %u\nDEPTH 4\nMAXVAL 255\nTUPLTYPE RGB_ALPHA\nENDHDR\n", w, h);
+    std::fwrite(rgba, 4, static_cast<std::size_t>(w) * h, f);
+}
+
 std::FILE *frames_pipe() {
     static std::FILE *pipe = [] {
         std::signal(SIGPIPE, SIG_IGN);  // a reader that quits ends the stream, not the run
-        return std::fopen(g_options.frames_pipe.c_str(), "wb");
+        std::FILE *f = std::fopen(g_options.frames_pipe.c_str(), "wb");
+#ifdef __linux__
+        if (f) fcntl(fileno(f), F_SETPIPE_SZ, 1 << 20);  // 64 KB writes cost ~0.75 ms/MB of kernel time
+#endif
+        return f;
     }();
     return pipe;
 }
 
 // --frames-pipe with a render thread: it hands the frames over a few frames late (gs::display_later) and a thread of
-// their own converts and writes them, so neither the EE nor the renderer waits on the GPU or the pipe for each frame.
+// their own writes them, so neither the EE nor the renderer waits on the GPU or the pipe for each frame.
 struct PipeFrames {
     struct Frame {
-        std::vector<std::uint32_t> rgba;  // empty: nothing shown, the last frame repeats to keep time
+        const std::uint32_t *px = nullptr;  // null: nothing shown, the last frame repeats to keep time
+        std::vector<std::uint32_t> own;  // the pixels, when the renderer doesn't keep them
         std::uint32_t w = 0, h = 0;
+        std::atomic<bool> *written = nullptr;  // set once px isn't needed any more (the renderer's mapped readback)
     };
     std::mutex m;
     std::condition_variable cv;
     std::deque<Frame> frames;
-    std::vector<std::vector<std::uint32_t>> spare;
     bool done = false;
     std::thread writer;
 } g_pipe_frames;
@@ -154,7 +166,7 @@ struct PipeFrames {
 void write_frames() {
     pthread_setname_np(pthread_self(), "frames");
     PipeFrames &q = g_pipe_frames;
-    std::vector<std::uint8_t> ppm;
+    PipeFrames::Frame last;
     std::unique_lock lock(q.m);
     for (;;) {
         q.cv.wait(lock, [&] { return !q.frames.empty() || q.done; });
@@ -162,24 +174,21 @@ void write_frames() {
         PipeFrames::Frame f = std::move(q.frames.front());
         q.frames.pop_front();
         lock.unlock();
-        if (!f.rgba.empty()) to_ppm(f.rgba.data(), f.w, f.h, ppm);
-        if (frames_pipe() && !ppm.empty()) std::fwrite(ppm.data(), 1, ppm.size(), frames_pipe());
+        if (f.px) {
+            if (last.written) *last.written = true;
+            last = std::move(f);
+        }
+        if (frames_pipe() && last.px) write_pam(frames_pipe(), last.px, last.w, last.h);
         lock.lock();
-        q.spare.push_back(std::move(f.rgba));
-        q.cv.notify_all();
     }
 }
 
-void pipe_frame(const std::uint32_t *rgba, std::uint32_t w, std::uint32_t h) {
+void pipe_frame(const std::uint32_t *rgba, std::uint32_t w, std::uint32_t h, std::atomic<bool> *written) {
     PipeFrames &q = g_pipe_frames;
     if (!q.writer.joinable()) q.writer = std::thread(write_frames);
-    std::unique_lock lock(q.m);
-    q.cv.wait(lock, [&] { return q.frames.size() < 3; });
-    PipeFrames::Frame f{{}, w, h};
-    if (rgba) {
-        if (!q.spare.empty()) f.rgba = std::move(q.spare.back()), q.spare.pop_back();
-        f.rgba.assign(rgba, rgba + static_cast<std::size_t>(w) * h);
-    }
+    PipeFrames::Frame f{rgba, {}, w, h, written};
+    if (rgba && !written) f.own.assign(rgba, rgba + static_cast<std::size_t>(w) * h), f.px = f.own.data();
+    std::lock_guard lock(q.m);
     q.frames.push_back(std::move(f));
     q.cv.notify_all();
 }
@@ -189,16 +198,19 @@ void dump_frame() {
         static const bool sink = (gs::stream_frames(pipe_frame), true);
         if (sink && gs::display_later()) return;
     }
-    static std::vector<std::uint8_t> ppm;  // the last frame shown: a stream repeats it while there is none, to keep time
     std::vector<std::uint32_t> rgba;
     std::uint32_t w = 0, h = 0;
     const bool shown = gs::display(rgba, w, h);
-    if (shown) to_ppm(rgba.data(), w, h, ppm);
     if (!g_options.frames_pipe.empty()) {
-        if (frames_pipe() && !ppm.empty()) std::fwrite(ppm.data(), 1, ppm.size(), frames_pipe());
+        static std::vector<std::uint32_t> last;  // a stream repeats the last frame shown while there is none, to keep time
+        static std::uint32_t lw = 0, lh = 0;
+        if (shown) last.swap(rgba), lw = w, lh = h;
+        if (frames_pipe() && !last.empty()) write_pam(frames_pipe(), last.data(), lw, lh);
         return;
     }
     if (!shown) return;
+    std::vector<std::uint8_t> ppm;
+    to_ppm(rgba.data(), w, h, ppm);
     char name[512];
     std::snprintf(name, sizeof name, "%s/frame_%05llu.ppm", g_options.frames_dir.c_str(), static_cast<unsigned long long>(g_frames));
     std::FILE *f = std::fopen(name, "wb");

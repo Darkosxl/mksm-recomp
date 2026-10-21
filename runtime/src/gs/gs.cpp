@@ -1183,9 +1183,9 @@ bool present(const DisplayRegs &r) {
 #endif
 }
 
-std::function<void(const std::uint32_t *, std::uint32_t, std::uint32_t)> g_frame_sink;
+std::function<void(const std::uint32_t *, std::uint32_t, std::uint32_t, std::atomic<bool> *)> g_frame_sink;
 
-void stream_frames(std::function<void(const std::uint32_t *, std::uint32_t, std::uint32_t)> sink) { g_frame_sink = std::move(sink); }
+void stream_frames(std::function<void(const std::uint32_t *, std::uint32_t, std::uint32_t, std::atomic<bool> *)> sink) { g_frame_sink = std::move(sink); }
 
 bool display_later() {
     if (!queue::active() || queue::role() == queue::Role::Render) return false;
@@ -1206,7 +1206,7 @@ void stream_display(const DisplayRegs &r) {
     std::vector<std::uint32_t> rgba;
     std::uint32_t w = 0, h = 0;
     const bool shown = display(r, rgba, w, h);
-    g_frame_sink(shown ? rgba.data() : nullptr, w, h);
+    g_frame_sink(shown ? rgba.data() : nullptr, w, h, nullptr);
 }
 
 void frames_finish() {
