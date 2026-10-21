@@ -1463,6 +1463,7 @@ void render_state(ps2::state::Stream &s) {
     }
 #endif
     s.bytes(g_memory, kMemorySize);
+    if (s.loading()) texpack::downloaded();
     s.pod(scale);
     s.vec(vram);
     s.vec(clut);

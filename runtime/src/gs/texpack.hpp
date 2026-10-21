@@ -13,10 +13,14 @@ namespace ps2::gs::texpack {
 
 bool active();
 bool packing();
+bool dumping();
 // GS memory written by an upload or local copy (the CPU copy): textures on those pages are keyed again.
 void touched(std::uint32_t bp, std::uint32_t bw, std::uint32_t psm, std::uint32_t x, std::uint32_t y, std::uint32_t w, std::uint32_t h);
 // The CPU copy of the CLUT was reloaded.
 void clut_loaded();
+// GS memory or the CLUT changed other than by an upload or CLUT load (a readback from the GPU, a state load): the page
+// and CLUT hashes keying reuses are taken again.
+void downloaded();
 // The CPU renderer drew to these pages: textures on them are render targets and get no key (uploads clear it again).
 // The GPU renderer keeps its own record and doesn't call this.
 void drawn(std::uint32_t bp, std::uint32_t bw, std::uint32_t psm, std::uint32_t x0, std::uint32_t y0, std::uint32_t x1, std::uint32_t y1);

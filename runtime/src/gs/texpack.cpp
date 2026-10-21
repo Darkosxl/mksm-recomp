@@ -165,12 +165,45 @@ Loader &loader() {
 
 bool active() { return dump_dir() || pack_dir(); }
 bool packing() { return pack_dir() != nullptr; }
+bool dumping() { return dump_dir() != nullptr; }
 
 // Bumped by everything a key depends on besides TEX0 and TEXA (page writes and draws, CLUT loads): key() reuses a
 // key while it stands still, since most setup changes are ALPHA, TEST and the like, not the texture.
 std::uint64_t g_epoch = 1;
+// Bumped by CLUT loads, and by downloaded() with page reads, for the hashes below.
+std::uint64_t g_clut_serial = 1, g_downloads = 1;
 
-void clut_loaded() { ++g_epoch; }
+void clut_loaded() { ++g_epoch, ++g_clut_serial; }
+void downloaded() { ++g_clut_serial, ++g_downloads; }
+
+// hash_page while the page's generation stands: the game keys a texture again under each CLUT it draws with, and after
+// every upload anywhere on its pages, mostly over pages that didn't change.
+std::uint64_t page_content(std::uint32_t page) {
+    struct Memo {
+        std::uint64_t downloads;
+        std::uint32_t generation;
+        std::uint64_t hash;
+    };
+    static Memo memo[kPages];
+    Memo &m = memo[page % kPages];
+    if (m.downloads != g_downloads || m.generation != g_generation[page % kPages]) m = {g_downloads, g_generation[page % kPages], hash_page(page)};
+    return m.hash;
+}
+
+// The CLUT entries a palettized texture reads (all 256, or the 16 at CSA), hashed once per CLUT load.
+std::uint64_t clut_hash(const State &st, bool eight, std::uint32_t csa) {
+    struct Memo {
+        std::uint64_t serial, hash;
+    };
+    static Memo memo[33];
+    Memo &m = memo[eight ? 32 : csa & 31u];
+    if (m.serial != g_clut_serial) {
+        std::uint64_t h = 0xCBF29CE484222325ull;
+        for (std::uint32_t i = 0; i < (eight ? 256u : 16u); ++i) h = mix(h, st.clut[eight ? i : (csa * 16 + i) & 511u]);
+        m = {g_clut_serial, h};
+    }
+    return m.hash;
+}
 
 void touched(std::uint32_t bp, std::uint32_t bw, std::uint32_t psm, std::uint32_t x, std::uint32_t y, std::uint32_t w, std::uint32_t h) {
     ++g_epoch;
@@ -213,7 +246,7 @@ std::uint64_t key_uncounted(const State &st) {
     const bool palettized = psm == PSMT8 || psm == PSMT4 || psm == PSMT8H || psm == PSMT4HL || psm == PSMT4HH;
     if (palettized) {
         const std::uint32_t eight = psm == PSMT8 || psm == PSMT8H, csa = static_cast<std::uint32_t>(c.tex0 >> 56) & 0x1Fu;
-        for (std::uint32_t i = 0; i < (eight ? 256u : 16u); ++i) id = mix(id, st.clut[eight ? i : (csa * 16 + i) & 511u]);
+        id = mix(id, clut_hash(st, eight, csa));
     }
     std::uint32_t first, last;
     page_span(tbp, tbw, psm, 0, 0, 1u << tw, 1u << th, first, last);
@@ -226,7 +259,7 @@ std::uint64_t key_uncounted(const State &st) {
     if (const auto it = known.find(id); it != known.end()) return it->second;
     // The pages were rewritten: the game cycles its textures through the same pages every frame, so look the content up
     // (a hash of the raw pages, microseconds) before decoding it (milliseconds).
-    for (std::uint32_t p = first; p <= last && p < first + kPages; ++p) content = mix(content, hash_page(p));
+    for (std::uint32_t p = first; p <= last && p < first + kPages; ++p) content = mix(content, page_content(p));
     if (known.size() > (1u << 20)) known.clear(), by_content.clear();
     if (const auto it = by_content.find(content); it != by_content.end()) return known[id] = it->second;
     const auto t0 = std::chrono::steady_clock::now();

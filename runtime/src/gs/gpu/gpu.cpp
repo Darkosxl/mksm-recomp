@@ -25,6 +25,7 @@
 #include <map>
 #include <memory>
 #include <mutex>
+#include <new>
 #ifdef __linux__
 #include <pthread.h>
 #endif
@@ -275,6 +276,7 @@ struct SetupCache {
     Range levels[7];
     std::uint32_t mips = 0;
     std::uint8_t hw = 0;  // why the hardware GS renderer cannot draw the setup (hw_setup; kHwOk: it can)
+    std::uint64_t pack_key = 0;  // split, with a texture pack: the texture's texpack::key, replaced on the gsdraw thread
 } g_setup_cache;
 
 bool g_hw = false;  // PS2_GS_HW=1: the hardware GS renderer, step 1 (hw_flush)
@@ -2623,8 +2625,8 @@ void tiles_apply(Binding &b) {
     }
 }
 
-// VRAM bytes r: the tile rect of each frame and Z page of binding b it overlaps, to f(x0, y0, x1, y1, buffer) (kTileColor:
-// a frame page, kTileZ: a Z page).
+// VRAM bytes r: the tile rect of each run of frame and Z pages of binding b it overlaps within a row of pages, to
+// f(x0, y0, x1, y1, buffer) (kTileColor: frame pages, kTileZ: Z pages).
 template <class F> void tiles_pages(const Binding &b, const Range &r, F &&f) {
     if (!r.overlaps(b.bound_lo[0], b.bound_hi[0]) && !r.overlaps(b.bound_lo[1], b.bound_hi[1])) return;
     for (int buffer = 0; buffer < 2; ++buffer) {
@@ -2635,9 +2637,11 @@ template <class F> void tiles_pages(const Binding &b, const Range &r, F &&f) {
         const std::uint64_t per_row = std::max<std::uint32_t>(1, b.fbw * 64 / pw);
         const std::uint64_t p0 = (std::max(r.lo, base) - base) / 8192, p1 = (std::min(r.hi, end) - base + 8191) / 8192;
         const int tw = static_cast<int>(pw / kTilePx), th = static_cast<int>(ph / kTilePx);
-        for (std::uint64_t p = p0; p < p1; ++p) {
+        for (std::uint64_t p = p0; p < p1;) {
             const int px = static_cast<int>(p % per_row), py = static_cast<int>(p / per_row);
-            f(px * tw, py * th, px * tw + tw - 1, py * th + th - 1, buffer ? kTileZ : kTileColor);
+            const std::uint64_t run = std::min(p1 - p, per_row - static_cast<std::uint64_t>(px));
+            f(px * tw, py * th, (px + static_cast<int>(run)) * tw - 1, py * th + th - 1, buffer ? kTileZ : kTileColor);
+            p += run;
         }
     }
 }
@@ -3590,7 +3594,15 @@ void hw_prep(Binding *(&src)[kSources], Binding *&zsrc) {
     tiles_writeback();
     xfer_emit(x);
     // the VRAM-newer tiles under the primitives come into the target, which then holds them newer
-    for (const PrimTake &p : takes) tiles_take(x, p.x0, p.y0, p.x1, p.y1, p.buffers, p.writes, list, p.over ? p.o : nullptr, p.writes);
+    const PrimTake *last = nullptr;
+    for (const PrimTake &p : takes) {
+        // the same take again finds nothing (the tiles are taken and marked already)
+        if (last && !p.over && !last->over && p.x0 == last->x0 && p.y0 == last->y0 && p.x1 == last->x1 && p.y1 == last->y1 && p.buffers == last->buffers &&
+            p.writes == last->writes)
+            continue;
+        tiles_take(x, p.x0, p.y0, p.x1, p.y1, p.buffers, p.writes, list, p.over ? p.o : nullptr, p.writes);
+        last = &p;
+    }
     tiles_import(x, list);
 }
 
@@ -4378,14 +4390,23 @@ bool init(Mode m) {
 
 // Texture pack: a texture keyed from uploaded data (not a render target) that the pack replaces samples the pack's
 // pixels, 2^scale times larger, from the persistent part of the decoded buffer (setup word 24 = offset, 26 = scale;
-// mipmapping off). Keys and dumps need nothing from the GPU.
-void replace_texture(const State &st, SetupCache &cache) {
+// mipmapping off). Keys and dumps need nothing from the GPU. The render-target test reads what the renderer drew, so
+// split, the front half keys every texture (in the stream's order, as the CPU copy of GS memory stands) and the gsdraw
+// thread tests and replaces (split_run); unsplit, the test comes first and keeps render targets out of the dumps.
+namespace {
+void flush_back();
+}
+
+bool pack_candidate(const SetupCache &cache) {
+    const std::uint32_t *w = cache.setup;
+    return !rendered(w[12], w[13], w[14], 0, 0, (1 << (w[15] & 0xFFu)) - 1, (1 << (w[15] >> 8)) - 1);
+}
+
+void replace_texture(std::uint64_t key, SetupCache &cache) {
     static std::unordered_map<std::uint64_t, std::pair<std::uint32_t, std::uint32_t>> replaced;
     static std::uint32_t used = 0;
     std::uint32_t *w = cache.setup;
     const std::uint32_t tw = w[15] & 0xFFu, th = w[15] >> 8;
-    if (rendered(w[12], w[13], w[14], 0, 0, (1 << tw) - 1, (1 << th) - 1)) return;
-    const std::uint64_t key = texpack::key(st);
     if (!key || !texpack::packing() || ((w[7] >> 24) & 3u) == 3u || ((w[7] >> 26) & 3u) == 3u) return;
     auto it = replaced.find(key);
     if (it == replaced.end()) {
@@ -4397,11 +4418,11 @@ void replace_texture(const State &st, SetupCache &cache) {
             // more than the region keeps the textures it has instead of reloading every frame.
             // ponytail: drops everything at once; per-texture LRU if a scene ever needs more than the region.
             static std::uint64_t last_reset = 0;
-            if (frame_count() - last_reset < 600 || px.size() > kReplWords) return;
-            flush();  // commands recorded so far read the old contents
+            if (g_nat.frame - last_reset < 600 || px.size() > kReplWords) return;
+            flush_back();  // commands recorded so far read the old contents
             replaced.clear();
             used = 0;
-            last_reset = frame_count();
+            last_reset = g_nat.frame;
             std::fprintf(stderr, "[texpack] replacement memory full (%u MB), starting over at frame %llu\n", kReplWords >> 18,
                          static_cast<unsigned long long>(last_reset));
         }
@@ -4433,7 +4454,17 @@ struct PrimOp {
     bool hidden;  // a sprite outside the scissor: it draws nothing but still sets its setup's F_RT_HIRES (draw_rt)
 };
 
-enum SplitOp : std::uint32_t { kOpSetup, kOpPrim, kOpSkip, kOpImageBegin, kOpImageData, kOpLocalCopy, kOpClut, kOpFlush, kOpVblank };
+enum SplitOp : std::uint32_t { kOpSetup, kOpPrim, kOpSkip, kOpImageBegin, kOpImageData, kOpLocalCopy, kOpClut, kOpFlush, kOpVblank, kOpRawPrim };
+
+// A primitive as the render thread posts it with gsprim on: gsprim builds its PrimOp over it, in place
+struct RawPrim {
+    Vertex v[3];
+    std::uint32_t prim;
+    std::int32_t count;
+    int ofx, ofy;  // the context's XYOFFSET
+    texcache::Run run;
+};
+constexpr std::size_t kPrimRoom = std::max(sizeof(RawPrim), sizeof(PrimOp));
 constexpr std::size_t kChunkWords = 32768;  // 256 KB
 
 struct Chunk {
@@ -4445,9 +4476,12 @@ struct Split {
     bool on = false, checked = false;
     std::uint32_t clut = 0;  // render thread: the CLUT slot a draw reads once the ops posted so far have run
     SetupCache cache;        // gsdraw: the setup the posted primitives draw with
+    bool prims = false;      // gsprim: a thread between the two that builds the primitives' records (PS2_GS_PRIMS)
+    SetupCache prim_cache;   // gsprim: the setup the raw primitives build with
     Chunk cur;               // render thread: being filled
     std::mutex m;
-    std::condition_variable work, space, idle;
+    std::condition_variable work, space, idle, raw_work;
+    std::deque<Chunk> raw;   // for gsprim, which then hands them on to full
     std::deque<Chunk> full;
     std::vector<Chunk> spare;
     std::uint64_t posted = 0, done = 0;
@@ -4726,153 +4760,11 @@ void native_vblank_back(std::uint64_t frame) {
     ++g_nat.frames;
 }
 
-void split_run(const Chunk &c) {
-    for (std::size_t i = 0; i < c.used;) {
-        const std::uint64_t head = c.words[i];
-        const auto *p = reinterpret_cast<const std::uint8_t *>(c.words.data() + i + 1);
-        const std::size_t bytes = static_cast<std::size_t>(head >> 32);
-        i += 1 + (bytes + 7) / 8;
-        std::uint64_t r[3];
-        switch (static_cast<std::uint32_t>(head) & 0xFFu) {
-        case kOpSetup: std::memcpy(static_cast<void *>(&g_split.cache), p, sizeof(SetupCache)); break;
-        case kOpPrim: {
-            PrimOp op;
-            std::memcpy(&op, p, sizeof op);
-            draw_head();
-            draw_back(g_split.cache, op);
-            break;
-        }
-        case kOpSkip: draw_head(), draw_skip(static_cast<std::uint8_t>(head >> 8)); break;
-        case kOpImageBegin: std::memcpy(r, p, 24), image_begin_back(r[0], r[1], r[2]); break;
-        case kOpImageData: image_data_back(p, bytes); break;
-        case kOpLocalCopy: std::memcpy(r, p, 24), local_copy_back(r[0], r[1], r[2]); break;
-        case kOpClut: std::memcpy(r, p, 16), load_clut_back(r[0], r[1]); break;
-        case kOpFlush: flush_back(); break;
-        case kOpVblank: std::memcpy(r, p, 8), native_vblank_back(r[0]); break;
-        }
-    }
-}
-
-void split_worker() {
-#ifdef __linux__
-    pthread_setname_np(pthread_self(), "gsdraw");
-#endif
-    std::unique_lock lock(g_split.m);
-    for (;;) {
-        g_split.work.wait(lock, [] { return !g_split.full.empty(); });
-        Chunk c = std::move(g_split.full.front());
-        g_split.full.pop_front();
-        lock.unlock();
-        g_split.space.notify_one();
-        split_run(c);
-        c.used = 0;
-        lock.lock();
-        g_split.spare.push_back(std::move(c));
-        if (++g_split.done == g_split.posted) g_split.idle.notify_all();
-    }
-}
-
-// the first call decides, for the run
-[[gnu::noinline]] bool split_check() {
-    g_split.checked = true;
-    const char *e = std::getenv("PS2_GS_SPLIT");
-#ifdef __EMSCRIPTEN__
-    const bool want = e && std::strcmp(e, "1") == 0;
-#else
-    const bool want = !e || std::strcmp(e, "0") != 0;  // on by default on the desktop
-#endif
-    g_split.on = want && queue::active() && g_mode == Mode::primary && !texpack::active() && !drawdbg::enabled() && !native::active();
-    g_split.clut = g_clut_slot;
-    if (g_split.on) std::thread(split_worker).detach();
-    if (e && std::strcmp(e, "1") == 0 && !g_split.on) std::fprintf(stderr, "[gpu] PS2_GS_SPLIT needs the render thread, PS2_GS=gpu, and no texture pack, frame debugger or native renderer\n");
-    return g_split.on;
-}
-
-inline bool split_on() { return g_split.checked ? g_split.on : split_check(); }
-
-// Render thread: hands the chunk being filled to gsdraw.
-void split_publish() {
-    Chunk &c = g_split.cur;
-    if (!c.used) return;
-    std::unique_lock lock(g_split.m);
-    g_split.space.wait(lock, [] { return g_split.full.size() < 64; });
-    g_split.full.push_back(std::move(c));
-    ++g_split.posted;
-    c = Chunk{};
-    if (!g_split.spare.empty()) {
-        c = std::move(g_split.spare.back());
-        g_split.spare.pop_back();
-    }
-    lock.unlock();
-    g_split.work.notify_one();
-}
-
-// Render thread: room for an op in the chunk being filled; returns where its payload goes.
-std::uint8_t *split_op(std::uint32_t op, std::size_t bytes) {
-    const std::size_t words = 1 + (bytes + 7) / 8;
-    Chunk &c = g_split.cur;
-    if (c.used + words > c.words.size()) {
-        split_publish();
-        if (c.words.size() < words) c.words.resize(std::max(words, kChunkWords));
-    }
-    std::uint64_t *at = c.words.data() + c.used;
-    at[0] = op | static_cast<std::uint64_t>(bytes) << 32;
-    c.used += words;
-    return reinterpret_cast<std::uint8_t *>(at + 1);
-}
-
-void split_post(std::uint32_t op, std::initializer_list<std::uint64_t> args) {
-    std::memcpy(split_op(op, args.size() * 8), args.begin(), args.size() * 8);
-}
-
-// Render thread: runs everything posted so far; the renderer's state is the render thread's until the next post.
-void split_sync() {
-    if (!g_split.on) return;
-    split_publish();
-    std::unique_lock lock(g_split.m);
-    g_split.idle.wait(lock, [] { return g_split.done == g_split.posted; });
-}
-
-}  // namespace
-
-void publish_draws() {
-    if (g_split.on) split_publish();
-}
-
-void draw(const State &st, const Vertex *v, int count, texcache::Run run) {
-    const bool split = split_on();
-    if (!split) draw_head();
-    std::uint64_t attr = st.prim;
-    if (!(st.prmodecont & 1u)) attr = (st.prim & 7u) | (st.prmode & ~7ull);
-    const std::uint32_t prim = static_cast<std::uint32_t>(st.prim) & 7u;
-    const Context &c = st.ctx[(attr >> 9) & 1u];
-    SetupCache &cache = g_setup_cache;
-    const std::uint32_t clut = split ? g_split.clut : g_clut_slot;
-    if (cache.generation != g_setup_generation || cache.attr != attr || cache.clut != clut) {
-        cache.generation = g_setup_generation;
-        cache.attr = attr;
-        cache.clut = clut;
-        const std::uint32_t *w = cache.setup;
-        cache.flags = make_setup(st, attr, cache.setup, clut);
-        cache.key = static_cast<std::uint64_t>(w[1]) | (static_cast<std::uint64_t>(w[2]) << 14) | (static_cast<std::uint64_t>(w[3]) << 20) |
-                    (static_cast<std::uint64_t>(w[5]) << 26) | (static_cast<std::uint64_t>(w[6]) << 40);
-        cache.mips = 0;
-        if (cache.flags & 2u) {
-            cache.tex = level_range(w, 0);
-            cache.mips = mip_levels(w);
-            for (std::uint32_t n = 1; n <= cache.mips; ++n) cache.levels[n] = level_range(w, n);
-            if (texpack::active()) replace_texture(st, cache);
-        }
-        cache.hw = g_hw ? hw_setup(cache.setup) : kHwOk;
-        if (split) std::memcpy(split_op(kOpSetup, sizeof cache), static_cast<const void *>(&cache), sizeof cache);
-    }
-    const auto skip = [&](std::uint8_t why) { split ? void(split_op(kOpSkip | static_cast<std::uint32_t>(why) << 8, 0)) : draw_skip(why); };
-    // ZTST NEVER, or ATST NEVER with AFAIL KEEP: the primitive writes nothing, and would only end a hardware batch
-    if (cache.hw == kHwZNever || cache.hw == kHwANever) return skip(cache.hw);
+// A primitive's record from its vertices (ofx, ofy: the context's XYOFFSET); false: it draws nothing
+bool build_prim(const SetupCache &cache, int ofx, int ofy, const Vertex *v, int count, std::uint32_t prim, texcache::Run run, PrimOp &op) {
     const std::uint32_t *setup = cache.setup;
     const std::uint32_t flags = cache.flags;
     const bool fst = flags & 16u, iip = flags & 1u;
-    const int ofx = static_cast<int>(c.xyoffset & 0xFFFFu), ofy = static_cast<int>((c.xyoffset >> 32) & 0xFFFFu);
     const int scax0 = static_cast<int>(setup[10] & 0xFFFFu), scax1 = static_cast<int>(setup[10] >> 16);
     const int scay0 = static_cast<int>(setup[11] & 0xFFFFu), scay1 = static_cast<int>(setup[11] >> 16);
     const auto sx = [&](const Vertex &p) { return (static_cast<float>(p.x) - static_cast<float>(ofx)) / 16.0f; };
@@ -4881,16 +4773,15 @@ void draw(const State &st, const Vertex *v, int count, texcache::Run run) {
     const auto first = [&](float lo) { return static_cast<int>(std::floor(std::ceil(lo * samples) / samples)); };
     const auto first_y = [&](float lo) { return static_cast<int>(std::floor(std::ceil(lo * samples_y) / samples_y)); };
 
-    PrimOp op;
     std::uint32_t *rec = op.rec;
     std::fill(std::begin(op.rec), std::end(op.rec), 0u);
     int minx, miny, maxx, maxy;
     switch (prim) {
     case 3: case 4: case 5: {
-        if (count < 3) return skip(kHwReasons);
+        if (count < 3) return false;
         const float x0 = sx(v[0]), y0 = sy(v[0]), x1 = sx(v[1]), y1 = sy(v[1]), x2 = sx(v[2]), y2 = sy(v[2]);
         const float area = (x1 - x0) * (y2 - y0) - (x2 - x0) * (y1 - y0);
-        if (area == 0.0f) return skip(kHwReasons);
+        if (area == 0.0f) return false;
         minx = std::max(scax0, first(std::min({x0, x1, x2})));
         maxx = std::min(scax1, static_cast<int>(std::ceil(std::max({x0, x1, x2}))) - 1);
         miny = std::max(scay0, first_y(std::min({y0, y1, y2})));
@@ -4950,7 +4841,7 @@ void draw(const State &st, const Vertex *v, int count, texcache::Run run) {
         const int x = static_cast<int>(sx(v[0])), y = static_cast<int>(sy(v[0]));
         minx = maxx = x;
         miny = maxy = y;
-        if (x < scax0 || x > scax1 || y < scay0 || y > scay1) return skip(kHwReasons);
+        if (x < scax0 || x > scax1 || y < scay0 || y > scay1) return false;
         rec[1] = 3;
         rec[4] = static_cast<std::uint32_t>(x);
         rec[5] = static_cast<std::uint32_t>(y);
@@ -4959,7 +4850,7 @@ void draw(const State &st, const Vertex *v, int count, texcache::Run run) {
         break;
     }
     default:
-        return skip(kHwReasons);
+        return false;
     }
     minx = std::max(minx, 0);
     miny = std::max(miny, 0);
@@ -4969,10 +4860,223 @@ void draw(const State &st, const Vertex *v, int count, texcache::Run run) {
     op.count = count;
     op.run = run;
     op.hidden = minx > maxx || miny > maxy;
-    if (op.hidden && !rt_sprite(cache, prim)) return skip(kHwReasons);
+    if (op.hidden && !rt_sprite(cache, prim)) return false;
     rec[2] = static_cast<std::uint32_t>(minx) | (static_cast<std::uint32_t>(miny) << 16);
     rec[3] = static_cast<std::uint32_t>(maxx) | (static_cast<std::uint32_t>(maxy) << 16);
-    if (split) std::memcpy(split_op(kOpPrim, sizeof op), &op, sizeof op);
+    return true;
+}
+
+// gsprim: the records of a chunk's raw primitives, each built over it in place
+void prims_run(Chunk &c) {
+    for (std::size_t i = 0; i < c.used;) {
+        std::uint64_t &head = c.words[i];
+        auto *p = reinterpret_cast<std::uint8_t *>(c.words.data() + i + 1);
+        const std::uint64_t bytes = head >> 32;
+        i += 1 + (bytes + 7) / 8;
+        switch (static_cast<std::uint32_t>(head) & 0xFFu) {
+        case kOpSetup: std::memcpy(static_cast<void *>(&g_split.prim_cache), p, sizeof(SetupCache)); break;
+        case kOpRawPrim: {
+            RawPrim r;
+            std::memcpy(&r, p, sizeof r);
+            const bool drawn = build_prim(g_split.prim_cache, r.ofx, r.ofy, r.v, r.count, r.prim, r.run, *new (p) PrimOp);
+            head = (drawn ? kOpPrim : kOpSkip | static_cast<std::uint32_t>(kHwReasons) << 8) | bytes << 32;
+            break;
+        }
+        }
+    }
+}
+
+void prims_worker() {
+#ifdef __linux__
+    pthread_setname_np(pthread_self(), "gsprim");
+#endif
+    std::unique_lock lock(g_split.m);
+    for (;;) {
+        g_split.raw_work.wait(lock, [] { return !g_split.raw.empty(); });
+        Chunk c = std::move(g_split.raw.front());
+        g_split.raw.pop_front();
+        lock.unlock();
+        prims_run(c);
+        lock.lock();
+        g_split.full.push_back(std::move(c));
+        g_split.work.notify_one();
+    }
+}
+
+void split_run(const Chunk &c) {
+    for (std::size_t i = 0; i < c.used;) {
+        const std::uint64_t head = c.words[i];
+        const auto *p = reinterpret_cast<const std::uint8_t *>(c.words.data() + i + 1);
+        const std::size_t bytes = static_cast<std::size_t>(head >> 32);
+        i += 1 + (bytes + 7) / 8;
+        std::uint64_t r[3];
+        switch (static_cast<std::uint32_t>(head) & 0xFFu) {
+        case kOpSetup:
+            std::memcpy(static_cast<void *>(&g_split.cache), p, sizeof(SetupCache));
+            if (SetupCache &cache = g_split.cache; cache.pack_key) {
+                if (g_image.active && !g_image.pending.empty()) flush_image();  // unsplit, draw()'s draw_head ran first
+                if (pack_candidate(cache)) replace_texture(cache.pack_key, cache);
+            }
+            break;
+        case kOpPrim:
+            draw_head();
+            draw_back(g_split.cache, *std::launder(reinterpret_cast<const PrimOp *>(p)));  // draw() built it there
+            break;
+        case kOpSkip: draw_head(), draw_skip(static_cast<std::uint8_t>(head >> 8)); break;
+        case kOpImageBegin: std::memcpy(r, p, 24), image_begin_back(r[0], r[1], r[2]); break;
+        case kOpImageData: image_data_back(p, bytes); break;
+        case kOpLocalCopy: std::memcpy(r, p, 24), local_copy_back(r[0], r[1], r[2]); break;
+        case kOpClut: std::memcpy(r, p, 16), load_clut_back(r[0], r[1]); break;
+        case kOpFlush: flush_back(); break;
+        case kOpVblank: std::memcpy(r, p, 8), native_vblank_back(r[0]); break;
+        }
+    }
+}
+
+void split_worker() {
+#ifdef __linux__
+    pthread_setname_np(pthread_self(), "gsdraw");
+#endif
+    std::unique_lock lock(g_split.m);
+    for (;;) {
+        g_split.work.wait(lock, [] { return !g_split.full.empty(); });
+        Chunk c = std::move(g_split.full.front());
+        g_split.full.pop_front();
+        lock.unlock();
+        g_split.space.notify_one();
+        split_run(c);
+        c.used = 0;
+        lock.lock();
+        g_split.spare.push_back(std::move(c));
+        if (++g_split.done == g_split.posted) g_split.idle.notify_all();
+    }
+}
+
+// the first call decides, for the run
+[[gnu::noinline]] bool split_check() {
+    g_split.checked = true;
+    const char *e = std::getenv("PS2_GS_SPLIT");
+#ifdef __EMSCRIPTEN__
+    const bool want = e && std::strcmp(e, "1") == 0;
+#else
+    const bool want = !e || std::strcmp(e, "0") != 0;  // on by default on the desktop
+#endif
+    g_split.on = want && queue::active() && g_mode == Mode::primary && !texpack::dumping() && !drawdbg::enabled() && !native::active();
+    g_split.clut = g_clut_slot;
+    if (g_split.on) std::thread(split_worker).detach();
+    const char *p = std::getenv("PS2_GS_PRIMS");  // on with the split, unless 0
+    g_split.prims = g_split.on && (!p || std::strcmp(p, "0") != 0);
+    if (g_split.prims) std::thread(prims_worker).detach();
+    if (e && std::strcmp(e, "1") == 0 && !g_split.on) std::fprintf(stderr, "[gpu] PS2_GS_SPLIT needs the render thread, PS2_GS=gpu, and no texture dump, frame debugger or native renderer\n");
+    return g_split.on;
+}
+
+inline bool split_on() { return g_split.checked ? g_split.on : split_check(); }
+
+// Render thread: hands the chunk being filled to gsdraw.
+void split_publish() {
+    Chunk &c = g_split.cur;
+    if (!c.used) return;
+    std::unique_lock lock(g_split.m);
+    g_split.space.wait(lock, [] { return g_split.raw.size() + g_split.full.size() < 64; });
+    (g_split.prims ? g_split.raw : g_split.full).push_back(std::move(c));
+    ++g_split.posted;
+    c = Chunk{};
+    if (!g_split.spare.empty()) {
+        c = std::move(g_split.spare.back());
+        g_split.spare.pop_back();
+    }
+    lock.unlock();
+    (g_split.prims ? g_split.raw_work : g_split.work).notify_one();
+}
+
+// Render thread: room for an op's payload in the chunk being filled, not posted yet (split_op posts it there)
+std::uint8_t *split_room(std::size_t bytes) {
+    const std::size_t words = 1 + (bytes + 7) / 8;
+    Chunk &c = g_split.cur;
+    if (c.used + words > c.words.size()) {
+        split_publish();
+        if (c.words.size() < words) c.words.resize(std::max(words, kChunkWords));
+    }
+    return reinterpret_cast<std::uint8_t *>(c.words.data() + c.used + 1);
+}
+
+// Render thread: posts an op; returns where its payload goes.
+std::uint8_t *split_op(std::uint32_t op, std::size_t bytes) {
+    std::uint8_t *at = split_room(bytes);
+    Chunk &c = g_split.cur;
+    c.words[c.used] = op | static_cast<std::uint64_t>(bytes) << 32;
+    c.used += 1 + (bytes + 7) / 8;
+    return at;
+}
+
+void split_post(std::uint32_t op, std::initializer_list<std::uint64_t> args) {
+    std::memcpy(split_op(op, args.size() * 8), args.begin(), args.size() * 8);
+}
+
+// Render thread: runs everything posted so far; the renderer's state is the render thread's until the next post.
+void split_sync() {
+    if (!g_split.on) return;
+    split_publish();
+    std::unique_lock lock(g_split.m);
+    g_split.idle.wait(lock, [] { return g_split.done == g_split.posted; });
+}
+
+}  // namespace
+
+void publish_draws() {
+    if (g_split.on) split_publish();
+}
+
+void draw(const State &st, const Vertex *v, int count, texcache::Run run) {
+    const bool split = split_on();
+    if (!split) draw_head();
+    std::uint64_t attr = st.prim;
+    if (!(st.prmodecont & 1u)) attr = (st.prim & 7u) | (st.prmode & ~7ull);
+    const std::uint32_t prim = static_cast<std::uint32_t>(st.prim) & 7u;
+    const Context &c = st.ctx[(attr >> 9) & 1u];
+    SetupCache &cache = g_setup_cache;
+    const std::uint32_t clut = split ? g_split.clut : g_clut_slot;
+    if (cache.generation != g_setup_generation || cache.attr != attr || cache.clut != clut) {
+        cache.generation = g_setup_generation;
+        cache.attr = attr;
+        cache.clut = clut;
+        const std::uint32_t *w = cache.setup;
+        cache.flags = make_setup(st, attr, cache.setup, clut);
+        cache.key = static_cast<std::uint64_t>(w[1]) | (static_cast<std::uint64_t>(w[2]) << 14) | (static_cast<std::uint64_t>(w[3]) << 20) |
+                    (static_cast<std::uint64_t>(w[5]) << 26) | (static_cast<std::uint64_t>(w[6]) << 40);
+        cache.mips = 0;
+        cache.pack_key = 0;
+        if (cache.flags & 2u) {
+            cache.tex = level_range(w, 0);
+            cache.mips = mip_levels(w);
+            for (std::uint32_t n = 1; n <= cache.mips; ++n) cache.levels[n] = level_range(w, n);
+            if (split && texpack::packing() && ((w[7] >> 24) & 3u) != 3u && ((w[7] >> 26) & 3u) != 3u) cache.pack_key = texpack::key(st);
+            else if (texpack::active() && pack_candidate(cache)) replace_texture(texpack::key(st), cache);
+        }
+        cache.hw = g_hw ? hw_setup(cache.setup) : kHwOk;
+        if (split) std::memcpy(split_op(kOpSetup, sizeof cache), static_cast<const void *>(&cache), sizeof cache);
+    }
+    const auto skip = [&](std::uint8_t why) { split ? void(split_op(kOpSkip | static_cast<std::uint32_t>(why) << 8, 0)) : draw_skip(why); };
+    // ZTST NEVER, or ATST NEVER with AFAIL KEEP: the primitive writes nothing, and would only end a hardware batch
+    if (cache.hw == kHwZNever || cache.hw == kHwANever) return skip(cache.hw);
+    const int ofx = static_cast<int>(c.xyoffset & 0xFFFFu), ofy = static_cast<int>((c.xyoffset >> 32) & 0xFFFFu);
+    if (split && g_split.prims) {  // gsprim builds the record
+        RawPrim &r = *new (split_room(kPrimRoom)) RawPrim;
+        std::memcpy(static_cast<void *>(r.v), v, sizeof r.v);
+        r.prim = prim;
+        r.count = count;
+        r.ofx = ofx;
+        r.ofy = ofy;
+        r.run = run;
+        split_op(kOpRawPrim, kPrimRoom);
+        return;
+    }
+    // split: built in the chunk's free room, and posted there at the end (a skip leaves it unposted)
+    PrimOp local;
+    PrimOp &op = split ? *new (split_room(sizeof(PrimOp))) PrimOp : local;
+    if (!build_prim(cache, ofx, ofy, v, count, prim, run, op)) return skip(kHwReasons);
+    if (split) split_op(kOpPrim, sizeof op);
     else draw_back(cache, op);
 }
 
@@ -5032,6 +5136,7 @@ void collect_download() {
     if (!g_pending.busy || !g_pending.ready) return;
     const void *mapped = wgpuBufferGetConstMappedRange(g_pending.buffer, 0, g_pending.bytes);
     if (mapped) std::memcpy(g_pending.memory + g_pending.offset, mapped, g_pending.bytes);
+    texpack::downloaded();
     wgpuBufferUnmap(g_pending.buffer);
     g_pending.busy = g_pending.ready = false;
 }
@@ -5083,6 +5188,7 @@ bool finish_download(std::uint32_t serial) {
 }
 
 void download(std::uint8_t *memory, std::uint32_t offset, std::uint32_t bytes) {
+    texpack::downloaded();
     split_sync();
     chain_flush();
     if (native_bound()) tiles_access(Range{offset, static_cast<std::uint64_t>(offset) + bytes}, false);
