@@ -29,7 +29,7 @@ for spec in "$@"; do
   scene=${spec%%:*} n=${spec#*:} i=$((i + 1))
   IFS=$'\t' read -r _ state _ args < <(awk -F'\t' -v s="$scene" '$1 == s' "$here/remaster/scenes.tsv")
   start=$(python3 -I -c "import json, sys; print(json.load(open(sys.argv[1]))['frame'])" "$D/states/${state%.state}.json")
-  args=${args//@story/$(tr '\n' ' ' < "$here/mksm/inputs/story.args")}
+  for w in $args; do [[ $w == @* ]] && args=${args//$w/$(tr '\n' ' ' < "$here/mksm/inputs/${w#@}.args")}; done
   [ -n "$args" ] || args=$(fight $((start + 30)) $((start + n)) | tr '\n' ' ')
   o=$out/$i-$scene
   rm -rf "$o"; mkdir -p "$o"; mkfifo "$o/frames"
