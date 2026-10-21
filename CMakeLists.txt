@@ -10,6 +10,20 @@ set(PS2_GENERATED "" CACHE PATH "Folder with the C++ generated for a game")
 # contraction even when a -march allows it
 add_compile_options(-ffp-contract=off)
 
+# profile-guided optimisation (clang): PS2_PGO=generate builds a training binary (it writes LLVM_PROFILE_FILE),
+# PS2_PGO=<merged .profdata> builds with the profile
+set(PS2_PGO "" CACHE STRING "generate, or a merged .profdata to build with")
+if(PS2_PGO STREQUAL "generate")
+    add_compile_options(-fprofile-generate)
+    add_link_options(-fprofile-generate)
+elseif(PS2_PGO)
+    add_compile_options(-fprofile-use=${PS2_PGO} -Wno-profile-instr-unprofiled -Wno-profile-instr-out-of-date -Wno-backend-plugin)
+    # The GS threads (front end, gsdraw) build without it: with the profile the front end ran ~18% slower (trained on
+    # lavapipe or on the mock ICD alike; cause unknown), while the EE and VU1 threads ran ~10% faster.
+    file(GLOB_RECURSE PS2_PGO_GS CONFIGURE_DEPENDS runtime/src/gs/*.cpp)
+    set_source_files_properties(${PS2_PGO_GS} PROPERTIES COMPILE_OPTIONS -fno-profile-instr-use)
+endif()
+
 if(EMSCRIPTEN)
     add_compile_options(-msimd128 -mtail-call -fwasm-exceptions -sWASM_LEGACY_EXCEPTIONS=0 -pthread)
     add_link_options(-msimd128 -mtail-call -fwasm-exceptions -sWASM_LEGACY_EXCEPTIONS=0 -pthread)

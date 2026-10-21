@@ -26,6 +26,7 @@
 
 void register_generated_code();
 void register_generated_vu();
+extern "C" [[gnu::weak]] int __llvm_profile_write_file();  // compiler-rt profile, in -fprofile-generate builds only
 
 namespace {
 
@@ -58,6 +59,7 @@ int run_threaded_headless(const std::function<int()> &emulate) {
         if (ps2::render_pending(false, none, nullptr, 8.0) == ps2::Rendered::idle) ps2::wait_render_work(4);
     emulation.join();
     std::fflush(nullptr);
+    if (__llvm_profile_write_file) __llvm_profile_write_file();  // PGO training builds: _Exit skips the profile's atexit write
     std::_Exit(result);
 }
 
