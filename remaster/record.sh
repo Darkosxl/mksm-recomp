@@ -19,7 +19,7 @@ fight() { for ((f = $1; f < $2; f += 260)); do echo "--press $f:up:90 --press $(
 case $mode in
   original) look=(PS2_SCALE=1) vf="format=yuv444p,hwupload_cuda,scale_cuda=1920:1440:interp_algo=lanczos:format=yuv420p,pad_cuda=2560:1440:320:0,setsar=1" cap=${CAP:-67} ;;
   remaster) look=(PS2_SCALE=3x6 PS2_PNACH=$here/mksm/patches/widescreen.pnach PS2_ASPECT=16:9 PS2_FIELD_FLAG=4F4D68,66189C,67B758 PS2_TEX_PACK=$D/textures/pack-v2)
-            vf="hwupload_cuda,scale_cuda=2560:1440:interp_algo=lanczos,setsar=1" cap=${CAP:-45} ;;  # 50: 48 fps, 77-95 C
+            vf="hwupload_cuda,scale_cuda=2560:1440:interp_algo=lanczos,setsar=1" cap=${CAP:-40} ;;  # laptop, 2-min route: 45 runs p90 90-95 C, 40 p90 78 C
   *) echo "mode: original or remaster" >&2; exit 2 ;;
 esac
 mkdir -p "$out"
