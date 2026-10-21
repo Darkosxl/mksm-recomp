@@ -1004,7 +1004,12 @@ void tiles_apply();
 void tiles_writeback();
 bool native_tiles();
 
+void chain_flush(bool join = false);
+bool chainable();
+void chain_defer();
+
 void emit_all() {
+    chain_flush(true);
     emit_pre();
     if (native_tiles()) {  // replace mode, tiles: the write-backs the pending batch needs go ahead of it
         tiles_apply();
@@ -1024,6 +1029,7 @@ void tiles_access(const Range &r, bool write, int cause = kByAccess);
 bool native_bound();
 
 void queue_pre(const PreOp &op) {
+    chain_flush();
     if (native_bound()) {  // an upload over the bound target's pages, or a CLUT load from them
         const std::size_t pending = g_native_draws.size();
         tiles_access(op.range, !op.clut);
@@ -1741,12 +1747,12 @@ struct NativeTarget {
 // when the batch goes into the stream, tiles_apply); the last three per buffer, [0] the frame, [1] the Z buffer, which
 // other targets can alias apart (the glow drawn over the Z buffer leaves the frame's colour in the target).
 // A hardware batch reading its own target (the glow's feedback) draws into the shadow, a second colour + alpha pair,
-// while it reads the target, then the two trade places (hw_flush): the shadow equals the target but in dirty (GS
-// pixels x0 y0 x1 y1; empty: x0 > x1), the bounding box of what went into the target since, which the batch first
-// copies over (a draw in its own pass, no copy between passes).
+// while it reads the target, then the two trade places (hw_flush): the shadow equals the target but in dirty (rects of
+// GS pixels x0 y0 x1 y1, mark_dirty), what went into the target since, which the batch first copies over (draws in its
+// own pass, no copy between passes).
 struct Binding {
     NativeTarget target, shadow;  // the shadow: colour and alpha only (the Z buffer stays with the target), made on first use
-    int dirty[4] = {1, 1, 0, 0};
+    int dirty[8][4] = {}, dirties = 0;
     // the tile write-back's bindings, per colour texture (binding_group: made when encoded, encoding thread only)
     WGPUBindGroup group[2] = {};
     WGPUTextureView group_view[2] = {};
@@ -1800,6 +1806,7 @@ struct Native {
     std::map<std::array<WGPUTextureView, kSources + 1>, WGPUBindGroup> source_groups;  // per colour view of each slot, the Z source's depth
     WGPUPipelineLayout render_layout = nullptr;
     std::uint64_t sourced = 0, swapped = 0, blitted = 0;  // setups read from a target, batches drawn into the shadow, samples copied to it
+    std::uint64_t chained = 0, levels = 0;  // batches into the chain, its levels drawn (chain_flush)
     std::uint64_t zsourced = 0;  // setups read from a target's depth (kSourceZ)
     // transfers: tiles one target holds newer moved into another target's view of the same memory in another format,
     // instead of a write-back and an import (xfer_plan); group 1 of the transfer pipelines per colour view of the target
@@ -2721,9 +2728,22 @@ void mark_dirty(Binding &b, int x0, int y0, int x1, int y1) {
     x0 = std::max(x0, 0), y0 = std::max(y0, 0);
     x1 = std::min(x1, static_cast<int>(b.target.width / g_sx) - 1), y1 = std::min(y1, static_cast<int>(b.target.height / g_sy) - 1);
     if (x0 > x1 || y0 > y1) return;
-    int *d = b.dirty;
-    if (d[0] > d[2]) d[0] = x0, d[1] = y0, d[2] = x1, d[3] = y1;
-    else d[0] = std::min(d[0], x0), d[1] = std::min(d[1], y0), d[2] = std::max(d[2], x1), d[3] = std::max(d[3], y1);
+    // into the rect whose bounding box with it outgrows the two least, unless that grows and another rect fits
+    int best = -1;
+    long grow = 0;
+    for (int k = 0; k < b.dirties; ++k) {
+        const int *d = b.dirty[k];
+        const long g = static_cast<long>(std::max(d[2], x1) - std::min(d[0], x0) + 1) * (std::max(d[3], y1) - std::min(d[1], y0) + 1) -
+                       static_cast<long>(d[2] - d[0] + 1) * (d[3] - d[1] + 1) - static_cast<long>(x1 - x0 + 1) * (y1 - y0 + 1);
+        if (best < 0 || g < grow) best = k, grow = g;
+    }
+    if (best < 0 || (grow > 0 && b.dirties < 8)) {
+        int *d = b.dirty[b.dirties++];
+        d[0] = x0, d[1] = y0, d[2] = x1, d[3] = y1;
+        return;
+    }
+    int *d = b.dirty[best];
+    d[0] = std::min(d[0], x0), d[1] = std::min(d[1], y0), d[2] = std::max(d[2], x1), d[3] = std::max(d[3], y1);
 }
 
 void tiles_import(Binding &b, const std::vector<std::uint32_t> &list) {
@@ -3390,7 +3410,24 @@ void xfer_emit(Binding &x) {
     }
 }
 
-void hw_flush() {
+// The pending batch, gone into the stream (or the chain).
+void batch_clear() {
+    Batch &b = g_batch;
+    b.prims.clear();
+    b.setups.clear();
+    b.boxes.clear();
+    b.dbg_draws.clear();
+    g_batch_reads.clear();
+    b.key = ~0ull;
+    b.hw = false;
+    b.binding = nullptr;
+    b.minx = b.miny = 1 << 30;
+    b.maxx = b.maxy = -1;
+}
+
+// A hardware batch into the stream, first half (hw_flush): its textures' sources (src, zsrc) and the coherence work it
+// needs, the write-backs and transfers, the claim of its pages and the import of its tiles.
+void hw_prep(Binding *(&src)[kSources], Binding *&zsrc) {
     Batch &b = g_batch;
     Binding &x = *b.binding;
     const std::uint32_t prims = static_cast<std::uint32_t>(b.prims.size() / kPrimWords);
@@ -3400,10 +3437,9 @@ void hw_flush() {
     // pages drawn here.
     static std::vector<TexelRect> rects;
     texel_rects(prims, rects);
-    Binding *src[kSources] = {};
     int sr[kSources][4];
     for (auto &r : sr) r[0] = r[1] = 1 << 30, r[2] = r[3] = -1;
-    Binding *zsrc = nullptr;  // the Z source (kSourceZ) and the GS pixels read of it
+    // the Z source (kSourceZ) and the GS pixels read of it
     int zr[4] = {1 << 30, 1 << 30, -1, -1};
     bool zuse = false;  // a primitive reads or writes Z (ZTE with ZTST ALWAYS and ZMSK does neither)
     for (std::uint32_t i = 0; i < setups; ++i) {
@@ -3468,9 +3504,7 @@ void hw_flush() {
     tiles_writeback();
     static std::vector<std::uint32_t> list;
     list.clear();
-    bool self = false;  // the batch reads its own target: it draws into the shadow
     for (std::uint32_t k = 0; k < kSources && src[k]; ++k) {
-        self = self || src[k] == &x;
         tiles_take(*src[k], sr[k][0] / t, sr[k][1] / t, sr[k][2] / t, sr[k][3] / t, kTileColor, 0, list);
         tiles_import(*src[k], list);
         list.clear();
@@ -3486,19 +3520,29 @@ void hw_flush() {
     // the VRAM-newer tiles under the primitives come into the target, which then holds them newer
     for (const PrimTake &p : takes) tiles_take(x, p.x0, p.y0, p.x1, p.y1, p.buffers, p.writes, list, p.over ? p.o : nullptr, p.writes);
     tiles_import(x, list);
+}
+
+// Second half: the draws, into the target, or (the batch reads it, self) into the shadow, which then trades places with
+// the target. chained: a level of the chain (chain_flush), whose batches marked their pages rendered when they went in.
+void hw_draw(Binding *const *src, Binding *zsrc, bool chained) {
+    Batch &b = g_batch;
+    Binding &x = *b.binding;
+    const std::uint32_t prims = static_cast<std::uint32_t>(b.prims.size() / kPrimWords);
     const NativeTarget *slots[kSources] = {};
     std::uint32_t own = 0;
+    bool self = false;
     for (std::uint32_t k = 0; k < kSources; ++k) {
         slots[k] = src[k] ? &src[k]->target : nullptr;
-        if (src[k] == &x) own = k;
+        if (src[k] == &x) own = k, self = true;
     }
     const WGPUBindGroup source = source_group(slots, zsrc ? &zsrc->target : nullptr);
     NativeTarget tg = x.target;  // what the draws go into
     if (self) {  // the shadow first gets what the target has newer (in the draws' pass)
         if (!x.shadow.color) make_shadow(x);
         tg.color = x.shadow.color, tg.color_view = x.shadow.color_view, tg.alpha = x.shadow.alpha, tg.alpha_view = x.shadow.alpha_view;
-        const int *dr = x.dirty;
-        if (dr[0] <= dr[2]) {
+        const std::uint32_t param = x.dirties ? push_params({0u, 0u, 0u, 0u, 0u, 0u, 0u, tg.width, tg.height, own, 0u, 0u, 0u, 0u, 0u, 0u}) : 0u;
+        for (int k = 0; k < x.dirties; ++k) {
+            const int *dr = x.dirty[k];
             NativeDraw d;
             d.pipeline = native_pipeline(kNativeBlit);
             d.vram = false;
@@ -3506,7 +3550,7 @@ void hw_flush() {
             d.depth = tg.depth_view;
             d.alpha = tg.alpha_view;
             d.source = source;
-            d.param = push_params({0u, 0u, 0u, 0u, 0u, 0u, 0u, tg.width, tg.height, own, 0u, 0u, 0u, 0u, 0u, 0u});
+            d.param = param;
             d.vertices = 3;
             d.scissor[0] = static_cast<std::uint32_t>(dr[0]) * g_sx;
             d.scissor[1] = static_cast<std::uint32_t>(dr[1]) * g_sy;
@@ -3515,7 +3559,7 @@ void hw_flush() {
             g_native_draws.push_back(d);
             g_nat.blitted += static_cast<std::uint64_t>(d.scissor[2]) * d.scissor[3];
         }
-        x.dirty[0] = 1, x.dirty[2] = 0;
+        x.dirties = 0;
         ++g_nat.swapped;
     }
     emit_native();  // the write-backs and the import go ahead of the decodes, which may read what they wrote back
@@ -3598,20 +3642,199 @@ void hw_flush() {
         std::swap(x.target.color, x.shadow.color), std::swap(x.target.color_view, x.shadow.color_view);
         std::swap(x.target.alpha, x.shadow.alpha), std::swap(x.target.alpha_view, x.shadow.alpha_view);
     }
-    mark_dirty(x, b.minx, b.miny, b.maxx, b.maxy);
+    if (!chained) mark_dirty(x, b.minx, b.miny, b.maxx, b.maxy);
+    for (std::uint32_t i = 0; chained && i < prims; ++i)  // a level's primitives lie apart: the boxes, not their bounding box
+        mark_dirty(x, static_cast<int>(b.prims[i * kPrimWords + 2] & 0xFFFFu), static_cast<int>(b.prims[i * kPrimWords + 2] >> 16),
+                   static_cast<int>(b.prims[i * kPrimWords + 3] & 0xFFFFu), static_cast<int>(b.prims[i * kPrimWords + 3] >> 16));
     ++g_nat.drawn;
-    mark_rendered(b.fbp, b.fbw, b.fpsm, b.minx, b.miny, b.maxx, b.maxy);
-    if (b.zwrite) mark_rendered(b.zbp, b.fbw, b.zpsm, b.minx, b.miny, b.maxx, b.maxy);
-    b.prims.clear();
-    b.setups.clear();
-    b.boxes.clear();
-    b.dbg_draws.clear();
-    g_batch_reads.clear();
-    b.key = ~0ull;
-    b.hw = false;
-    b.binding = nullptr;
-    b.minx = b.miny = 1 << 30;
-    b.maxx = b.maxy = -1;
+    if (!chained) mark_rendered(b.fbp, b.fbw, b.fpsm, b.minx, b.miny, b.maxx, b.maxy);
+    if (!chained && b.zwrite) mark_rendered(b.zbp, b.fbw, b.zpsm, b.minx, b.miny, b.maxx, b.maxy);
+    batch_clear();
+}
+
+void hw_flush() {
+    Binding *src[kSources] = {}, *zsrc = nullptr;
+    hw_prep(src, zsrc);
+    hw_draw(src, zsrc, false);
+}
+
+// ---- Chains: the glow's blur is a hundred hardware batches over one target in a row, each split from the next by a
+// texture read of what it drew (draw()), a render pass each. A batch whose textures all read its own target inside it
+// goes into the chain instead (chain_defer: its coherence work into the stream now, as hw_flush's, the draws later), and
+// the chain's draws go into the stream in levels, a pass each (chain_flush): a primitive reads in the target what the
+// batches before its own drew and nothing else, as with a pass per batch, and each pixel sees its draws in program order.
+// So a primitive's level is above that of every earlier batch's primitive drawing where it reads, at least that of every
+// earlier batch's primitive reading or drawing where it draws, and inside its batch not below an earlier primitive
+// drawing where it draws (or reading there), nor above one drawing where it reads. Draws are the boxes, reads the exact
+// texel rects (sprite_texels). Batches go in only where hw_flush's coherence work commutes with the chain's draws before
+// them: what it imports into the target no batch of the chain has touched (that took the tiles), and nothing reads the
+// target but the chain. Whatever else reads or writes VRAM or a target puts the chain into the stream first.
+struct Chain {
+    Binding *x = nullptr;
+    std::vector<std::uint32_t> prims, setups, ends;  // ends: the primitive count at each batch's end
+} g_chain;
+
+// Whether the pending batch can go into the chain: hardware, every texture read from its own target inside it (hw_prep's
+// one source, no pages), no Z, no alpha test (two draws a run), nothing ahead of it in the stream.
+bool chainable() {
+    const Batch &b = g_batch;
+    Binding *x = b.binding;
+    const std::uint32_t prims = static_cast<std::uint32_t>(b.prims.size() / kPrimWords), setups = static_cast<std::uint32_t>(b.setups.size() / kSetupWords);
+    // ponytail: 256 primitives, the in-batch level solve is quadratic
+    if (!b.hw || !x || !prims || prims > 256 || (g_chain.x && g_chain.x != x) || !g_pre.empty() || g_native_draws.size() != g_native_emitted || tiles_queued()) return false;
+    static std::vector<TexelRect> rects;
+    texel_rects(prims, rects);
+    for (std::uint32_t i = 0; i < setups; ++i) {
+        const std::uint32_t *w = b.setups.data() + i * kSetupWords;
+        if (((w[0] & 512u) && (!(w[0] & 32u) || ((w[7] >> 8) & 3u) != 1u)) || ((w[0] & 64u) && (w[7] & 7u) != 1u)) return false;
+        Source so;
+        if ((w[0] & 2u) && (!source_of(w, rects[i], so) || so.y[0] != x || so.y[1] || so.flags)) return false;
+    }
+    return true;
+}
+
+// The texels (r: x0 y0 x1 y1) an FST sprite reads (hw_fs, gs.wgsl sample): the coordinates at its first and last samples
+// within 1/512 + |u| / 65536 (far past the GPU's division and rounding; none at a sample on the sprite's first coordinate,
+// where hw_fs's u is u0's), F_RT_HIRES's 1/100 sample, a texel either side when bilinear, the wrap mode's clamp.
+void sprite_texels(const std::uint32_t *rec, const std::uint32_t *w, int r[4]) {
+    float uv[6];
+    std::memcpy(uv, rec + 15, sizeof uv);
+    const bool hires = (w[0] & kRtHires) && !one_to_one(rec, w), linear = w[0] & 16384u;  // one_to_one: well inside hw_fs's test
+    for (int a = 0; a < 2; ++a) {
+        const double s = a ? g_sy : g_sx, p0 = u2f(rec[4 + a]), d = u2f(rec[6 + a]), t0 = uv[a] / 16.0, dt = (static_cast<double>(uv[3 + a]) - uv[a]) / 16.0;
+        const bool snap = !hires && std::fabs(dt) >= std::fabs(d) * 0.9991;  // hw_fs's snap to the pixel (0.999), with a margin
+        const double first = static_cast<double>(a ? rec[2] >> 16 : rec[2] & 0xFFFFu), last = static_cast<double>(a ? rec[3] >> 16 : rec[3] & 0xFFFFu) + (snap ? 0.0 : (s - 1) / s);
+        double lo = 1e30, hi = -1e30;
+        for (const double p : {first, last}) {
+            const double u = d != 0.0 ? t0 + dt * ((p - p0) / d) : t0, e = p == p0 ? 0.0 : 1.0 / 512 + std::fabs(u) / 65536;
+            lo = std::min(lo, u - e), hi = std::max(hi, u + e + (hires ? 0.01 / s : 0.0));
+        }
+        const std::uint32_t mode = (w[7] >> (24 + 2 * a)) & 3u, size = 1u << ((w[15] >> (8 * a)) & 0xFFu), region = w[18 + a];
+        const int mn = mode == 2 ? static_cast<int>(region & 0x3FFu) : 0, mx = std::max(mn, mode == 2 ? static_cast<int>(region >> 16) : static_cast<int>(size) - 1);
+        r[a] = std::clamp(static_cast<int>(std::floor(lo)) - (linear ? 1 : 0), mn, mx);
+        r[a + 2] = std::clamp(static_cast<int>(std::floor(hi)) + (linear ? 1 : 0), mn, mx);
+    }
+}
+
+// The pending batch into the chain (chainable).
+void chain_defer() {
+    Batch &b = g_batch;
+    Chain &c = g_chain;
+    c.x = b.binding;
+    Binding *src[kSources] = {}, *zsrc = nullptr;
+    hw_prep(src, zsrc);
+    emit_native();
+    const std::uint32_t prims = static_cast<std::uint32_t>(b.prims.size() / kPrimWords), setups = static_cast<std::uint32_t>(b.setups.size() / kSetupWords);
+    static std::vector<std::uint32_t> at;  // each setup's index in the chain's (one copy of equal ones: longer runs)
+    at.resize(setups);
+    for (std::uint32_t i = 0; i < setups; ++i) {
+        const std::uint32_t *w = b.setups.data() + i * kSetupWords, have = static_cast<std::uint32_t>(c.setups.size() / kSetupWords);
+        std::uint32_t k = 0;
+        while (k < have && std::memcmp(c.setups.data() + k * kSetupWords, w, kSetupWords * 4)) ++k;
+        if (k == have) c.setups.insert(c.setups.end(), w, w + kSetupWords);
+        at[i] = k;
+    }
+    for (std::uint32_t i = 0; i < prims; ++i) {
+        c.prims.insert(c.prims.end(), b.prims.begin() + i * kPrimWords, b.prims.begin() + (i + 1) * kPrimWords);
+        c.prims[c.prims.size() - kPrimWords] = at[b.prims[i * kPrimWords]];
+    }
+    c.ends.push_back(static_cast<std::uint32_t>(c.prims.size() / kPrimWords));
+    mark_rendered(b.fbp, b.fbw, b.fpsm, b.minx, b.miny, b.maxx, b.maxy);  // what draw() tests next sees it drawn
+    ++g_nat.chained;
+    batch_clear();
+    if (c.ends.size() >= 256) chain_flush();  // ponytail: levels fit 16 bits
+}
+
+// The chain's draws into the stream, a level at a time; the pending batch stays pending, or (join) goes in last if it can.
+void chain_flush(bool join) {
+    Chain &c = g_chain;
+    if (c.ends.empty()) return;
+    if (join && chainable()) chain_defer();
+    if (c.ends.empty()) return;
+    Binding &x = *c.x;
+    const std::uint32_t n = static_cast<std::uint32_t>(c.prims.size() / kPrimWords);
+    // per primitive the GS pixels drawn (box), then those read (none: x0 > x1), and the grid they all fall in
+    static std::vector<int> rects, level;
+    rects.resize(n * 8);
+    level.assign(n, 0);
+    int gx0 = 1 << 30, gy0 = 1 << 30, gx1 = -1, gy1 = -1;
+    for (std::uint32_t i = 0; i < n; ++i) {
+        const std::uint32_t *rec = c.prims.data() + i * kPrimWords, *w = c.setups.data() + rec[0] * kSetupWords;
+        int *r = rects.data() + i * 8;
+        r[0] = static_cast<int>(rec[2] & 0xFFFFu), r[1] = static_cast<int>(rec[2] >> 16), r[2] = static_cast<int>(rec[3] & 0xFFFFu), r[3] = static_cast<int>(rec[3] >> 16);
+        if (w[0] & 2u) sprite_texels(rec, w, r + 4);
+        else r[4] = r[5] = 0, r[6] = r[7] = -1;
+        for (int k = 0; k < 8; k += 4)
+            if (r[k] <= r[k + 2]) gx0 = std::min(gx0, r[k]), gy0 = std::min(gy0, r[k + 1]), gx1 = std::max(gx1, r[k + 2]), gy1 = std::max(gy1, r[k + 3]);
+    }
+    // per GS pixel, 1 + the highest level an earlier batch drew (read) it at
+    const int gw = gx1 - gx0 + 1, gh = gy1 - gy0 + 1;
+    static std::vector<std::uint16_t> drawn, read;
+    drawn.assign(static_cast<std::size_t>(gw) * gh, 0);
+    read.assign(static_cast<std::size_t>(gw) * gh, 0);
+    const auto top = [&](const std::vector<std::uint16_t> &g, const int *r) {
+        int m = 0;
+        for (int y = r[1]; r[0] <= r[2] && y <= r[3]; ++y) {
+            const std::uint16_t *row = g.data() + static_cast<std::size_t>(y - gy0) * gw + (r[0] - gx0);
+            m = std::max<int>(m, *std::max_element(row, row + (r[2] - r[0] + 1)));
+        }
+        return m;
+    };
+    const auto paint = [&](std::vector<std::uint16_t> &g, const int *r, int v) {
+        for (int y = r[1]; r[0] <= r[2] && y <= r[3]; ++y) {
+            std::uint16_t *row = g.data() + static_cast<std::size_t>(y - gy0) * gw + (r[0] - gx0);
+            for (int k = 0; k <= r[2] - r[0]; ++k) row[k] = std::max<std::uint16_t>(row[k], static_cast<std::uint16_t>(v));
+        }
+    };
+    const auto hit = [](const int *p, const int *q) { return p[0] <= p[2] && q[0] <= q[2] && p[0] <= q[2] && q[0] <= p[2] && p[1] <= q[3] && q[1] <= p[3]; };
+    int levels = 0;
+    std::uint32_t i0 = 0;
+    for (const std::uint32_t end : c.ends) {
+        for (std::uint32_t i = i0; i < end; ++i) {
+            const int *r = rects.data() + i * 8;
+            level[i] = std::max({top(drawn, r + 4), top(read, r) - 1, top(drawn, r) - 1, 0});
+        }
+        for (bool moved = true; moved;) {
+            moved = false;
+            for (std::uint32_t i = i0; i < end; ++i)
+                for (std::uint32_t j = i0; j < i; ++j) {
+                    const int *ri = rects.data() + i * 8, *rj = rects.data() + j * 8;
+                    if (level[j] < level[i] && hit(rj, ri + 4)) level[j] = level[i], moved = true;
+                    if (level[i] < level[j] && (hit(rj, ri) || hit(rj + 4, ri))) level[i] = level[j], moved = true;
+                }
+        }
+        for (std::uint32_t i = i0; i < end; ++i) {
+            paint(drawn, rects.data() + i * 8, level[i] + 1);
+            paint(read, rects.data() + i * 8 + 4, level[i] + 1);
+            levels = std::max(levels, level[i] + 1);
+        }
+        i0 = end;
+    }
+    // each level through hw_draw as a batch of its own (in program order), the pending batch set aside meanwhile
+    static Batch held;
+    static std::vector<Range> held_reads;
+    std::swap(held, g_batch), std::swap(held_reads, g_batch_reads);
+    Batch &b = g_batch;
+    Binding *const src[kSources] = {&x, nullptr};
+    for (int l = 0; l < levels; ++l) {
+        for (std::uint32_t i = 0; i < n; ++i) {
+            if (level[i] != l) continue;
+            const int *r = rects.data() + i * 8;
+            b.prims.insert(b.prims.end(), c.prims.begin() + i * kPrimWords, c.prims.begin() + (i + 1) * kPrimWords);
+            b.minx = std::min(b.minx, r[0]), b.miny = std::min(b.miny, r[1]), b.maxx = std::max(b.maxx, r[2]), b.maxy = std::max(b.maxy, r[3]);
+        }
+        if (b.prims.empty()) continue;
+        b.setups = c.setups;
+        b.hw = true;
+        b.binding = &x;
+        hw_draw(src, nullptr, true);
+        ++g_nat.levels;
+    }
+    std::swap(held, g_batch), std::swap(held_reads, g_batch_reads);
+    c.x = nullptr;
+    c.prims.clear();
+    c.setups.clear();
+    c.ends.clear();
 }
 
 bool native_init() {
@@ -3820,9 +4043,10 @@ void native_stats() {
     }
     if (g_nat.tiles) {
         static const char *const kBy[] = {"emulated", "texture", "claim", "display", "access", "flush"};
-        std::fprintf(stderr, "\n[native] source: %.1f textures a frame read from a target, %.1f batches into the shadow, %.0f samples copied to it; %.1f sprites overwrite whole tiles",
-                     static_cast<double>(g_nat.sourced) / per, static_cast<double>(g_nat.swapped) / per, static_cast<double>(g_nat.blitted) / per,
-                     static_cast<double>(g_nat.overwritten) / per);
+        std::fprintf(stderr, "\n[native] source: %.1f textures a frame read from a target, %.1f batches into the shadow (%.1f of them chain levels, of %.1f batches chained), "
+                             "%.0f samples copied to it; %.1f sprites overwrite whole tiles",
+                     static_cast<double>(g_nat.sourced) / per, static_cast<double>(g_nat.swapped) / per, static_cast<double>(g_nat.levels) / per,
+                     static_cast<double>(g_nat.chained) / per, static_cast<double>(g_nat.blitted) / per, static_cast<double>(g_nat.overwritten) / per);
         std::fprintf(stderr, "\n[native] transfers per frame: %.1f tiles (%.1f overwritten), %.1f textures read from a target's depth; samples by view (CT32 frame, Z24 frame, Z24 Z buffer > that):",
                      static_cast<double>(g_nat.xfer_tiles) / per, static_cast<double>(g_nat.xfer_dead) / per, static_cast<double>(g_nat.zsourced) / per);
         static const char *const kViews[] = {"C", "F", "Z"};
@@ -4234,7 +4458,7 @@ void draw(const State &st, const Vertex *v, int count, texcache::Run run) {
     }
     // a switch between the two paths ends the batch first: the tile state an emulated primitive notes (tiles_emulated)
     // must not reach a hardware batch's flush, which marks its tiles native-newer
-    if (!g_batch.prims.empty() && g_batch.hw != hw) emit_all();
+    if ((!g_batch.prims.empty() && g_batch.hw != hw) || (!hw && !g_chain.ends.empty())) emit_all();
     if (hw) hw_bind(setup);
     else if (native_bound()) tiles_emulated(setup, flags, minx, miny, maxx, maxy, cache.tex, cache.levels, (flags & 2u) ? cache.mips : 0u);
     Batch &b = g_batch;
@@ -4257,7 +4481,10 @@ void draw(const State &st, const Vertex *v, int count, texcache::Run run) {
                     const bool cached = run == texcache::Run::same;
                     const bool frame = shares_frame(setup, b) ? drawn_under(b, rect, cached ? b.run_start : ~std::size_t{0})
                                                               : !cached && used.overlaps(b.fb_range.lo, b.fb_range.hi);
-                    if (frame || (b.zwrite && used.overlaps(b.z_range.lo, b.z_range.hi))) emit_all();
+                    if (frame || (b.zwrite && used.overlaps(b.z_range.lo, b.z_range.hi))) {
+                        if (chainable()) chain_defer();
+                        else emit_all();
+                    }
                 }
             }
             for (std::uint32_t n = 1; n <= cache.mips && !b.prims.empty(); ++n)
@@ -4318,6 +4545,7 @@ void draw(const State &st, const Vertex *v, int count, texcache::Run run) {
 }
 
 void image_begin(const State &s) {
+    chain_flush();  // anything but a draw finds the chain in the stream
     flush_image();
     Image &im = g_image;
     const std::uint64_t buf = s.bitbltbuf, pos = s.trxpos, reg = s.trxreg;
@@ -4350,6 +4578,7 @@ void image_data(const std::uint8_t *data, std::size_t bytes) {
 }
 
 void local_copy(const State &s) {
+    chain_flush();
     const std::uint64_t buf = s.bitbltbuf, pos = s.trxpos, reg = s.trxreg;
     const std::uint32_t w = static_cast<std::uint32_t>(reg) & 0xFFFu, h = static_cast<std::uint32_t>(reg >> 32) & 0xFFFu;
     if (native_bound()) {  // the source is read, the destination written
@@ -4381,6 +4610,7 @@ void local_copy(const State &s) {
 }
 
 void load_clut(std::uint64_t tex0, std::uint64_t texclut) {
+    chain_flush();
     flush_image();
     if (g_clut_loads + 2 >= kClutSlots) {
         emit_all();
@@ -4411,6 +4641,7 @@ void load_clut(std::uint64_t tex0, std::uint64_t texclut) {
 
 
 void flush() {
+    chain_flush();
     native_sync(kCloseVblank);
     if (g_mode == Mode::off) return;
     flush_all();
@@ -4418,6 +4649,7 @@ void flush() {
 }
 
 void wait_idle() {
+    chain_flush();
     flush_all();
     submit();
     drain();
@@ -4447,6 +4679,7 @@ void collect_download() {
 }
 
 bool download_async(std::uint8_t *memory, std::uint32_t offset, std::uint32_t bytes, std::uint32_t serial) {
+    chain_flush();
     if (native_bound()) tiles_access(Range{offset, static_cast<std::uint64_t>(offset) + bytes}, false);
     else native_sync();
     collect_download();
@@ -4490,6 +4723,7 @@ bool finish_download(std::uint32_t serial) {
 }
 
 void download(std::uint8_t *memory, std::uint32_t offset, std::uint32_t bytes) {
+    chain_flush();
     if (native_bound()) tiles_access(Range{offset, static_cast<std::uint64_t>(offset) + bytes}, false);
     else native_sync();
     flush_all();
@@ -4504,6 +4738,7 @@ void download(std::uint8_t *memory, std::uint32_t offset, std::uint32_t bytes) {
 }
 
 void read_state(std::vector<std::uint32_t> &vram, std::uint32_t &scale, std::vector<std::uint32_t> &clut) {
+    chain_flush();
     tiles_flush();
     native_sync();
     flush_all();
@@ -4516,6 +4751,7 @@ void read_state(std::vector<std::uint32_t> &vram, std::uint32_t &scale, std::vec
 }
 
 void write_state(const std::vector<std::uint32_t> &vram, std::uint32_t scale, const std::vector<std::uint32_t> &clut) {
+    chain_flush();
     native_sync();
     wait_idle();
     tiles_reset();  // VRAM is replaced: what the targets hold is stale everywhere
@@ -4547,6 +4783,7 @@ void stats() {
 }
 
 void native_begin(const State &st) {
+    chain_flush();
     if (!g_nat.on || g_nat.replace) return;  // replace: no XGKICK follows; the batch opens the run itself
     g_nat.in_kick = true;
     g_nat.kick_prims = 0;
@@ -4554,6 +4791,7 @@ void native_begin(const State &st) {
 }
 
 void native_batch(const State &st, const std::uint8_t *payload, std::uint32_t bytes, std::uint32_t pass) {
+    chain_flush();
     if (g_nat.on) native_record(st, payload, bytes, pass);
 }
 
@@ -4682,6 +4920,7 @@ void resize_surface(std::uint32_t width, std::uint32_t height) {
 bool has_surface() { return g_surface != nullptr; }
 
 bool present(const DisplaySource &src) {
+    chain_flush();
     native_display(src);
     if (!g_surface) return false;
     g_worker_on = worker_wanted();
@@ -4740,6 +4979,7 @@ Copy g_copies[3];
 std::uint64_t g_copy_order = 0;
 
 bool display_async(const DisplaySource &src, std::vector<std::uint32_t> &rgba, std::uint32_t &width, std::uint32_t &height) {
+    chain_flush();
     native_display(src);
 #ifdef __EMSCRIPTEN__
     wgpuInstanceProcessEvents(g_instance);
@@ -4804,6 +5044,7 @@ bool display_async(const DisplaySource &src, std::vector<std::uint32_t> &rgba, s
 }
 
 bool display(const DisplaySource &src, std::vector<std::uint32_t> &rgba, std::uint32_t &width, std::uint32_t &height) {
+    chain_flush();
     native_display(src);
     flush_all();
     const std::uint32_t param = push_params({src.fbp, src.fbw, src.psm, src.dbx, src.dby, src.width, src.height, src.halved ? 1u : 0u, 0u, src.half ? 1u : 0u});
