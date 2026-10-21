@@ -346,46 +346,39 @@ fn copy_write(@builtin(global_invocation_id) gid: vec3<u32>) {
     write_sample(prm(2u), prm(0u), prm(1u), (prm(3u) + x) & 0x7FFu, (prm(4u) + y) & 0x7FFu, k, scratch[(sy * w + sx) * n + k]);
 }
 
-// A group of prm(1) chained CLUT loads (record n turns slot src_n into dst_n = src_n+1), one thread per CLUT entry
-// walking the records in order: vram doesn't change within a group, so entry e of dst_n is the one read by the newest
-// record m <= n that covers it, else the group's base slot.
+// A group of prm(1) chained CLUT loads (record n turns slot src_n into dst_n = src_n+1), one thread per CLUT entry e
+// and record n (gid.y): vram doesn't change within a group, so entry e of dst_n is the one read by the newest record
+// m <= n that covers it (gpu.cpp emit_pre's table at prm(2): m per record and 16-entry block, two a word, 0xFFFF none),
+// else the group's base slot.
 @compute @workgroup_size(256)
 fn load_clut(@builtin(global_invocation_id) gid: vec3<u32>) {
     let e = gid.x;
+    let m = (data[prm(2u) + gid.y * 16u + e / 32u] >> (((e / 16u) & 1u) * 16u)) & 0xFFFFu;
     var value = clut[data[prm(0u)] * CLUT_ENTRIES + e];
-    for (var m = 0u; m < prm(1u); m = m + 1u) {
+    if (m != 0xFFFFu) {
         let r = prm(0u) + m * 12u;
         let cbp = data[r + 2u];
         let cpsm = data[r + 3u];
         let csa = data[r + 5u];
         let eight = data[r + 6u] != 0u;
-        var entries = 16u;
-        if (eight) {
-            entries = 256u;
-        }
         if (data[r + 4u] != 0u) {
-            let i = (e - csa * 16u) & 511u;
-            if (i < entries) {
-                value = read_pixel(cpsm, cbp, data[r + 7u], data[r + 8u] * 16u + i, data[r + 9u]);
-            }
-        } else if (e < 256u) {
+            value = read_pixel(cpsm, cbp, data[r + 7u], data[r + 8u] * 16u + ((e - csa * 16u) & 511u), data[r + 9u]);
+        } else {
             var i = e;
             if (!eight) {
                 i = (e - (csa & 15u) * 16u) & 255u;
             }
-            if (i < entries) {
-                var x = i & 7u;
-                var y = i >> 3u;
-                if (eight) {
-                    let j = (i & ~0x18u) | ((i & 0x08u) << 1u) | ((i & 0x10u) >> 1u);
-                    x = j & 15u;
-                    y = j >> 4u;
-                }
-                value = read_pixel(cpsm, cbp, 1u, x, y);
+            var x = i & 7u;
+            var y = i >> 3u;
+            if (eight) {
+                let j = (i & ~0x18u) | ((i & 0x08u) << 1u) | ((i & 0x10u) >> 1u);
+                x = j & 15u;
+                y = j >> 4u;
             }
+            value = read_pixel(cpsm, cbp, 1u, x, y);
         }
-        clut[data[r + 1u] * CLUT_ENTRIES + e] = value;
     }
+    clut[data[prm(0u) + gid.y * 12u + 1u] * CLUT_ENTRIES + e] = value;
 }
 
 @compute @workgroup_size(8, 8)

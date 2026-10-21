@@ -974,7 +974,18 @@ void emit_pre() {
             }
             ++r;
         }
-        if (clut) g_commands.push_back({kLoadClut, kClutEntries / 256, 1, push_params({offset, count})});  // one thread per entry
+        if (clut) {  // per record and 16-entry block, the newest record at or before it that loads the block (gs.wgsl load_clut)
+            std::uint32_t own[32], *t = g_arena.grow(count * 16u);
+            std::fill(own, own + 32, 0xFFFFu);
+            const std::uint32_t *q = g_arena.data() + offset, table = static_cast<std::uint32_t>(t - g_arena.data());
+            for (std::uint32_t m = 0; m < count; ++m, q += 12) {  // q[4] CSM2, q[5] CSA, q[6] 8-bit
+                const std::uint32_t first = q[4] ? q[5] : q[6] ? 0u : q[5] & 15u;
+                for (std::uint32_t b = 0; b < (q[6] ? 16u : 1u); ++b) own[(first + b) & 31u] = m;
+                for (std::uint32_t b = 0; b < 16; ++b) t[m * 16 + b] = own[b * 2] | own[b * 2 + 1] << 16;
+            }
+            // ponytail: one row of threads per record, up to 65535 a group (a dispatch dimension's most)
+            g_commands.push_back({kLoadClut, kClutEntries / 256, count, push_params({offset, count, table})});  // one thread per entry and record
+        }
         else dispatch_linear(kUpload, total * g_samples, push_params({offset, count, total}));  // one thread per sample
     }
     g_pre.clear();
