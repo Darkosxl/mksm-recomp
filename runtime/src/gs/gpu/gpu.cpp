@@ -168,6 +168,7 @@ struct NativeDraw {
     WGPUBindGroup source = nullptr;  // the render pipelines' group 1: the targets a hardware batch reads (kSource)
     std::uint32_t scissor[4] = {};
     double constant = 0.0;  // blend constant (FIX / 128)
+    bool vram = true;  // reads VRAM (an import, a texture neither decoded nor a target's): uploads stay behind it (hoist_commands)
 };
 std::vector<NativeDraw> g_native_draws;
 std::size_t g_native_emitted = 0;
@@ -1485,36 +1486,43 @@ void drain() {
 // CLUT loads and decodes write storage no render pass before them reads (a fresh CLUT slot, a fresh range of the decoded
 // buffer; both are only reused after a submit) and read only what compute passes wrote (render passes never write VRAM):
 // each moves ahead of the render-only native commands just before it, so the stream switches between compute and render
-// passes less (every switch waits for the GPU to finish the pass before). Native commands left side by side merge.
+// passes less (every switch waits for the GPU to finish the pass before). Uploads write VRAM, so they only move ahead of
+// render-only commands that read none of it (NativeDraw::vram). Native commands left side by side merge.
 void hoist_commands() {
     if (g_native_draws.empty()) return;
     static std::vector<Command> out;
     static std::vector<std::uint8_t> render;  // per out command: native draws without a write-back or check
+    static std::vector<std::uint8_t> vram;  // per out command: native draws that read VRAM
     static std::vector<std::uint32_t> moved;  // old command index -> new (PS2_GPU_PROFILE's notes)
     out.clear();
     render.clear();
+    vram.clear();
     moved.assign(g_commands.size(), 0);
     for (std::size_t i = 0; i < g_commands.size(); ++i) {
         const Command &c = g_commands[i];
-        if (c.pipeline == kLoadClut || c.pipeline == kDecode) {
+        if (c.pipeline == kLoadClut || c.pipeline == kDecode || c.pipeline == kUpload) {
             std::size_t at = out.size();
-            while (at && render[at - 1]) --at;
+            while (at && render[at - 1] && (c.pipeline != kUpload || !vram[at - 1])) --at;
             g_hoisted += at != out.size();
             out.insert(out.begin() + static_cast<std::ptrdiff_t>(at), c);
             render.insert(render.begin() + static_cast<std::ptrdiff_t>(at), 0);
+            vram.insert(vram.begin() + static_cast<std::ptrdiff_t>(at), 0);
             if (g_profile_out)
                 for (std::size_t k = 0; k < i; ++k) moved[k] += moved[k] >= at;
             moved[i] = static_cast<std::uint32_t>(at);
             continue;
         }
-        bool only = c.pipeline == kNativeDraws;
+        bool only = c.pipeline == kNativeDraws, reads = false;
         for (std::uint32_t k = c.x; only && k < c.x + c.y; ++k) only = !g_native_draws[k].writeback[0] && !g_native_draws[k].check;
+        for (std::uint32_t k = c.x; c.pipeline == kNativeDraws && k < c.x + c.y; ++k) reads = reads || g_native_draws[k].vram;
         if (c.pipeline == kNativeDraws && !out.empty() && out.back().pipeline == kNativeDraws && out.back().x + out.back().y == c.x) {
             out.back().y += c.y;
             render.back() = render.back() && only;
+            vram.back() = vram.back() || reads;
         } else {
             out.push_back(c);
             render.push_back(only);
+            vram.push_back(reads);
         }
         moved[i] = static_cast<std::uint32_t>(out.size() - 1);
     }
@@ -3493,6 +3501,7 @@ void hw_flush() {
         if (dr[0] <= dr[2]) {
             NativeDraw d;
             d.pipeline = native_pipeline(kNativeBlit);
+            d.vram = false;
             d.color = tg.color_view;
             d.depth = tg.depth_view;
             d.alpha = tg.alpha_view;
@@ -3567,6 +3576,7 @@ void hw_flush() {
             if ((flags & kRtHires) && rec[1] == 1) key |= kNativeRtHires;  // gs.wgsl RT_HIRES: sprites only (hw_fs)
             if (flags & kSourceZ) key |= kNativeSourceZ;
             d.pipeline = native_pipeline(key);
+            d.vram = !(key & (kNativeDecoded | kNativePlain | kNativeSourced)) || (key & kNativeSourceZ);
             d.color = tg.color_view;
             d.depth = tg.depth_view;
             d.alpha = tg.alpha_view;
