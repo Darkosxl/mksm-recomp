@@ -384,7 +384,7 @@ Lower lower(std::uint32_t w, std::uint32_t pc) {
         case 0x69: c = std::format("set_vi(r, {}, vu::itop()); ", it); break;
         case 0x6C: c = std::format("vu::kick(1, r.vi[{}]); ", is); break;
         case 0x70: case 0x71: case 0x72: case 0x73: case 0x74: case 0x75: case 0x76: case 0x78: case 0x79: case 0x7A: case 0x7C: case 0x7D: case 0x7E:
-            c = std::format("efu(r, {}u, {}u, {}u); ", index, fs, fsf);
+            c = std::format("efu(r, {}u, r.vf[{}], {}u); ", index, fs, fsf);
             break;
         case 0x7B: break;
         default: l.supported = false; break;
@@ -466,6 +466,26 @@ std::string local_vi(std::string o) {
     }
     const std::size_t body = o.find("    goto L_");
     o.insert(body, declare);
+    if (!sync.empty()) {
+        replace_all(o, "vu::interpret(", sync + "vu::interpret(");
+        replace_all(o, "r.tpc = ", sync + "r.tpc = ");
+    }
+    return o;
+}
+
+// The VF registers and ACC in locals as well: with them in r, every result went to memory, and every byte stored to
+// VU memory (which may alias r) made the compiler load them again. They go back to r wherever the program leaves.
+std::string local_vf(std::string o) {
+    std::string declare, sync;
+    for (int n = 0; n <= kAcc; ++n) {
+        const std::string get = raw(n), local = n == kAcc ? "facc" : std::format("f{}", n);
+        if (o.find(get) == std::string::npos) continue;
+        replace_all(o, get, local);
+        declare += std::format("    Reg128 {} = {};\n", local, get);
+        if (n) sync += std::format("{} = {}; ", get, local);  // vf0 is never written
+    }
+    const std::string head = "    (void)jpc;\n";
+    o.insert(o.find(head) + head.size(), declare);
     if (!sync.empty()) {
         replace_all(o, "vu::interpret(", sync + "vu::interpret(");
         replace_all(o, "r.tpc = ", sync + "r.tpc = ");
@@ -577,7 +597,7 @@ std::string generate(const Program &p, std::string &name) {
         replace_all(o, "vu::interpret(", "fl.flush_q(r); vu::interpret(");
         replace_all(o, "r.tpc = ", "fl.flush_q(r); r.tpc = ");
     }
-    return local_vi(o);
+    return local_vi(local_vf(o));
 }
 
 }

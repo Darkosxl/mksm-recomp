@@ -538,10 +538,11 @@ PS2_VU_INLINE float u2f(std::uint32_t v) {
     return f;
 }
 
-inline void efu(Vu0Regs &r, unsigned index, unsigned fs, unsigned fsf) {
+// s: the source register (VF fs)
+inline void efu(Vu0Regs &r, unsigned index, const Reg128 &s, unsigned fsf) {
     switch (index) {
     case 0x70: case 0x71: case 0x72: case 0x73: {
-        const float x = u2f(r.vf[fs].w[0]), y = u2f(r.vf[fs].w[1]), z = u2f(r.vf[fs].w[2]);
+        const float x = u2f(s.w[0]), y = u2f(s.w[1]), z = u2f(s.w[2]);
         const float sum = x * x + y * y + z * z;
         float p = sum;
         if (index == 0x71) p = sum != 0.0f ? 1.0f / sum : 3.4e38f;
@@ -550,17 +551,19 @@ inline void efu(Vu0Regs &r, unsigned index, unsigned fs, unsigned fsf) {
         r.p = f2u(p);
         break;
     }
-    case 0x74: r.p = f2u(std::atan2(u2f(r.vf[fs].w[1]), u2f(r.vf[fs].w[0]))); break;
-    case 0x75: r.p = f2u(std::atan2(u2f(r.vf[fs].w[2]), u2f(r.vf[fs].w[0]))); break;
-    case 0x76: r.p = f2u(u2f(r.vf[fs].w[0]) + u2f(r.vf[fs].w[1]) + u2f(r.vf[fs].w[2]) + u2f(r.vf[fs].w[3])); break;
-    case 0x78: r.p = f2u(std::sqrt(std::fabs(u2f(r.vf[fs].w[fsf])))); break;
-    case 0x79: { const float v = std::sqrt(std::fabs(u2f(r.vf[fs].w[fsf]))); r.p = f2u(v != 0.0f ? 1.0f / v : 3.4e38f); break; }
-    case 0x7A: { const float v = u2f(r.vf[fs].w[fsf]); r.p = f2u(v != 0.0f ? 1.0f / v : 3.4e38f); break; }
-    case 0x7C: r.p = f2u(std::sin(u2f(r.vf[fs].w[fsf]))); break;
-    case 0x7D: r.p = f2u(std::atan(u2f(r.vf[fs].w[fsf]))); break;
-    case 0x7E: r.p = f2u(std::exp(-u2f(r.vf[fs].w[fsf]))); break;
+    case 0x74: r.p = f2u(std::atan2(u2f(s.w[1]), u2f(s.w[0]))); break;
+    case 0x75: r.p = f2u(std::atan2(u2f(s.w[2]), u2f(s.w[0]))); break;
+    case 0x76: r.p = f2u(u2f(s.w[0]) + u2f(s.w[1]) + u2f(s.w[2]) + u2f(s.w[3])); break;
+    case 0x78: r.p = f2u(std::sqrt(std::fabs(u2f(s.w[fsf])))); break;
+    case 0x79: { const float v = std::sqrt(std::fabs(u2f(s.w[fsf]))); r.p = f2u(v != 0.0f ? 1.0f / v : 3.4e38f); break; }
+    case 0x7A: { const float v = u2f(s.w[fsf]); r.p = f2u(v != 0.0f ? 1.0f / v : 3.4e38f); break; }
+    case 0x7C: r.p = f2u(std::sin(u2f(s.w[fsf]))); break;
+    case 0x7D: r.p = f2u(std::atan(u2f(s.w[fsf]))); break;
+    case 0x7E: r.p = f2u(std::exp(-u2f(s.w[fsf]))); break;
     default: break;
     }
 }
+
+inline void efu(Vu0Regs &r, unsigned index, unsigned fs, unsigned fsf) { efu(r, index, r.vf[fs], fsf); }
 
 }
