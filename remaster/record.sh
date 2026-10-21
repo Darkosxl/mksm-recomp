@@ -43,7 +43,7 @@ for spec in "$@"; do
       pgrep -f "[f]rames-pipe $o/frames" > /dev/null || [ $s -lt 15 ] || break; done ) &
   dog=$!
   # shellcheck disable=SC2086
-  env "${look[@]}" PS2_GS_HW=1 PS2_THREADS=1 PS2_FPS_CAP=$cap PS2_DUMP_AUDIO=$o/audio.wav PS2_FPS=$((start + 1)),$((start + n - 1)) \
+  env "${look[@]}" PS2_GS_HW=1 PS2_THREADS=1 PS2_FPS_CAP=$cap PS2_DUMP_AUDIO=$o/audio.wav PS2_FRAME_LOG=$o/frames.log PS2_FPS=$((start + 1)),$((start + n - 1)) \
     "$here/remaster/run.sh" "$o" $((start + n)) "$D/states/$state" --frames-pipe "$o/frames" --frame-every 1 $args > /dev/null || echo "$scene: run ended early"
   timeout 2 sh -c ": > '$o/frames'" 2> /dev/null || true  # an encoder still waiting for a writer gets its end of stream
   wait $enc || echo "$scene: encoder failed"
@@ -51,7 +51,9 @@ for spec in "$@"; do
   [ -s "$o/video.mp4" ] || { echo "$scene: no video, left out"; continue; }
   [ -s "$o/audio.wav" ] && ffmpeg -loglevel error -i "$o/video.mp4" -i "$o/audio.wav" -c:v copy -c:a aac -b:a 192k -shortest -y "$o/seg.mp4" || cp "$o/video.mp4" "$o/seg.mp4"
   echo "file '$o/seg.mp4'" >> "$out/segments.txt"
-  echo "$scene: $(grep -oP '^\[fps\].*: \K[\d.]+ fps' "$o/run.log" || echo '? fps'), max $(sort -k2 -n "$o/temps.txt" | tail -1 | cut -d' ' -f2) C CPU / $(sort -k3 -n "$o/temps.txt" | tail -1 | cut -d' ' -f3) C GPU"
+  # frames shown later than 1.5 vsyncs after the one before (the first second skipped: loading)
+  late=$(awk 'NR > 60 && $1 > 25 {n++} END {print n + 0}' "$o/frames.log" 2> /dev/null)
+  echo "$scene: $(grep -oP '^\[fps\].*: \K[\d.]+ fps' "$o/run.log" || echo '? fps'), $late late frames, max $(sort -k2 -n "$o/temps.txt" | tail -1 | cut -d' ' -f2) C CPU / $(sort -k3 -n "$o/temps.txt" | tail -1 | cut -d' ' -f3) C GPU"
 done
 ffmpeg -loglevel error -f concat -safe 0 -i "$out/segments.txt" -c copy -y "$out/$mode.mp4"
 echo "wrote $out/$mode.mp4"
