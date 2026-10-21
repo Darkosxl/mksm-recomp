@@ -3,6 +3,8 @@
 # cropped, so repeats stay seamless.
 # Glyph textures (fonts: one colour, shape in alpha) are left out: the model turns letters into blobs, and the original
 # keeps their shape.
+# sizes.txt in the pack lists each texture's original size ("<key> <w> <h>"); the runtime then skips keying textures of
+# other sizes, which nothing in the pack can replace (the framebuffer sampled as a 1024x1024 texture: ~9 ms a decode).
 # usage: upscale.py <dump dir> <pack dir> [--model realesrgan-x4plus] [--min 16] [--only key,key]
 import argparse, os, pathlib, shutil, subprocess, sys, tempfile
 import numpy as np
@@ -57,4 +59,8 @@ with tempfile.TemporaryDirectory() as tmp:
         hdr = f'P7\nWIDTH {w * S}\nHEIGHT {h * S}\nDEPTH 4\nMAXVAL 255\nTUPLTYPE RGB_ALPHA\nENDHDR\n'.encode()
         (out / f'{key}.pam').write_bytes(hdr + np.dstack([rgb, alpha]).astype(np.uint8).tobytes())
         n += 1
+sizes = out / 'sizes.txt'
+known = dict(l.split(' ', 1) for l in sizes.read_text().splitlines()) if sizes.exists() else {}
+known.update({key: f'{px.shape[1]} {px.shape[0]}' for key, px in textures.items()})
+sizes.write_text(''.join(f'{k} {v}\n' for k, v in sorted(known.items()) if (out / f'{k}.pam').exists()))
 print(f'{n} textures -> {out} ({a.model}, {S}x)')

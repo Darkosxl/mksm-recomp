@@ -4,6 +4,7 @@
 #include "ps2/system.hpp"
 
 #include <algorithm>
+#include <bit>
 #include <chrono>
 #include <condition_variable>
 #include <cstdio>
@@ -99,13 +100,28 @@ double ms_since(std::chrono::steady_clock::time_point t) { return std::chrono::d
 
 struct Pack {
     std::unordered_set<std::uint64_t> files;
+    // sizes.txt (upscale.py): each file's original texture, "<key> <width> <height>". When it covers every file, keying
+    // skips the sizes it doesn't list (bit TH of sizes[TW]): their keys can't be in the pack.
+    std::uint32_t sizes[11] = {};
+    bool sized = false;
     Pack() {
         if (!pack_dir()) return;
         std::error_code ec;
         for (const auto &e : std::filesystem::directory_iterator(pack_dir(), ec))
             if (e.path().extension() == ".pam") files.insert(std::strtoull(e.path().stem().c_str(), nullptr, 16));
-        std::fprintf(stderr, "[texpack] %zu replacements in %s\n", files.size(), pack_dir());
+        std::size_t listed = 0;
+        if (std::FILE *f = std::fopen((std::string(pack_dir()) + "/sizes.txt").c_str(), "r")) {
+            unsigned long long key;
+            unsigned w, h;
+            while (std::fscanf(f, "%llx %u %u", &key, &w, &h) == 3)
+                if (files.count(key) && std::has_single_bit(w) && std::has_single_bit(h) && w <= 1024 && h <= 1024)
+                    ++listed, sizes[std::countr_zero(w)] |= 1u << std::countr_zero(h);
+            std::fclose(f);
+        }
+        sized = listed == files.size();
+        std::fprintf(stderr, "[texpack] %zu replacements in %s%s\n", files.size(), pack_dir(), sized ? ", sizes listed" : "");
     }
+    bool fits(std::uint32_t tw, std::uint32_t th) const { return !sized || (tw <= 10 && th <= 10 && (sizes[tw] >> th & 1u)); }
 };
 Pack &pack() {
     static Pack p;
@@ -249,6 +265,10 @@ std::uint32_t span_serial(std::uint32_t first, std::uint32_t last, bool &drawn) 
 std::uint64_t key(const State &st) {
     const auto t0 = std::chrono::steady_clock::now();
     const std::uint64_t eff = (st.prmodecont & 1u) ? st.prim : st.prmode, tex0 = st.ctx[(eff >> 9) & 1u].tex0;
+    if (!dump_dir() && !pack().fits((tex0 >> 26) & 0xFu, (tex0 >> 30) & 0xFu)) {
+        g_stats.key_ms += ms_since(t0);
+        return 0;
+    }
     struct Memo {
         std::uint64_t tex0, texa, epoch, key;
     };
