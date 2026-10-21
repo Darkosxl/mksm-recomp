@@ -4205,6 +4205,10 @@ bool init(Mode m) {
 #ifdef __EMSCRIPTEN__
     g_instance = wgpuCreateInstance(nullptr);
 #else
+    if (const char *log = std::getenv("PS2_WGPU_LOG")) {  // wgpu's own log (1 error ... 5 trace), e.g. why an adapter is passed over
+        wgpuSetLogCallback([](WGPULogLevel, WGPUStringView m, void *) { std::fprintf(stderr, "[wgpu] %.*s\n", static_cast<int>(m.length), m.data); }, nullptr);
+        wgpuSetLogLevel(static_cast<WGPULogLevel>(std::atoi(log)));
+    }
     WGPUInstanceExtras extras = {};
     extras.chain.sType = static_cast<WGPUSType>(WGPUSType_InstanceExtras);
     extras.backends = WGPUInstanceBackend_Primary;
