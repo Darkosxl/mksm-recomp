@@ -10,6 +10,9 @@ struct Params {
 @group(0) @binding(5) var<storage, read_write> scratch: array<u32>;
 @group(0) @binding(6) var<storage, read> cache: array<u32>;
 @group(0) @binding(7) var<storage, read_write> decoded: array<u32>;
+// gpu.cpp g_fail: per decode slot 255 - the texture's least alpha (cleared each submit), then the fail splits' indirect
+// draw arguments
+@group(0) @binding(9) var<storage, read_write> fail: array<atomic<u32>>;
 
 // Samples per GS word: SCALE across, SCALE_Y down; sample k = sub_y * SCALE + sub_x, sample 0 is the native position.
 override SCALE: u32 = 1u;
@@ -1323,7 +1326,7 @@ fn shade_at(p: u32, s: Setup, x: i32, y: i32, k: u32, px: f32, py: f32) {
 
 @compute @workgroup_size(64)
 // All of a batch's decodes in one dispatch: prm(1) records at data[prm(0)] (setup | mip level << 29, decoded offset,
-// texels, first thread), prm(2) texels in all.
+// alpha slot, first thread), prm(2) texels in all. The slot gets the least alpha of the texture's levels (fail_args).
 fn decode(@builtin(global_invocation_id) gid: vec3<u32>) {
     let i = gid.x + gid.y * 64u * 1024u;
     if (i >= prm(2u)) {
@@ -1346,7 +1349,29 @@ fn decode(@builtin(global_invocation_id) gid: vec3<u32>) {
     let l = level(s, data[r] >> 29u);
     let x = t & ((1u << l.tw) - 1u);
     let y = t >> l.tw;
-    decoded[data[r + 1u] + t] = convert(s, load_at(addr(l.f, x, y), 0u));
+    let c = convert(s, load_at(addr(l.f, x, y), 0u));
+    decoded[data[r + 1u] + t] = c;
+    let least = 255u - (c >> 24u);
+    if (least > atomicLoad(&fail[data[r + 2u]])) {
+        atomicMax(&fail[data[r + 2u]], least);
+    }
+}
+
+@compute @workgroup_size(64)
+// The indirect draws of alpha test fail splits (gpu.cpp hw_draw): prm(1) records at data[prm(0)] (alpha slot, the
+// least texture alpha from which every fragment passes, vertices, arguments' word in fail). A decoded texel is all a
+// fragment's texture alpha can be (bilinear and trilinear filters only mix them), so from there the split draws nothing.
+fn fail_args(@builtin(global_invocation_id) gid: vec3<u32>) {
+    let i = gid.x + gid.y * 64u * 1024u;
+    if (i >= prm(1u)) {
+        return;
+    }
+    let r = prm(0u) + i * 4u;
+    let at = data[r + 3u];
+    atomicStore(&fail[at], select(data[r + 2u], 0u, 255u - atomicLoad(&fail[data[r]]) >= data[r + 1u]));
+    atomicStore(&fail[at + 1u], 1u);
+    atomicStore(&fail[at + 2u], 0u);
+    atomicStore(&fail[at + 3u], 0u);
 }
 
 @compute @workgroup_size(64)

@@ -44,8 +44,8 @@ void configure_surface();
 namespace {
 
 // kRasterHi: raster with RT_HIRES on, for batches holding F_RT_HIRES sprites (scale > 1 only).
-enum Pipeline { kUpload, kCopyRead, kCopyWrite, kLoadClut, kDisplay, kRaster, kResolve, kSnapshot, kDecode, kRasterHi, kPipelines };
-const char *const kEntryPoints[kPipelines] = {"upload", "copy_read", "copy_write", "load_clut", "display", "raster", "resolve", "snapshot", "decode", "raster"};
+enum Pipeline { kUpload, kCopyRead, kCopyWrite, kLoadClut, kDisplay, kRaster, kResolve, kSnapshot, kDecode, kRasterHi, kFailArgs, kPipelines };
+const char *const kEntryPoints[kPipelines] = {"upload", "copy_read", "copy_write", "load_clut", "display", "raster", "resolve", "snapshot", "decode", "raster", "fail_args"};
 
 constexpr std::uint32_t kParamStride = 256;
 constexpr std::uint32_t kClutSlots = 2048;
@@ -53,6 +53,9 @@ constexpr std::uint32_t kClutEntries = 512;
 constexpr std::uint32_t kPrimWords = 28;
 constexpr std::uint32_t kSetupWords = 32;
 constexpr std::uint32_t kDecodedWords = 4u << 20;
+// g_fail (gs.wgsl fail): a word per decode of the submit (its slot, g_decode_cache order; the last one takes the
+// decodes past them), then four per alpha test fail split drawn indirect (hw_draw)
+constexpr std::uint32_t kAlphaSlots = 16384, kFailArgsBase = kAlphaSlots + 64, kFailDraws = 16384;
 // Texture-pack replacements live after the per-batch decodes in the same buffer (only allocated with PS2_TEX_PACK).
 constexpr std::uint32_t kReplaced = 1u << 16, kRtHires = 1u << 17;
 // A hardware batch's texture read straight from the target it sits on (hw_flush, gs.wgsl F_SOURCE), one of kSources
@@ -100,7 +103,9 @@ std::atomic<std::uint64_t> g_measured_ns = 0, g_measured = 0, g_total_passes = 0
 std::atomic<std::uint64_t> g_compute_passes = 0, g_render_passes = 0;  // passes encoded (each switch between the kinds drains the GPU)
 WGPUDevice g_device = nullptr;
 WGPUQueue g_queue = nullptr;
-WGPUBuffer g_vram = nullptr, g_tables = nullptr, g_params = nullptr, g_data = nullptr, g_clut = nullptr, g_scratch = nullptr, g_readback = nullptr, g_decoded = nullptr;
+WGPUBuffer g_vram = nullptr, g_tables = nullptr, g_params = nullptr, g_data = nullptr, g_clut = nullptr, g_scratch = nullptr, g_readback = nullptr, g_decoded = nullptr,
+           g_fail = nullptr;
+std::uint32_t g_fail_draws = 0;  // this submit's indirect fail splits
 std::uint32_t g_decoded_used = 0;
 // Blocks whose last write was rendering, per page (bit b: block b of the page): their samples may differ, so nothing that
 // keeps one value per texel (a decode, a texture-pack key) reads them. Uploads of whole words clear the blocks they fill.
@@ -163,6 +168,7 @@ struct NativeDraw {
     WGPURenderPipeline pipeline = nullptr;
     WGPUTextureView color = nullptr, depth = nullptr, alpha = nullptr;
     std::uint32_t param = 0, vertices = 0, instances = 1, check = 0;  // check: workgroups of the per-vertex oracle (native_check)
+    std::uint32_t indirect = ~0u;  // drawn indirect, the arguments at this word of g_fail (hw_draw's fail splits)
     std::uint32_t writeback[3] = {};  // workgroups of a write-back to VRAM (replace): a run's box, or z = one per tile
     WGPUComputePipeline compute = nullptr;  // the write-back's pipeline (default: g_nat.writeback, a run's box)
     Binding *binding = nullptr;  // a tile write-back's target (its bind group, of the views above); none: g_nat.target
@@ -661,13 +667,15 @@ struct Decoded {
     std::uint32_t offset;
 };
 std::vector<Decoded> g_decode_cache;
+std::vector<std::uint32_t> g_setup_slots;  // per setup of the batch: its decode's alpha slot in g_fail (kAlphaSlots: none)
 
 // A decode holds every level the setup samples, level n right after level n - 1 (gs.wgsl level()).
 void plan_decodes(std::uint32_t prims, bool all = false) {
     Batch &b = g_batch;
     g_decodes.clear();
-    if (!g_decode || (prims <= kDecodePrims && !all)) return;
     const std::uint32_t setups = static_cast<std::uint32_t>(b.setups.size() / kSetupWords);
+    g_setup_slots.assign(setups, kAlphaSlots);
+    if (!g_decode || (prims <= kDecodePrims && !all)) return;
     static const int kKey[] = {12, 13, 14, 15, 16, 17, 20, 25, 26, 27, 28, 29, 30, 31};
     for (std::uint32_t i = 0; i < setups; ++i) {
         std::uint32_t *w = b.setups.data() + i * kSetupWords;
@@ -685,9 +693,11 @@ void plan_decodes(std::uint32_t prims, bool all = false) {
             words += 1u << bits(n);
         }
         bool shared = false;
-        for (const Decoded &d : g_decode_cache) {
+        for (std::size_t k = 0; k < g_decode_cache.size(); ++k) {
+            const Decoded &d = g_decode_cache[k];
             if (d.gens != e.gens || d.clut != e.clut || !std::equal(e.key, e.key + 15, d.key)) continue;
             w[24] = d.offset;
+            g_setup_slots[i] = static_cast<std::uint32_t>(std::min<std::size_t>(k, kAlphaSlots));
             shared = true;
             break;
         }
@@ -699,6 +709,7 @@ void plan_decodes(std::uint32_t prims, bool all = false) {
         for (std::uint32_t n = 0; n <= levels && g_samples > 1; ++n) drawn = drawn || level(n, rendered);
         if (drawn) continue;
         w[24] = e.offset = g_decoded_used;
+        g_setup_slots[i] = static_cast<std::uint32_t>(std::min<std::size_t>(g_decode_cache.size(), kAlphaSlots));
         g_decode_cache.push_back(e);
         for (std::uint32_t n = 0; n <= levels; ++n) {
             g_decodes.push_back({i, n, g_decoded_used, 1u << bits(n)});
@@ -808,7 +819,7 @@ void note_raster(std::uint32_t prims, std::uint32_t tiles, std::uint32_t entries
     if (drawdbg::enabled()) drawdbg::batch(seq, b.dbg_draws);
 }
 
-// The batch's planned decodes (plan_decodes) in one dispatch (gs.wgsl decode): setup, decoded offset, texels, first thread
+// The batch's planned decodes (plan_decodes) in one dispatch (gs.wgsl decode): setup, decoded offset, alpha slot, first thread
 void emit_decodes(std::uint32_t setup_offset) {
     if (g_decodes.empty()) return;
     const std::uint32_t n = static_cast<std::uint32_t>(g_decodes.size());
@@ -819,7 +830,7 @@ void emit_decodes(std::uint32_t setup_offset) {
         const Decode &d = g_decodes[i];
         rec[i * 4] = (setup_offset + d.setup * kSetupWords) | d.level << 29;  // the arena stays far below 2^29 words
         rec[i * 4 + 1] = d.offset;
-        rec[i * 4 + 2] = d.words;
+        rec[i * 4 + 2] = g_setup_slots[d.setup];
         rec[i * 4 + 3] = total;
         total += d.words;
     }
@@ -1135,17 +1146,17 @@ void native_writeback_group();
 
 void rebuild_group() {
     if (g_group) wgpuBindGroupRelease(g_group);
-    WGPUBindGroupEntry e[8] = {};
-    WGPUBuffer buffers[8] = {g_vram, g_tables, g_params, g_data, g_clut, g_scratch, g_cache, g_decoded};
-    for (int i = 0; i < 8; ++i) {
+    WGPUBindGroupEntry e[9] = {};
+    WGPUBuffer buffers[9] = {g_vram, g_tables, g_params, g_data, g_clut, g_scratch, g_cache, g_decoded, g_fail};
+    for (int i = 0; i < 9; ++i) {
         e[i] = WGPU_BIND_GROUP_ENTRY_INIT;
-        e[i].binding = static_cast<std::uint32_t>(i);
+        e[i].binding = static_cast<std::uint32_t>(i == 8 ? 9 : i);
         e[i].buffer = buffers[i];
         e[i].size = i == 2 ? kParamStride : WGPU_WHOLE_SIZE;
     }
     WGPUBindGroupDescriptor d = WGPU_BIND_GROUP_DESCRIPTOR_INIT;
     d.layout = g_layout;
-    d.entryCount = 8;
+    d.entryCount = 9;
     d.entries = e;
     g_group = wgpuDeviceCreateBindGroup(g_device, &d);
     if (g_native_layout) {
@@ -1196,6 +1207,7 @@ void profile_submit() {
     wgpuQueueWriteBuffer(g_queue, g_data, 0, g_arena.data(), g_arena.size() * 4);
     wgpuQueueWriteBuffer(g_queue, g_params, 0, g_param_records.data(), g_param_records.size() * kParamStride);
     WGPUCommandEncoder enc = wgpuDeviceCreateCommandEncoder(g_device, nullptr);
+    wgpuCommandEncoderClearBuffer(enc, g_fail, 0, (kAlphaSlots + 1) * 4);
     g_prof_passes.clear();
     g_prof_untimed = 0;
     g_prof_on = true;
@@ -1263,6 +1275,7 @@ void profile_submit() {
     g_arena.clear();
     g_decoded_used = 0;
     g_decode_cache.clear();
+    g_fail_draws = 0;
     g_clut_loads = 0;
 }
 
@@ -1292,6 +1305,7 @@ void run_commands(Arena &arena, ParamRecords &params, std::vector<Command> &comm
     // one compute pass holds every dispatch, unless native render passes split it (then no timestamps)
     const bool measure = g_timestamps && !g_query_pending && natives.empty();
     WGPUCommandEncoder enc = wgpuDeviceCreateCommandEncoder(g_device, nullptr);
+    wgpuCommandEncoderClearBuffer(enc, g_fail, 0, (kAlphaSlots + 1) * 4);  // the decodes' least alphas start over
     WGPUPassTimestampWrites writes = WGPU_PASS_TIMESTAMP_WRITES_INIT;
     writes.querySet = g_queries;
     writes.beginningOfPassWriteIndex = 0;
@@ -1456,6 +1470,7 @@ void after_submit() {
     ++g_serial;
     g_decoded_used = 0;
     g_decode_cache.clear();
+    g_fail_draws = 0;
     g_clut_loads = 0;
 }
 
@@ -1492,8 +1507,9 @@ void drain() {
     g_job_cv.wait(lock, [] { return g_jobs.empty() && !g_job_running; });
 }
 
-// CLUT loads and decodes write storage no render pass before them reads (a fresh CLUT slot, a fresh range of the decoded
-// buffer; both are only reused after a submit) and read only what compute passes wrote (render passes never write VRAM):
+// CLUT loads, decodes and fail_args write storage no render pass before them reads (a fresh CLUT slot, a fresh range of
+// the decoded buffer or of g_fail; all only reused after a submit) and read only what compute passes wrote (render passes
+// never write VRAM):
 // each moves ahead of the render-only native commands just before it, so the stream switches between compute and render
 // passes less (every switch waits for the GPU to finish the pass before). Uploads write VRAM, so they only move ahead of
 // render-only commands that read none of it (NativeDraw::vram). Native commands left side by side merge.
@@ -1509,7 +1525,7 @@ void hoist_commands() {
     moved.assign(g_commands.size(), 0);
     for (std::size_t i = 0; i < g_commands.size(); ++i) {
         const Command &c = g_commands[i];
-        if (c.pipeline == kLoadClut || c.pipeline == kDecode || c.pipeline == kUpload) {
+        if (c.pipeline == kLoadClut || c.pipeline == kDecode || c.pipeline == kFailArgs || c.pipeline == kUpload) {
             std::size_t at = out.size();
             while (at && render[at - 1] && (c.pipeline != kUpload || !vram[at - 1])) --at;
             g_hoisted += at != out.size();
@@ -2251,7 +2267,8 @@ void encode_native(WGPUCommandEncoder enc, const Command &c, const std::vector<N
         wgpuRenderPassEncoderSetScissorRect(rp, d[i].scissor[0], d[i].scissor[1], d[i].scissor[2], d[i].scissor[3]);
         const WGPUColor constant{d[i].constant, d[i].constant, d[i].constant, d[i].constant};
         wgpuRenderPassEncoderSetBlendConstant(rp, &constant);
-        wgpuRenderPassEncoderDraw(rp, d[i].vertices, d[i].instances, 0, 0);
+        if (d[i].indirect != ~0u) wgpuRenderPassEncoderDrawIndirect(rp, g_fail, d[i].indirect * 4ull);
+        else wgpuRenderPassEncoderDraw(rp, d[i].vertices, d[i].instances, 0, 0);
         if (prof_pass) {
             ++prof_pass->a;
             prof_pass->b += d[i].instances;
@@ -3528,6 +3545,25 @@ void hw_prep(Binding *(&src)[kSources], Binding *&zsrc) {
 
 // Second half: the draws, into the target, or (the batch reads it, self) into the shadow, which then trades places with
 // the target. chained: a level of the chain (chain_flush), whose batches marked their pages rendered when they went in.
+
+// The least vertex alpha a primitive's fragments start from (native.wgsl hw_fs: a sprite's flat colour; a triangle's
+// interpolated one, truncated, which between different alphas may come out a hair under the least).
+std::uint32_t least_vertex_alpha(const std::uint32_t *rec) {
+    if (rec[1] == 1) return rec[13] >> 24;
+    if (rec[1] != 0) return 0;
+    const std::uint32_t a = rec[12] >> 24, b = rec[13] >> 24, c = rec[14] >> 24;
+    if (a == b && b == c) return a;
+    const std::uint32_t least = std::min({a, b, c});
+    return least ? least - 1 : 0;
+}
+
+// The least texture alpha from which a fragment of vertex alpha av passes an alpha test needing need, by the texture
+// function (native.wgsl shade_frag; each rises with both alphas); 256: none.
+std::uint32_t passing_alpha(std::uint32_t tfx, std::uint32_t av, std::uint32_t need) {
+    for (std::uint32_t ta = 0; ta < 256; ++ta)
+        if ((tfx == 0 ? std::min((ta * av) >> 7, 255u) : tfx == 2 ? std::min(ta + av, 255u) : ta) >= need) return ta;
+    return 256;
+}
 void hw_draw(Binding *const *src, Binding *zsrc, bool chained) {
     Batch &b = g_batch;
     Binding &x = *b.binding;
@@ -3574,6 +3610,8 @@ void hw_draw(Binding *const *src, Binding *zsrc, bool chained) {
     const std::uint32_t prim_offset = arena_append(b.prims.data(), b.prims.size() * 4);
     const std::uint32_t setup_offset = arena_append(b.setups.data(), b.setups.size() * 4);
     emit_decodes(setup_offset);
+    static std::vector<std::array<std::uint32_t, 4>> fails;  // gs.wgsl fail_args records
+    fails.clear();
     // one draw (or two: the alpha test's pass and fail pixels) per run of primitives with one setup and kind
     for (std::uint32_t i = 0; i < prims;) {
         const std::uint32_t *rec = b.prims.data() + i * kPrimWords;
@@ -3600,6 +3638,16 @@ void hw_draw(Binding *const *src, Binding *zsrc, bool chained) {
             if (afail == 1 || afail == 3) splits[count++] = {2, true, false, frame_alpha && afail == 1};
             else if (afail == 2) splits[count++] = {2, false, zwrite, false};
         }
+        // With GEQUAL or GREATER the fail split draws nothing when every fragment passes: known here from the vertex
+        // alpha, or once the texture's alpha counts (TCC), on the GPU from its decode's least alpha (gs.wgsl fail_args)
+        std::uint32_t passing = 256;
+        if ((atst == 5 || atst == 6) && w[8] + (atst == 6 ? 1u : 0u) < 256) {
+            const std::uint32_t need = w[8] + (atst == 6 ? 1u : 0u);
+            std::uint32_t av = 255;
+            for (std::uint32_t j = 0; j < n; ++j) av = std::min(av, least_vertex_alpha(rec + j * kPrimWords));
+            passing = (flags & 2u) && (flags & 8192u) ? passing_alpha((w[7] >> 20) & 3u, av, need) : av >= need ? 0u : 256u;
+        }
+        const std::uint32_t slot = g_setup_slots[rec[0]];
         const std::uint32_t csel = (alpha >> 4) & 3u;
         const bool factor_as = csel == 0 && (blend == kBlendLerp || blend == kBlendAdd || blend == kBlendSrc || blend == kBlendRevSub);
         // 128 / 256: the GS's floor instead of the hardware's rounding (native.wgsl shade_frag); 512: the factor is FIX
@@ -3610,6 +3658,7 @@ void hw_draw(Binding *const *src, Binding *zsrc, bool chained) {
         const std::uint32_t sx0 = std::min((w[10] & 0xFFFFu) * g_sx, tg.width), sx1 = std::min(((w[10] >> 16) + 1) * g_sx, tg.width);
         const std::uint32_t sy0 = std::min((w[11] & 0xFFFFu) * g_sy, tg.height), sy1 = std::min(((w[11] >> 16) + 1) * g_sy, tg.height);
         for (int k = 0; k < count && sx0 < sx1 && sy0 < sy1; ++k) {
+            if (splits[k].split == 2 && !passing) continue;
             NativeDraw d;
             d.param = push_params({prim_offset + i * kPrimWords, n, 0u, rec[1], setup_offset + rec[0] * kSetupWords, 0u, 0u, tg.width, tg.height, splits[k].split, 0u, pflags,
                                    0u, zmax, f2u(scale), 0u});
@@ -3635,11 +3684,19 @@ void hw_draw(Binding *const *src, Binding *zsrc, bool chained) {
             d.scissor[3] = sy1 - sy0;
             d.constant = static_cast<double>(w[9]) / 128.0;
             d.source = source;
+            if (splits[k].split == 2 && passing < 256 && decoded && slot < kAlphaSlots && g_fail_draws < kFailDraws) {
+                d.indirect = kFailArgsBase + g_fail_draws++ * 4;
+                fails.push_back({slot, passing, d.vertices, d.indirect});
+            }
             g_native_draws.push_back(d);
             ++g_nat.draws;
         }
         g_nat.triangles += n;
         i += n;
+    }
+    if (!fails.empty()) {  // after the decodes, ahead of the draws
+        const std::uint32_t at = arena_append(fails.data(), fails.size() * 16), n = static_cast<std::uint32_t>(fails.size());
+        dispatch_linear(kFailArgs, n, push_params({at, n}));
     }
     emit_native();
     if (self) {  // the shadow, now with the draws, becomes the target; the old one lacks only what they drew
@@ -4193,6 +4250,7 @@ bool init(Mode m) {
     g_cache = make_buffer(static_cast<std::uint64_t>(kCacheWords) * 4, WGPUBufferUsage_Storage | WGPUBufferUsage_CopyDst);
     g_decoded = make_buffer((static_cast<std::uint64_t>(kDecodedWords) + (texpack::packing() ? kReplWords : 0u)) * 4,
                             WGPUBufferUsage_Storage | WGPUBufferUsage_CopyDst);
+    g_fail = make_buffer((kFailArgsBase + kFailDraws * 4ull) * 4, WGPUBufferUsage_Storage | WGPUBufferUsage_Indirect | WGPUBufferUsage_CopyDst);
     if (const char *decode = std::getenv("PS2_DECODE")) g_decode = std::atoi(decode) != 0;
     g_cache_copy.assign(kCacheWords, 0);
     g_readback = make_buffer(static_cast<std::uint64_t>(g_copy_words) * 4, WGPUBufferUsage_MapRead | WGPUBufferUsage_CopyDst);
@@ -4205,20 +4263,20 @@ bool init(Mode m) {
         g_query_read = make_buffer(16, WGPUBufferUsage_MapRead | WGPUBufferUsage_CopyDst);
     }
 
-    WGPUBindGroupLayoutEntry le[8] = {};
-    const WGPUBufferBindingType types[8] = {WGPUBufferBindingType_Storage, WGPUBufferBindingType_ReadOnlyStorage, WGPUBufferBindingType_Uniform,
+    WGPUBindGroupLayoutEntry le[9] = {};
+    const WGPUBufferBindingType types[9] = {WGPUBufferBindingType_Storage, WGPUBufferBindingType_ReadOnlyStorage, WGPUBufferBindingType_Uniform,
                                             WGPUBufferBindingType_ReadOnlyStorage, WGPUBufferBindingType_Storage, WGPUBufferBindingType_Storage,
-                                            WGPUBufferBindingType_ReadOnlyStorage, WGPUBufferBindingType_Storage};
-    for (int i = 0; i < 8; ++i) {
+                                            WGPUBufferBindingType_ReadOnlyStorage, WGPUBufferBindingType_Storage, WGPUBufferBindingType_Storage};
+    for (int i = 0; i < 9; ++i) {
         le[i] = WGPU_BIND_GROUP_LAYOUT_ENTRY_INIT;
-        le[i].binding = static_cast<std::uint32_t>(i);
+        le[i].binding = static_cast<std::uint32_t>(i == 8 ? 9 : i);  // 8 is the native module's checks
         le[i].visibility = WGPUShaderStage_Compute;
         le[i].buffer.type = types[i];
         le[i].buffer.hasDynamicOffset = i == 2;
         le[i].buffer.minBindingSize = i == 2 ? kParamStride : 0;
     }
     WGPUBindGroupLayoutDescriptor ld = WGPU_BIND_GROUP_LAYOUT_DESCRIPTOR_INIT;
-    ld.entryCount = 8;
+    ld.entryCount = 9;
     ld.entries = le;
     g_layout = wgpuDeviceCreateBindGroupLayout(g_device, &ld);
     WGPUPipelineLayoutDescriptor pld = WGPU_PIPELINE_LAYOUT_DESCRIPTOR_INIT;
