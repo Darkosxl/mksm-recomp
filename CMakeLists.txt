@@ -123,6 +123,13 @@ if(PS2_GENERATED)
     target_include_directories(ps2game PRIVATE "${PS2_GENERATED}")
     target_link_libraries(ps2game PUBLIC ps2runtime)
     target_compile_options(ps2game PRIVATE -Wno-unused-label -Wno-unused-variable)
+    # the VU1 microprograms (vu1_*.cpp) built with this -march (x86-64): their lane clamps and selects want SSE4.1's
+    # pminsd/blendps and AVX's three-operand forms, while the GS threads ran slower with the whole build at x86-64-v3
+    set(PS2_VU1_MARCH "" CACHE STRING "-march for the generated VU1 programs, e.g. x86-64-v3")
+    if(PS2_VU1_MARCH)
+        file(GLOB PS2_VU1_UNITS CONFIGURE_DEPENDS "${PS2_GENERATED}/vu1_*.cpp")
+        set_source_files_properties(${PS2_VU1_UNITS} PROPERTIES COMPILE_OPTIONS -march=${PS2_VU1_MARCH})
+    endif()
 
     # decompiled functions (decomp/README.md): the units listed in decomp/overrides.txt call into them. An object
     # library linked straight into each program, so every one is registered (PS2_DECOMP, difftest) whether or not a
