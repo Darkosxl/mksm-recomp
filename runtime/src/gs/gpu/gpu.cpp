@@ -1432,12 +1432,24 @@ void run_commands(Arena &arena, ParamRecords &params, std::vector<Command> &comm
 // encoding and submits took a fifth of the render thread. Jobs run in order, two at most in flight. Anything that reads
 // GPU results or submits by itself drains it first (drain()). Off with PS2_SUBMIT_THREAD=0, when single-threaded
 // (captures; PS2_SUBMIT_THREAD=2 turns it on there to test it) and while profiling.
+// A display readback (display_async, display_stream).
+struct Copy {
+    WGPUBuffer buffer = nullptr;
+    std::uint64_t size = 0, order = 0;
+    std::uint32_t width = 0, height = 0;
+    std::atomic<bool> busy = false, ready = false;  // map callbacks may run on the submit worker
+    bool mapped = false;  // display_stream: set before ready
+};
+void copy_out(Copy &c);
+Copy *g_copy_out = nullptr;  // display_stream: the copy of g_scratch the next submit ends with
+
 struct Job {
     Arena arena;
     ParamRecords params;
     std::vector<Command> commands;
     std::vector<NativeDraw> natives;
     std::vector<Write> writes;
+    Copy *copy = nullptr;
     bool present = false;
 };
 std::mutex g_job_mutex;
@@ -1450,6 +1462,7 @@ void run_job(Job &j) {
     for (const Write &w : j.writes) wgpuQueueWriteBuffer(g_queue, w.buffer, w.offset, w.bytes.data(), w.bytes.size()), g_uploaded[2].fetch_add(w.bytes.size(), std::memory_order_relaxed);
     if (!j.present) {
         if (!j.commands.empty()) run_commands(j.arena, j.params, j.commands, j.natives, nullptr);
+        if (j.copy) copy_out(*j.copy);
         return;
     }
     WGPUSurfaceTexture st = WGPU_SURFACE_TEXTURE_INIT;
@@ -1486,6 +1499,7 @@ void submit_worker() {
         j.commands.clear();
         j.natives.clear();
         j.writes.clear();
+        j.copy = nullptr;
         lock.lock();
         g_spare_jobs.push_back(std::move(j));
         g_job_running = false;
@@ -1533,6 +1547,7 @@ void enqueue(bool present) {
     g_native_emitted = 0;
     std::swap(j.writes, g_writes);
     j.present = present;
+    j.copy = std::exchange(g_copy_out, nullptr);
     g_jobs.push_back(std::move(j));
     g_job_cv.notify_all();
 }
@@ -1602,6 +1617,7 @@ void submit(WGPUTextureView present_view = nullptr) {
     if (g_profile_out && !present_view && g_timestamps && frame_count() >= g_profile_from && frame_count() < g_profile_to) {
         drain();
         profile_submit();
+        if (g_copy_out) copy_out(*std::exchange(g_copy_out, nullptr));
         return;
     }
     if (g_worker_on && !present_view) {
@@ -1613,6 +1629,7 @@ void submit(WGPUTextureView present_view = nullptr) {
     for (const Write &w : g_writes) wgpuQueueWriteBuffer(g_queue, w.buffer, w.offset, w.bytes.data(), w.bytes.size());
     g_writes.clear();
     if (!g_commands.empty() || present_view) run_commands(g_arena, g_param_records, g_commands, g_native_draws, present_view);
+    if (g_copy_out) copy_out(*std::exchange(g_copy_out, nullptr));
     g_commands.clear();
     g_native_draws.clear();
     g_native_emitted = 0;
@@ -5444,12 +5461,6 @@ double busy_ms() {
     return static_cast<double>(g_measured_ns) / static_cast<double>(g_measured) * static_cast<double>(g_total_passes) / 1e6;
 }
 
-struct Copy {
-    WGPUBuffer buffer = nullptr;
-    std::uint64_t size = 0, order = 0;
-    std::uint32_t width = 0, height = 0;
-    std::atomic<bool> busy = false, ready = false;  // map callbacks may run on the submit worker
-};
 Copy g_copies[3];
 std::uint64_t g_copy_order = 0;
 
@@ -5517,6 +5528,94 @@ bool display_async(const DisplaySource &src, std::vector<std::uint32_t> &rgba, s
         wgpuBufferMapAsync(slot->buffer, WGPUMapMode_Read, 0, bytes, cb);
     }
     return newest != nullptr;
+}
+
+namespace {
+
+// Submitted with the display pass (by the worker when it is on), so the copy follows it on the queue.
+void copy_out(Copy &c) {
+    const std::uint64_t bytes = static_cast<std::uint64_t>(c.width) * c.height * 4;
+    WGPUCommandEncoder enc = wgpuDeviceCreateCommandEncoder(g_device, nullptr);
+    wgpuCommandEncoderCopyBufferToBuffer(enc, g_scratch, 0, c.buffer, 0, bytes);
+    WGPUCommandBuffer cmd = wgpuCommandEncoderFinish(enc, nullptr);
+    wgpuQueueSubmit(g_queue, 1, &cmd);
+    wgpuCommandBufferRelease(cmd);
+    wgpuCommandEncoderRelease(enc);
+    WGPUBufferMapCallbackInfo cb = WGPU_BUFFER_MAP_CALLBACK_INFO_INIT;
+    cb.mode = WGPUCallbackMode_AllowProcessEvents;
+    cb.callback = [](WGPUMapAsyncStatus status, WGPUStringView, void *copy, void *) {
+        Copy &c = *static_cast<Copy *>(copy);
+        c.mapped = status == WGPUMapAsyncStatus_Success;
+        c.ready = true;
+    };
+    cb.userdata1 = &c;
+    wgpuBufferMapAsync(c.buffer, WGPUMapMode_Read, 0, bytes, cb);
+}
+
+}
+
+Copy g_stream[4];
+std::deque<Copy *> g_streamed;  // display order; null: nothing shown that frame
+
+// Hands streamed frames to sink, oldest first: those already mapped, and the rest until at most `keep` are in flight.
+void stream_out(std::size_t keep, const FrameSink &sink) {
+    while (!g_streamed.empty()) {
+        Copy *c = g_streamed.front();
+        if (c && !c->ready) {
+#ifdef __EMSCRIPTEN__
+            wgpuInstanceProcessEvents(g_instance);
+#else
+            wgpuDevicePoll(g_device, false, nullptr);
+#endif
+            if (!c->ready && g_streamed.size() <= keep) return;
+            if (!c->ready) {
+                std::this_thread::sleep_for(std::chrono::microseconds(200));
+                continue;
+            }
+        }
+        if (c && c->mapped) {
+            const std::uint64_t bytes = static_cast<std::uint64_t>(c->width) * c->height * 4;
+            sink(static_cast<const std::uint32_t *>(wgpuBufferGetConstMappedRange(c->buffer, 0, bytes)), c->width, c->height);
+            wgpuBufferUnmap(c->buffer);
+        } else {
+            sink(nullptr, 0, 0);
+        }
+        if (c) c->mapped = c->ready = c->busy = false;
+        g_streamed.pop_front();
+    }
+}
+
+void display_stream(const DisplaySource *src, const FrameSink &sink) {
+    Copy *slot = nullptr;
+    if (src) {
+        stream_out(std::size(g_stream) - 1, sink);
+        for (Copy &c : g_stream)
+            if (!c.busy) slot = &c;
+        split_sync();
+        chain_flush();
+        native_display(*src);
+        const std::uint64_t bytes = static_cast<std::uint64_t>(src->width) * src->height * g_sx * g_rows * 4;
+        if (slot->size < bytes) {
+            if (slot->buffer) wgpuBufferRelease(slot->buffer);
+            slot->size = bytes;
+            slot->buffer = make_buffer(bytes, WGPUBufferUsage_MapRead | WGPUBufferUsage_CopyDst);
+        }
+        flush_all();
+        const std::uint32_t param = push_params({src->fbp, src->fbw, src->psm, src->dbx, src->dby, src->width, src->height, src->halved ? 1u : 0u, 0u, src->half ? 1u : 0u});
+        g_commands.push_back({kDisplay, (src->width * g_sx + 7) / 8, (src->height * g_rows + 7) / 8, param});
+        slot->busy = true;
+        slot->width = src->width * g_sx;
+        slot->height = src->height * g_rows;
+        g_copy_out = slot;
+        submit();
+    }
+    g_streamed.push_back(slot);
+    stream_out(std::size(g_stream), sink);
+}
+
+void display_stream_finish(const FrameSink &sink) {
+    drain();
+    stream_out(0, sink);
 }
 
 bool display(const DisplaySource &src, std::vector<std::uint32_t> &rgba, std::uint32_t &width, std::uint32_t &height) {

@@ -31,14 +31,17 @@
 #include <atomic>
 #include <cctype>
 #include <chrono>
+#include <condition_variable>
 #include <csignal>
 #include <cstdio>
 #include <cstring>
 #include <ctime>
+#include <deque>
 #include <filesystem>
 #include <format>
 #include <fstream>
 #include <map>
+#include <mutex>
 #include <cstdlib>
 #include <iterator>
 #include <random>
@@ -116,24 +119,83 @@ void refill(Cpu &c) {
 
 std::uint64_t frame_cycles() { return kEeClock / (g_options.pal ? 50u : 60u); }
 
+void to_ppm(const std::uint32_t *rgba, std::uint32_t w, std::uint32_t h, std::vector<std::uint8_t> &ppm) {
+    const std::string head = std::format("P6\n{} {}\n255\n", w, h);
+    ppm.resize(head.size() + static_cast<std::size_t>(w) * h * 3);
+    std::memcpy(ppm.data(), head.data(), head.size());
+    std::uint8_t *o = ppm.data() + head.size();
+    for (const std::uint32_t *p = rgba, *e = rgba + static_cast<std::size_t>(w) * h; p != e; ++p)
+        *o++ = static_cast<std::uint8_t>(*p), *o++ = static_cast<std::uint8_t>(*p >> 8), *o++ = static_cast<std::uint8_t>(*p >> 16);
+}
+
+std::FILE *frames_pipe() {
+    static std::FILE *pipe = [] {
+        std::signal(SIGPIPE, SIG_IGN);  // a reader that quits ends the stream, not the run
+        return std::fopen(g_options.frames_pipe.c_str(), "wb");
+    }();
+    return pipe;
+}
+
+// --frames-pipe with a render thread: it hands the frames over a few frames late (gs::display_later) and a thread of
+// their own converts and writes them, so neither the EE nor the renderer waits on the GPU or the pipe for each frame.
+struct PipeFrames {
+    struct Frame {
+        std::vector<std::uint32_t> rgba;  // empty: nothing shown, the last frame repeats to keep time
+        std::uint32_t w = 0, h = 0;
+    };
+    std::mutex m;
+    std::condition_variable cv;
+    std::deque<Frame> frames;
+    std::vector<std::vector<std::uint32_t>> spare;
+    bool done = false;
+    std::thread writer;
+} g_pipe_frames;
+
+void write_frames() {
+    pthread_setname_np(pthread_self(), "frames");
+    PipeFrames &q = g_pipe_frames;
+    std::vector<std::uint8_t> ppm;
+    std::unique_lock lock(q.m);
+    for (;;) {
+        q.cv.wait(lock, [&] { return !q.frames.empty() || q.done; });
+        if (q.frames.empty()) return;
+        PipeFrames::Frame f = std::move(q.frames.front());
+        q.frames.pop_front();
+        lock.unlock();
+        if (!f.rgba.empty()) to_ppm(f.rgba.data(), f.w, f.h, ppm);
+        if (frames_pipe() && !ppm.empty()) std::fwrite(ppm.data(), 1, ppm.size(), frames_pipe());
+        lock.lock();
+        q.spare.push_back(std::move(f.rgba));
+        q.cv.notify_all();
+    }
+}
+
+void pipe_frame(const std::uint32_t *rgba, std::uint32_t w, std::uint32_t h) {
+    PipeFrames &q = g_pipe_frames;
+    if (!q.writer.joinable()) q.writer = std::thread(write_frames);
+    std::unique_lock lock(q.m);
+    q.cv.wait(lock, [&] { return q.frames.size() < 3; });
+    PipeFrames::Frame f{{}, w, h};
+    if (rgba) {
+        if (!q.spare.empty()) f.rgba = std::move(q.spare.back()), q.spare.pop_back();
+        f.rgba.assign(rgba, rgba + static_cast<std::size_t>(w) * h);
+    }
+    q.frames.push_back(std::move(f));
+    q.cv.notify_all();
+}
+
 void dump_frame() {
+    if (!g_options.frames_pipe.empty()) {
+        static const bool sink = (gs::stream_frames(pipe_frame), true);
+        if (sink && gs::display_later()) return;
+    }
     static std::vector<std::uint8_t> ppm;  // the last frame shown: a stream repeats it while there is none, to keep time
     std::vector<std::uint32_t> rgba;
     std::uint32_t w = 0, h = 0;
     const bool shown = gs::display(rgba, w, h);
-    if (shown) {
-        const std::string head = std::format("P6\n{} {}\n255\n", w, h);
-        ppm.resize(head.size() + rgba.size() * 3);
-        std::memcpy(ppm.data(), head.data(), head.size());
-        std::uint8_t *o = ppm.data() + head.size();
-        for (std::uint32_t p : rgba) *o++ = static_cast<std::uint8_t>(p), *o++ = static_cast<std::uint8_t>(p >> 8), *o++ = static_cast<std::uint8_t>(p >> 16);
-    }
+    if (shown) to_ppm(rgba.data(), w, h, ppm);
     if (!g_options.frames_pipe.empty()) {
-        static std::FILE *pipe = [] {
-            std::signal(SIGPIPE, SIG_IGN);  // a reader that quits ends the stream, not the run
-            return std::fopen(g_options.frames_pipe.c_str(), "wb");
-        }();
-        if (pipe && !ppm.empty()) std::fwrite(ppm.data(), 1, ppm.size(), pipe);
+        if (frames_pipe() && !ppm.empty()) std::fwrite(ppm.data(), 1, ppm.size(), frames_pipe());
         return;
     }
     if (!shown) return;
@@ -502,6 +564,19 @@ bool preempt(Cpu &c) {
     run_due_events();
     refill(c);
     return g_halted || g_state_request || g_snapshot_request || g_load_request || g_reboot_request || kernel::must_unwind();
+}
+
+void finish_frames() {
+    PipeFrames &q = g_pipe_frames;
+    if (!q.writer.joinable()) return;
+    while (render_pending(false, {}, {}, 8.0) != Rendered::idle) {}
+    gs::frames_finish();
+    {
+        std::lock_guard lock(q.m);
+        q.done = true;
+    }
+    q.cv.notify_all();
+    q.writer.join();
 }
 
 void halt(const std::string &reason) {

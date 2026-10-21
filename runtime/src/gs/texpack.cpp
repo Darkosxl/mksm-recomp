@@ -146,8 +146,9 @@ bool read_pam(const std::string &path, std::vector<std::uint32_t> &px, std::uint
 }
 
 // With the render thread on its own (play), pack files are read here, off it: a cold read (btrfs zstd) stalled a frame
-// up to 172 ms. The original texture shows until the file is in, usually a frame or two. Single-threaded runs
-// (captures) read in place, so their images stay the same every run.
+// up to 172 ms. The original texture shows until the file is in, usually a frame or two. Single-threaded runs and runs
+// that capture frames (--frames-dir/--frames-pipe: a stall costs nothing in a video) read in place, so their images
+// stay the same every run.
 // ponytail: one thread, files in request order; a second one if map loads pop in too slowly.
 struct Loaded {
     std::vector<std::uint32_t> px;
@@ -342,7 +343,8 @@ std::vector<std::uint32_t> replacement(std::uint64_t key, std::uint32_t tw, std:
     char name[64];
     std::snprintf(name, sizeof name, "/%016llx.pam", static_cast<unsigned long long>(key));
     Loaded f;
-    if (queue::active()) {
+    static const bool off_thread = queue::active() && g_options.frames_dir.empty() && g_options.frames_pipe.empty();
+    if (off_thread) {
         Loader &l = loader();
         std::lock_guard lock(l.m);
         auto it = l.ready.find(key);

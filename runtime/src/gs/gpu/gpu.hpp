@@ -4,6 +4,7 @@
 #include "../texcache.hpp"
 
 #include <cstdint>
+#include <functional>
 #include <vector>
 
 namespace ps2::gs::gpu {
@@ -43,6 +44,11 @@ void read_state(std::vector<std::uint32_t> &vram, std::uint32_t &scale, std::vec
 void write_state(const std::vector<std::uint32_t> &vram, std::uint32_t scale, const std::vector<std::uint32_t> &clut);
 bool display(const DisplaySource &src, std::vector<std::uint32_t> &rgba, std::uint32_t &width, std::uint32_t &height);
 bool display_async(const DisplaySource &src, std::vector<std::uint32_t> &rgba, std::uint32_t &width, std::uint32_t &height);
+// Every frame for a stream (--frames-pipe): the copy goes out with the display pass and sink gets the pixels once they
+// are mapped, in order, a few frames late (null: nothing shown that frame); finish hands over the rest, waiting.
+using FrameSink = std::function<void(const std::uint32_t *rgba, std::uint32_t width, std::uint32_t height)>;
+void display_stream(const DisplaySource *src, const FrameSink &sink);
+void display_stream_finish(const FrameSink &sink);
 bool attach_surface(const SurfaceTarget &target);
 void resize_surface(std::uint32_t width, std::uint32_t height);
 bool has_surface();

@@ -1157,21 +1157,61 @@ DisplayRegs display_regs() {
 
 bool present() { return present(display_regs()); }
 
-bool present(const DisplayRegs &r) {
 #ifdef PS2_GPU
-    if (!gpu::has_surface()) return false;
+// The buffer the display shows; false when no circuit is on or its size is out of range.
+bool display_source(const DisplayRegs &r, gpu::DisplaySource &src) {
     const int circuit = (r.pmode & 2u) ? 1 : (r.pmode & 1u) ? 0 : -1;
-    if (circuit < 0) return true;
+    if (circuit < 0) return false;
     const std::uint64_t fb = r.dispfb[circuit], disp = r.display[circuit];
     const std::uint32_t magh = (static_cast<std::uint32_t>(disp >> 23) & 0xFu) + 1, magv = (static_cast<std::uint32_t>(disp >> 27) & 3u) + 1;
     const std::uint32_t width = ((static_cast<std::uint32_t>(disp >> 32) & 0xFFFu) + 1) / magh, height = ((static_cast<std::uint32_t>(disp >> 44) & 0x7FFu) + 1) / magv;
-    if (!width || !height || width > 2048 || height > 2048) return true;
-    const gpu::DisplaySource src{(static_cast<std::uint32_t>(fb) & 0x1FFu) * 32, static_cast<std::uint32_t>(fb >> 9) & 0x3Fu, static_cast<std::uint32_t>(fb >> 15) & 0x1Fu,
-                                 static_cast<std::uint32_t>(fb >> 32) & 0x7FFu, static_cast<std::uint32_t>(fb >> 43) & 0x7FFu, width, height, (r.smode2 & 3u) == 3u,
-                                 r.fielded[circuit], r.half[circuit]};
-    return gpu::present(src);
+    if (!width || !height || width > 2048 || height > 2048) return false;
+    src = {(static_cast<std::uint32_t>(fb) & 0x1FFu) * 32, static_cast<std::uint32_t>(fb >> 9) & 0x3Fu, static_cast<std::uint32_t>(fb >> 15) & 0x1Fu,
+           static_cast<std::uint32_t>(fb >> 32) & 0x7FFu, static_cast<std::uint32_t>(fb >> 43) & 0x7FFu, width, height, (r.smode2 & 3u) == 3u,
+           r.fielded[circuit], r.half[circuit]};
+    return true;
+}
+#endif
+
+bool present(const DisplayRegs &r) {
+#ifdef PS2_GPU
+    if (!gpu::has_surface()) return false;
+    gpu::DisplaySource src;
+    return !display_source(r, src) || gpu::present(src);
 #else
     return false;
+#endif
+}
+
+std::function<void(const std::uint32_t *, std::uint32_t, std::uint32_t)> g_frame_sink;
+
+void stream_frames(std::function<void(const std::uint32_t *, std::uint32_t, std::uint32_t)> sink) { g_frame_sink = std::move(sink); }
+
+bool display_later() {
+    if (!queue::active() || queue::role() == queue::Role::Render) return false;
+    const DisplayRegs r = display_regs();
+    queue::post(queue::kCapture, 1, 0, &r, sizeof r);
+    return true;
+}
+
+// Render thread: a display_later() frame.
+void stream_display(const DisplayRegs &r) {
+#ifdef PS2_GPU
+    if (gpu_on() && !cpu_raster()) {
+        gpu::DisplaySource src;
+        gpu::display_stream(display_source(r, src) ? &src : nullptr, g_frame_sink);
+        return;
+    }
+#endif
+    std::vector<std::uint32_t> rgba;
+    std::uint32_t w = 0, h = 0;
+    const bool shown = display(r, rgba, w, h);
+    g_frame_sink(shown ? rgba.data() : nullptr, w, h);
+}
+
+void frames_finish() {
+#ifdef PS2_GPU
+    if (gpu_on() && !cpu_raster()) gpu::display_stream_finish(g_frame_sink);
 #endif
 }
 
@@ -1332,6 +1372,12 @@ Rendered render_pending(const std::function<void(const DisplayRegs &)> &on_prese
             break;
         case queue::kNativeBegin: case queue::kNative: render_native(h.type, payload, h.bytes); break;
         case queue::kCapture: {
+            if (h.arg0) {
+                DisplayRegs regs;
+                std::memcpy(&regs, payload, sizeof regs);
+                stream_display(regs);
+                break;
+            }
             Capture *c;
             std::memcpy(&c, payload, sizeof c);
             c->ok = display(c->regs, *c->rgba, *c->width, *c->height);

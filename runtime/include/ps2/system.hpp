@@ -147,6 +147,8 @@ Rendered render_pending(bool surface, const std::function<void(const std::uint32
                         const std::function<void()> &before_present, double budget_ms);
 void wait_render_work(int timeout_ms);
 void wake_render_thread();
+// --frames-pipe (render thread, once the EE stopped): writes the frames still on their way.
+void finish_frames();
 bool copy_frame(std::vector<std::uint32_t> &rgba, std::uint32_t &width, std::uint32_t &height);
 // also hands every presented frame to `tap` (on the render thread), e.g. for streaming it; with `wait` the
 // frame is read back before the next one is drawn (one frame less delay, the render thread waits for the GPU)
