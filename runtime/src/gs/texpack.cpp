@@ -301,24 +301,31 @@ std::uint64_t key_uncounted(const State &st) {
     bool drawn;
     id = mix(id, span_serial(first, last, drawn));
     if (drawn) return 0;
-    static std::unordered_map<std::uint64_t, std::uint64_t> known, by_content;
-    if (const auto it = known.find(id); it != known.end()) return it->second;
+    // id -> key, direct-mapped: a new id comes with every upload to the texture's pages (hundreds a frame), and an
+    // unordered_map of them cost 20-80 ms hitches as it rehashed and was cleared. A lost entry costs a content lookup.
+    struct Known {
+        std::uint64_t id = 0, key = 0;
+    };
+    static std::vector<Known> known(1u << 16);
+    Known &kn = known[(id * 0x9E3779B97F4A7C15ull) >> 48];
+    if (kn.id == id) return kn.key;
+    static std::unordered_map<std::uint64_t, std::uint64_t> by_content;
     // The pages were rewritten: the game cycles its textures through the same pages every frame, so look the content up
     // (a hash of the raw pages, microseconds) before decoding it (milliseconds).
     std::uint64_t lanes[4] = {content, 1, 2, 3};  // four chains, so the multiplies overlap
     for (std::uint32_t p = first, i = 0; p <= last && p < first + kPages; ++p, ++i) lanes[i & 3] = mix(lanes[i & 3], page_content(p));
     content = mix(mix(mix(lanes[0], lanes[1]), lanes[2]), lanes[3]);
-    if (known.size() > (1u << 20)) known.clear(), by_content.clear();
-    if (const auto it = by_content.find(content); it != by_content.end()) return known[id] = it->second;
+    if (by_content.size() > (1u << 20)) by_content.clear();
+    if (const auto it = by_content.find(content); it != by_content.end()) return (kn = {id, it->second}).key;
     const auto t0 = std::chrono::steady_clock::now();
     std::vector<std::uint32_t> texels;
     std::uint32_t w = 0, h = 0;
-    if (!raster::decode_texture(st, texels, w, h)) return known[id] = by_content[content] = 0;
+    if (!raster::decode_texture(st, texels, w, h)) return (kn = {id, by_content[content] = 0}).key;
     std::uint64_t k = fnv(fnv(0xCBF29CE484222325ull, w), h);
     for (std::uint32_t t : texels) k = fnv32(k, t);
     k = k ? k : 1;
     ++g_stats.decodes, g_stats.decode_ms += ms_since(t0);
-    known[id] = by_content[content] = k;
+    kn = {id, by_content[content] = k};
     static std::unordered_set<std::uint64_t> dumped;
     if (dump_dir() && dumped.insert(k).second) {
         char name[64];
