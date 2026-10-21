@@ -9,6 +9,9 @@
 #ifndef __EMSCRIPTEN__
 #include <webgpu/wgpu.h>
 #endif
+#ifdef __x86_64__
+#include <immintrin.h>
+#endif
 
 #include <algorithm>
 #include <array>
@@ -470,15 +473,32 @@ std::uint32_t arena_append(const void *bytes, std::size_t size) {
     return offset;
 }
 
-std::uint32_t arena_hw_prims(const std::vector<std::uint32_t> &prims) {
+// Also the batch's runs of primitives with one setup and kind (record words 0 and 1): first, count.
+std::uint32_t arena_hw_prims(const std::vector<std::uint32_t> &prims, std::vector<std::array<std::uint32_t, 2>> &runs) {
+    if (g_arena.size() & 1) *g_arena.grow(1) = 0;  // the records on 8 bytes, for the streaming stores
     const std::uint32_t offset = static_cast<std::uint32_t>(g_arena.size());
-    const std::size_t n = prims.size() / kPrimWords;
+    const std::uint32_t n = static_cast<std::uint32_t>(prims.size() / kPrimWords);
     std::uint32_t *to = g_arena.grow(n * kHwPrimWords + 1);
-    for (std::size_t i = 0; i < n; ++i, to += kHwPrimWords) {
-        const std::uint32_t *rec = prims.data() + i * kPrimWords;
+    const std::uint32_t *rec = prims.data();
+    runs.clear();
+    for (std::uint32_t i = 0; i < n; ++i, rec += kPrimWords, to += kHwPrimWords) {
+        if (!i || rec[0] != rec[-static_cast<int>(kPrimWords)] || rec[1] != rec[1 - static_cast<int>(kPrimWords)]) runs.push_back({i, 0});
+        ++runs.back()[1];
+#ifdef __x86_64__
+        // streaming stores: only the upload reads the arena again, and it is bound by the PCIe link, so the lines
+        // needn't be fetched first
+        long long q[kHwPrimWords / 2];
+        std::memcpy(q, rec + 4, 6 * 4);
+        std::memcpy(reinterpret_cast<std::uint32_t *>(q) + 6, rec + 11, 16 * 4);
+        for (std::uint32_t k = 0; k < kHwPrimWords / 2; ++k) _mm_stream_si64(reinterpret_cast<long long *>(to) + k, q[k]);
+#else
         std::memcpy(to, rec + 4, 6 * 4);
         std::memcpy(to + 6, rec + 11, 16 * 4);
+#endif
     }
+#ifdef __x86_64__
+    _mm_sfence();
+#endif
     *to = 0;
     return offset;
 }
@@ -3638,16 +3658,15 @@ void hw_draw(Binding *const *src, Binding *zsrc, bool chained) {
     float scale;
     native_depth(x.zpsm, zmax, scale);
     plan_decodes(prims, true);
-    const std::uint32_t prim_offset = arena_hw_prims(b.prims);
+    static std::vector<std::array<std::uint32_t, 2>> runs;
+    const std::uint32_t prim_offset = arena_hw_prims(b.prims, runs);
     const std::uint32_t setup_offset = arena_append(b.setups.data(), b.setups.size() * 4);
     emit_decodes(setup_offset);
     static std::vector<std::array<std::uint32_t, 4>> fails;  // gs.wgsl fail_args records
     fails.clear();
     // one draw (or two: the alpha test's pass and fail pixels) per run of primitives with one setup and kind
-    for (std::uint32_t i = 0; i < prims;) {
+    for (const auto &[i, n] : runs) {
         const std::uint32_t *rec = b.prims.data() + i * kPrimWords;
-        std::uint32_t n = 1;
-        while (i + n < prims && b.prims[(i + n) * kPrimWords] == rec[0] && b.prims[(i + n) * kPrimWords + 1] == rec[1]) ++n;
         const std::uint32_t *w = b.setups.data() + rec[0] * kSetupWords;
         const std::uint32_t flags = w[0], alpha = (w[7] >> 12) & 0xFFu;
         std::uint32_t blend = native_blend(alpha, flags & 8u, w[9]);
@@ -3723,7 +3742,6 @@ void hw_draw(Binding *const *src, Binding *zsrc, bool chained) {
             ++g_nat.draws;
         }
         g_nat.triangles += n;
-        i += n;
     }
     if (!fails.empty()) {  // after the decodes, ahead of the draws
         const std::uint32_t at = arena_append(fails.data(), fails.size() * 16), n = static_cast<std::uint32_t>(fails.size());
