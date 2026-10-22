@@ -18,3 +18,5 @@ Play: `build/native-mksm/ps2run games/mksm/disc/SLUS_210.87 --disc games/mksm/di
 Online co-op: add `--host`; the friend opens the printed link in a browser (see docs/netplay.md).
 
 No disc data, BIOS or savestates are stored here — you need your own disc image.
+
+The remaster, the browser build, lockstep co-op, the server and the decomp: see the [root README](../README.md).

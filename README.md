@@ -1,110 +1,210 @@
-# PS2 Web Recomp
+# Mortal Kombat: Shaolin Monks — native and browser
 
-PlayStation 2 games running in the browser through static recompilation. The game's Emotion Engine machine code is translated ahead of time into C++ and compiled to WebAssembly, so the main CPU is never interpreted; the rest of the console, its operating system and hardware, is emulated by a runtime that draws with WebGPU.
+Mortal Kombat: Shaolin Monks (PS2, NTSC-U, `SLUS_210.87`), statically recompiled to run natively on Linux and in the
+browser, with a graphics remaster (3x6 supersampling, 16:9 widescreen, HD textures) and two-player co-op, locally and
+online.
 
-<p align="center">
-  <img src="docs/media/demo.webp" alt="Gran Turismo 4 running in a browser" width="720">
-  <br>
-  <a href="docs/media/demo.mp4">Watch the full recording (1:24)</a>
-</p>
+**No game data is included.** You need your own NTSC-U disc image of the game. This repository is private and has to
+stay private: `mksm/generated/` is the game's executable translated to C++.
 
-This is the sibling of [psp-web-recomp](https://github.com/snuri00/psp-web-recomp) and follows the same method. The first title brought up this way is Gran Turismo 4, chosen because it is one of the most demanding games on the system: it leans on both vector units, on exact floating point behaviour for its replays and license tests, and on graphics tricks that read rendered images back as palettes. It plays from boot through the opening movie, the menus and races, with music and sound effects, and saves to a memory card kept in the browser. A race runs at full speed, 50 frames per second for this PAL release, in Chrome on a laptop's integrated GPU at twice the PS2's resolution, which is how the recording above was made.
+## Install (Linux)
 
-God of War II followed through the same scripts. It needed no game-specific code, but it found two bugs that Gran Turismo 4 had never triggered, one in the recompiler and one in the vector unit timing, and a few missing pieces of the PS2's input/output processor. It now plays from the menus through its cutscenes into combat, and holds 60 frames per second in heavy combat at the PS2's resolution in Chrome. At twice the resolution it runs at 48 to 60, limited by the laptop's integrated GPU.
-
-No game data is included here. You bring a disc image of a game you own, and the scripts in this repository turn it into a web page on your machine.
-
-## How it works
-
-**Recompilation.** `eerecomp` reads the game's executable, follows its control flow to find the functions and emits C++ for them in units of 16 KiB of guest code. The output keeps the R5900's quirks: 128-bit registers and the multimedia instructions that work on them, branch delay slots, the PS2's floating point unit, which has no infinities or denormals and rounds differently from IEEE, and vector unit 0 used as a coprocessor. Jumps between units become tail calls, and a thread switch unwinds the host stack and resumes at the guest address, so the generated code never needs a stack per guest thread.
-
-**A small PS2 kernel.** The EE side of the operating system is answered by high-level emulation: threads, semaphores, interrupt handlers for the DMA controller and the vertical blank, alarms, and the SIF channel that connects the main CPU to the I/O processor. The I/O processor runs the game's own IRX modules, the sound driver, the disc streaming code and the controller and memory card drivers that ship on the disc, on an interpreter of its R3000 CPU, while the IOP kernel and the libraries those modules call are reimplemented in C++. The disc is read over HTTP Range requests, so only the executable is downloaded up front.
-
-**Vector units.** Most of a PS2 game's 3D work happens in microprograms the game uploads to vector unit 1. They run with the pipeline delays of the MAC, status and clip flags modelled, because games schedule their code around them, and with the PS2's float rules for special values: no infinities or NaNs, denormals flushed to zero and overflow clamped to the largest float. The arithmetic itself is the host's, so a result can differ from the console's in its last bit; the console truncates where the host rounds, and its multiplier is not exact. Microprograms seen during a test run are compiled ahead of time into SIMD C++; any the page meets for the first time are translated into a WebAssembly module on the spot, which takes a few milliseconds per program.
-
-**Graphics.** The Graphics Synthesizer's 4 MB of video memory lives on the GPU, in its native swizzled layouts, and drawing is done by WebGPU compute shaders: triangles are binned into tiles and rasterized with the GS's own rules for texturing, palettes, alpha blending, depth and destination alpha tests. Because everything stays in GS memory, effects that render into a texture or reinterpret a framebuffer as a palette work the way they do on the console. The internal resolution can be one, two or three times the native one. A software rasterizer of the same GS remains as the reference the GPU output is compared against.
-
-**Threads.** The emulation runs in a worker, vector unit 1 has a worker of its own the way it runs in parallel on the console, and the GS commands go through a ring buffer to the page thread, which owns the WebGPU device.
-
-**Sound and movies.** The SPU2 is reimplemented with its 48 voices of ADPCM, ADSR envelopes and the streaming DMA games use for music, and its output goes to an AudioWorklet through shared memory. Movies are decoded by an implementation of the IPU, the PS2's MPEG-2 decoder.
-
-## Lessons from making it fast
-
-The first race ran at 3 frames per second natively, with a software rasterizer and an interpreter for vector unit 1. Moving the GS to WebGPU compute shaders and compiling the vector unit programs brought it to about 70 natively, and most of the remaining work was about where the browser spent its time rather than the emulation.
-
-The first version of the GPU renderer submitted around 650 compute dispatches per frame, because every texture upload and palette load split the batch of triangles around it. Hoisting uploads ahead of the triangles that do not depend on them, with the same output, brought that to about 80.
-
-Gran Turismo 4 uploads the same 3 MB of textures every frame of a race. GS memory is swapped between frames, so the uploads cannot simply be skipped, but a 16 MB cache of recently uploaded contents on the GPU lets most of them be served without crossing from WebAssembly to the GPU again, which cut the data sent per frame by about 60 percent.
-
-At three times the native resolution the frame rate dropped to 23. Profiling the shader showed that the per-triangle setup was being loaded after a branch that differed between threads, which made the whole setup divergent, and that uploads split into 1 MB pieces blocked Chrome's page thread. Loading the setup uniformly and writing each frame's data in one piece brought three times the resolution to 48 to 50 frames per second on the same integrated GPU.
-
-The browser's own scheduling mattered too. Nested `setTimeout` calls are clamped to 4 ms, so the emulation loop now yields through a `MessageChannel` instead, and moving the emulation into a worker, so that the page thread only feeds the GPU, steadied a race that had wandered between 40 and 50 frames per second at a constant 50.
-
-## A second game
-
-God of War II went from an ISO to a page through `port.sh` with only generic changes, and each one was a bug or gap that the first game had simply not exercised.
-
-It started with silence. The game's sound driver drives its tick from one of the I/O processor's hardware timers, which nothing had implemented, so the driver never mixed a sample. The intro after the difficulty menu was a mess of huge flat polygons, and when the gameplay was about to begin the game crashed after its render list ran past the end of memory and overwrote its own vertical blank handlers. Following a corrupted linked list back with hardware watchpoints led to the recompiler: when a branch was the last instruction of a 16 KiB unit, the path that does not take the branch continued in the next unit at the delay slot instead of after it, running that instruction twice, or running the instruction a branch-likely should have skipped. That fixed the crash and the game reached combat, still with giant polygons over parts of the screen. Those came from triangles that should have been culled. God of War II's microcode reads the clip flags three instructions after the `CLIP` that sets them, and the vector unit model made them visible only after four, which Gran Turismo 4, whose microcode always waits longer, could not have noticed.
-
-Along the way it also needed a boot path like the BIOS gives, a module loaded from memory instead of the disc, and the scratchpad DMA's destination chain mode.
-
-## Port a game of your own
-
-You need git, CMake, Ninja, a C++20 compiler (clang is preferred and picked up automatically), Python 3, and 7-Zip if your disc image is in a `.7z`. Everything has been run on Linux on x86-64, and the scripts also build on macOS on Apple silicon, where the scripts need a newer bash than the system 3.2 (`brew install bash cmake ninja sevenzip`) and the native runner links wgpu-native against Metal. The first run installs the Emscripten SDK into `tools/emsdk`, or uses the one `EMSDK` points to, and downloads wgpu-native for the native runner. With `--native-only` the script skips the browser build and never installs the SDK; the native window then needs the SDL2 development files. Expect about 300 MB of disk space per game for the generated code and the builds; the disc image itself is linked, not copied.
-
-```bash
-git clone https://github.com/snuri00/ps2-web-recomp.git
-cd ps2-web-recomp
-scripts/port.sh mygame "My Game.iso"
-python3 scripts/serve.py build/web-mygame games/mygame/disc.iso    # http://localhost:8620/
+```sh
+git clone https://github.com/Darkosxl/mksm-recomp.git && cd mksm-recomp && ./install.sh /path/to/MKSM.iso
 ```
 
-`port.sh` takes a disc image (an ISO, or a ZIP or 7z archive holding one) and does the whole job. It reads the boot program named in the disc's `SYSTEM.CNF`, translates its machine code to C++, and then runs the game headless a few times. Static analysis cannot see every function a game reaches through pointers, so each run writes down the addresses it could not find, the script adds them as entry points and translates again, until a run gets through without new ones. The same runs record the vector unit microprograms the game uploads, which are compiled ahead of time as well. Last it builds the page into `build/web-mygame` and the native runner into `build/native-mygame`. God of War II goes from ISO to page in three and a half minutes on an 8-core laptop.
+`install.sh` checks what the build needs and says what is missing: clang 17+ or GCC 13+, CMake, Ninja, Python 3, curl,
+unzip and the SDL2 development files. To play you also need a GPU with a Vulkan driver. Then it builds the game
+(`--jobs N` sets the compile jobs, default 4) and prints how to start it; `--play` starts it right away.
 
-The exploring runs press start and then cross every five seconds, which gets most games through their title screens, and put an empty memory card in slot 1 the way the page does, so they follow the path a player takes. `--press 900:cross` replaces that with your own inputs and `--frames` sets how long each run lasts. Frames from the last run land in `games/mygame/shots`, which is the quickest way to see how far a new game gets. `scripts/build_web.sh mygame` rebuilds only the page.
+## Play
 
-Set your expectations accordingly: two games have been brought up so far. Another game will most likely stop at a system call or an IOP library function nobody implemented yet, which the runner logs as `[sys] unhandled syscall` or `[iop] missing <library> #<n>`, or use a GS feature the renderer does not handle yet.
-
-## Browsers
-
-The page needs WebGPU for the GPU renderer. Chrome and Edge have it on Windows and macOS. On Linux it is off by default in Chrome and Chromium: turn on `chrome://flags/#enable-unsafe-webgpu` and `chrome://flags/#enable-vulkan` and restart the browser, as the page tells you when it finds no usable adapter. Without WebGPU the software renderer takes over, which is fine for menus and far too slow for 3D. On laptops with two GPUs, a canvas drawn on the discrete GPU sometimes cannot be shown on the screen; the page tries both adapters and falls back to copying frames through a 2D canvas.
-
-The keyboard maps the face buttons to Z (cross), X (circle), A (square) and S (triangle), the shoulders to Q, W, 1 and 2, start and select to Enter and Backspace, the D-pad to the arrow keys and the left stick to I, J, K and L. Gamepads work through the browser's gamepad API. Their analog triggers reach the game as the DualShock 2's pressure-sensitive L2 and R2, and controllers with motors vibrate when the game asks for it, in browsers that expose vibration (Chrome and Edge do). Phones get on-screen controls, and F toggles fullscreen. The resolution selector reloads the page at the new size.
-
-## Playing natively
-
-The native runner, `build/native-mygame/ps2run`, plays the game in a window when SDL2 is installed; `scripts/port.sh mygame "My Game.iso" --native-only` builds only this one. It draws through wgpu-native on Vulkan and plays sound through SDL. The keyboard uses the page's keys for the buttons, with the arrow keys as both the D-pad and the left stick, and any game controller SDL recognizes works too, the Steam Deck's own controls included, with the same trigger pressure and vibration as in the browser.
-
-```bash
-build/native-mygame/ps2run games/mygame/disc/SLUS_123.45 --disc games/mygame/disc.iso --window --memcard mygame.ps2
+```sh
+remaster/play.sh               # the remaster
+remaster/play.sh --original    # the original look, same build and memory card
 ```
 
-`--fullscreen` starts in fullscreen and F11 switches back and forth. `PS2_SCALE=2` or `3` raises the internal resolution. As in the browser, the emulation, vector unit 1 and the GS each run on their own thread, which takes God of War II from 43 to 60 frames per second at the native resolution on the test laptop; `PS2_ONE_THREAD=1` puts everything back on one thread. Disc reads, module loads and the IOP reboot take as long as on the console's DVD drive, with its seeks and its constant-angular-velocity transfer rate, because some games time their boot against them; `PS2_FAST_DISC=1` makes them near-instant instead, which shortens loading screens but can trip such games. The memory card file uses the same layout as the page's exported cards. On a Steam Deck the runner can be added to Steam as a non-Steam game, though nobody has tried it on one yet.
+- Arguments after these go to the game: `--fullscreen` starts in fullscreen, and F11 switches.
+- `PS2_SCALE=2x4 remaster/play.sh` renders at a lower resolution, for slower GPUs.
+- HD textures are optional and not included. With a texture pack, run `PS2_TEX_PACK=/path/to/pack remaster/play.sh`.
+- Saves are kept on the memory card `games/mksm/card.ps2`.
 
-### Online co-op
+## Play in the browser
 
-`--host` lets a friend play controller 2 over the network from a browser, with nothing to install: the game runs only on your machine, which streams its picture and sound to them over WebRTC and takes their gamepad or keyboard back as player 2. The host prints a link with a 6-digit code to send them; across the internet, Tailscale or ZeroTier is the easy way to reach each other. It needs libdatachannel, FFmpeg and Opus at build time. [docs/netplay.md](docs/netplay.md) has the details, the protocol and measured latency.
+Open your invite link to **`https://<our-domain>`**. The site is invite-only. It needs desktop Chrome or Edge (WebGPU
+and WebAssembly JSPI). On Linux, first turn on `chrome://flags/#enable-unsafe-webgpu` and
+`chrome://flags/#enable-vulkan` and restart the browser.
 
-```bash
-build/native-mygame/ps2run games/mygame/disc/SLUS_123.45 --disc games/mygame/disc.iso --window --host
+- The first visit asks for a nickname. **Play** starts your own game, and **Play offline** starts a game nobody can
+  join.
+- **Quality**: Auto picks the remaster at 3x6 and lowers it on the next start if your computer can't hold 60 fps. You
+  can also pick a level yourself, down to Original.
+- HD textures load while you play and are kept by the browser.
+- Saves stay in this browser. **Export card** and **Import card** move them as a `.ps2` file.
+
+## Local co-op (two players, one machine)
+
+Pick Ko-op in the game's menus.
+
+- **Desktop, two controllers**: plug both in. The first is player 1, the second is player 2.
+- **Desktop, controller and keyboard**: `remaster/play.sh --pad2`. The controller is player 1. The keyboard's player 2
+  keys (I J K L and the numpad, see [Controls](#controls)) are player 2. The same flag also gives two players on one
+  keyboard.
+- **Browser, two controllers**: use **Play offline**. The first controller (with the keyboard) is player 1, the second
+  is player 2. In a game with a code, each browser has one player.
+
+## Online co-op
+
+In the browser, **Play** shows your code (`ABCD-EFGH`) and a link to copy. Your friend types the code into **Join** or
+opens the link. They can join at any time, even mid-level, and the game uses your memory card. Their own saves are not
+touched.
+
+Desktop builds have their own online modes. See [Development](#development).
+
+## Controls
+
+<!-- KEYBOARD CONTROLS: the one place for the key table. The keys themselves are in host/window.cpp (kKeys, kKeys2,
+     and the stick keys in poll_port) and web/input.js (keyMap, stickKeys; its legend() feeds the landing page's
+     controller check). Change the code and this table together. -->
+
+| PS2 | Player 1 (desktop and browser) | Player 2 (desktop, `--pad2`) |
+|---|---|---|
+| D-pad | Arrow keys | I J K L |
+| Left stick | Arrow keys (desktop), I J K L (browser) | I J K L |
+| Cross | Z | Numpad 2 |
+| Circle | X | Numpad 6 |
+| Square | A | Numpad 4 |
+| Triangle | S | Numpad 8 |
+| L1 / R1 | Q / W | Numpad 7 / Numpad 9 |
+| L2 / R2 | 1 / 2 | Numpad 1 / Numpad 3 |
+| Start | Enter | Numpad Enter |
+| Select | Backspace | Numpad + |
+| Fullscreen | F11 (desktop), F (browser) | |
+
+<!-- END KEYBOARD CONTROLS -->
+
+Controllers use the usual layout:
+
+- The bottom, right, left and top face buttons are cross, circle, square and triangle.
+- The bumpers are L1 and R1.
+- The triggers are L2 and R2, and they are pressure-sensitive.
+- The sticks and stick clicks work as on a DualShock 2.
+- Controllers that have motors vibrate.
+
+---
+
+## Development
+
+### Status
+
+| Area | State |
+|---|---|
+| Desktop | Boots and plays: Story levels, local Ko-op and Versus. An automated sweep warped to all 107 maps with no crash or halt (`mksm/notes/m5-sweep.md`). The maps that went black there were fixed or shown to match PCSX2 (`mksm/notes/black-maps.md`). Saves load in PCSX2 and back (`mksm/notes/pcsx2-crosscheck.md`). A full Story playthrough by a person is still open (`mksm/notes/BLOCKERS.md`). |
+| Remaster | 60 fps at 3x6 with the hardware GS renderer on a laptop RTX 4050 (noted in `remaster/play.sh`, commit dbecd34). Pre-rendered movies stay 4:3. Step log: `mksm/notes/remaster.md`. |
+| Browser | The original game at native resolution: 60 fps on an NVIDIA GPU (`mksm/notes/web-build.md`). The remaster at 3x6: 60.0 fps mean at the Foundry, measured headless on the same RTX 4050 (commit 5bbe284). |
+| Online co-op | Browser lockstep: a 22-minute two-browser run (NVIDIA host, Intel iGPU guest) with zero desyncs under injected faults (`mksm/notes/web-lockstep.md`). Desktop lockstep uses the same protocol and was tested on localhost (`mksm/notes/native-lockstep.md`). |
+| Decomp | In progress. See [decomp/README.md](decomp/README.md). |
+
+### Layout
+
+| Path | What |
+|---|---|
+| `install.sh` | One-step desktop install: checks prerequisites, then runs `mksm/build.sh`. |
+| `mksm/` | Everything specific to this game: `build.sh`, the generated C++, entry seeds, `patches/widescreen.pnach`, scripted inputs, tools and notes. See [mksm/README.md](mksm/README.md). |
+| `mksm/notes/` | Build journal, fix queue (`BLOCKERS.md`), the remaster log (`remaster.md`), web build, lockstep and host-mode notes. |
+| `remaster/` | `play.sh`, texture dump/upscale/pack scripts, regression gates, recording. |
+| `decomp/` | The functional decomp: [decomp/README.md](decomp/README.md). |
+| `server/` | Invite-only web hosting, signalling, lobby page and host mode: [server/README.md](server/README.md). |
+| `web/` | The browser page (`shell.html`), lockstep co-op (`lockstep.js`, protocol in `lockstep.md`), input, disc cache and texture pack streaming. |
+| `recomp/`, `runtime/`, `host/` | The recompilers (`eerecomp`, `vurecomp`), the emulated console, and the `ps2run` and web entry points. |
+| `scripts/` | Toolchain setup, the web build, a local server (`serve.py`), disc image tools. |
+| `docs/netplay.md` | Streaming co-op (`--host`). |
+
+### Building by hand
+
+```sh
+mksm/build.sh /path/to/MKSM.iso [--jobs N] [--retranslate] [--web]
+build/native-mksm/ps2run games/mksm/disc/SLUS_210.87 --disc games/mksm/disc.iso --window --memcard games/mksm/card.ps2
 ```
 
-## Saves
+`mksm/build.sh` does the following:
 
-The page puts a memory card in slot 1 and keeps it in the browser's storage for the address you play from, so progress survives a reload. Games format and use it as they would a real card. **Export card** downloads it as a `.ps2` file in the layout PCSX2 uses, and **Import card** puts such a file back in the slot, so a card can travel between browsers or come from PCSX2. `?nocard` starts with the slot empty.
+- Links the image as `games/mksm/disc.iso` and extracts `SYSTEM.CNF` and `SLUS_210.87`.
+- Applies the Ko-op fix (`mksm/tools/scripts/patch_koop.py`) to the known dump's ELF. That dump is an unlock-all build whose mod breaks Ko-op; other ELFs are left alone.
+- On the first run, builds the recompilers and fetches wgpu-native.
+- Compiles the committed C++, which was translated from that dump.
 
-## Hosting
+The flags:
 
-The page uses SharedArrayBuffer for its threads, so it has to be served cross-origin isolated, with `Cross-Origin-Opener-Policy: same-origin` and `Cross-Origin-Embedder-Policy: require-corp`. `scripts/serve.py` sends both headers and supports the Range requests the disc streaming relies on. Anyone who can reach the server can load the game, so keep it to yourself.
+- `--retranslate` regenerates `mksm/generated/` from your ELF.
+- `--web` makes the browser build in `build/web-mksm`. On the first run it clones the Emscripten SDK 6.0.11 into `tools/emsdk`, so it also needs git.
+- `python3 scripts/serve.py build/web-mksm games/mksm/disc.iso [--pack <dir>]` serves the build on http://localhost:8620/.
 
-## Legal
+The optional libraries are picked up at configure time. Each one turns on a feature:
 
-This repository contains only original code and third-party code under its own license. It contains no game code or data. The generated C++ and the built WebAssembly are translations of the game's executable, so they belong to the game's owners: keep them on your own machine and do not publish them. Use disc images of games you own. Gran Turismo, God of War and PlayStation are trademarks of Sony Interactive Entertainment; this project is not affiliated with or endorsed by Sony, Polyphony Digital, Santa Monica Studio or any game publisher.
+| Library | Feature |
+|---|---|
+| zlib | Lockstep co-op |
+| OpenSSL | `wss://` for desktop co-op |
+| libdatachannel | WebRTC for desktop co-op |
+| libdatachannel, FFmpeg and Opus | Streaming co-op (`--host`) |
+| SoundTouch | Time-stretched sound below full speed |
+
+### Hosting and desktop online co-op
+
+| What | Where |
+|---|---|
+| The invite-only site: Caddy, `signal.mjs` and coturn, deployed with `server/deploy.sh` | [server/README.md](server/README.md) (Node 20+; tests: `cd server && npm install && node test.mjs`) |
+| Host mode without a server: your PC serves the web build through a Cloudflare quick tunnel | `mksm/host.sh`, guide in `mksm/notes/web-host.md` |
+| Desktop lockstep: `ps2run ... --invite '<invite link>'` or `--lockstep wss://<server> --room new\|<id>` | `mksm/notes/native-lockstep.md` |
+| Streaming co-op: only the desktop host runs the game, and a browser plays controller 2 | [docs/netplay.md](docs/netplay.md) |
+
+Lockstep peers must agree on the build and on settings that change the game (the widescreen patch, `PS2_DECOMP`).
+Otherwise the handshake refuses them. Render-only settings such as the scale may differ.
+
+### Remaster settings
+
+`remaster/play.sh` sets the environment for `ps2run`:
+
+| Setting | What it does |
+|---|---|
+| `PS2_SCALE=3x6` | Renders 3 samples across and 6 down per PS2 pixel, so MK:SM's 224-line fields become full 1920x1344 frames. `N` alone is a square scale. |
+| `PS2_PNACH=mksm/patches/widescreen.pnach`, `PS2_ASPECT=16:9` | Widescreen (Hor+) through the game's own aspect variable. HUD, menus and movies stay 4:3. This patches the game. |
+| `PS2_TEX_PACK=<dir>` | HD texture pack. `play.sh` uses `remaster-data/textures/pack-v2` two directories above the checkout when that exists. |
+| `PS2_GS_HW=1` | The hardware GS renderer (`0`: the compute one). |
+| `PS2_FIELD_FLAG=...` | Lines up the game's interlaced fields exactly at the higher scale. |
+
+Making an HD pack from your own game takes three steps:
+
+1. Dump the textures with `remaster/texdump.sh` or `remaster/harvest.sh`. Both start from savestates made by `remaster/make_states.sh`.
+2. Upscale them with `remaster/upscale.py <dump> <pack>`. It needs `realesrgan-ncnn-vulkan` in `tools-remaster/realesrgan/`, two directories above the checkout.
+3. Convert the pack for the web with `remaster/webpack.py <pack> <out> --scale 4|2`.
+
+Regression gates, GPU checks, profiling and the AWS workflow are described in `mksm/notes/remaster.md` and
+[decomp/README.md](decomp/README.md).
+
+### Upstream
+
+Built on [ps2-web-recomp](https://github.com/snuri00/ps2-web-recomp) by Samir Nuri, the sibling of
+[psp-web-recomp](https://github.com/snuri00/psp-web-recomp), and its method:
+
+- The EE executable is statically recompiled to C++.
+- VU1 microprograms are compiled ahead of time.
+- The IOP runs the game's own modules on an R3000 interpreter with a reimplemented IOP kernel.
+- The Graphics Synthesizer is emulated on the GPU through WebGPU.
+
+Its generic flow for other games, `scripts/port.sh`, is still in the tree. This game builds with `mksm/build.sh`.
 
 ## Credits
 
-The VLC tables of the MPEG decoder are adapted from [Play!](https://github.com/jpd002/Play-) (BSD 2-clause, notice in `runtime/src/ipu/NOTICE`). PCSX2, Play! and the ps2sdk headers were the references for much of the hardware and system behavior emulated here. wgpu-native and Dawn provide WebGPU natively and in the browser, and Emscripten builds the WebAssembly.
+The MPEG decoder's VLC tables are adapted from [Play!](https://github.com/jpd002/Play-) (BSD 2-clause, notice in
+`runtime/src/ipu/NOTICE`). PCSX2, Play! and the ps2sdk headers were references for the emulated hardware and system
+behaviour, and PCSX2 is the oracle the recomp is checked against. wgpu-native and Dawn provide WebGPU on the desktop and
+in the browser, and Emscripten builds the WebAssembly.
 
 ## License
 
-The code in this repository is available under the MIT License, see [LICENSE](LICENSE). `runtime/src/ipu/tables.hpp` keeps the BSD 2-clause notice of Play!.
+The code is under the MIT License, see [LICENSE](LICENSE); `runtime/src/ipu/tables.hpp` keeps Play!'s BSD 2-clause
+notice. The license does not cover `mksm/generated/`, which is translated from the game's executable and belongs to its
+owners. Mortal Kombat and PlayStation are trademarks of their respective owners; this project is not affiliated with or
+endorsed by them.
