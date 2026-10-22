@@ -4,6 +4,7 @@
 #include "ps2/system.hpp"
 
 #include <algorithm>
+#include <atomic>
 #include <bit>
 #include <chrono>
 #include <condition_variable>
@@ -12,6 +13,7 @@
 #include <cstring>
 #include <deque>
 #include <filesystem>
+#include <memory>
 #include <mutex>
 #include <string>
 #include <thread>
@@ -104,12 +106,36 @@ struct Pack {
     // skips the sizes it doesn't list (bit TH of sizes[TW]): their keys can't be in the pack.
     std::uint32_t sizes[11] = {};
     bool sized = false;
+#ifdef __EMSCRIPTEN__
+    // Web: no pack dir, only <pack>/index.txt (remaster/webpack.py, written by the page before main): under
+    // "#mksm-pack 1 gzip-up", "<key> <width> <height> <scale> <bytes> <file> [maps]" a texture; pack-worker.js fetches
+    // the files.
+    struct Remote {
+        std::uint32_t width, words, shift;  // the replacement's
+        std::string file;
+    };
+    std::unordered_map<std::uint64_t, Remote> remote;
+#endif
     Pack() {
         if (!pack_dir()) return;
+        std::size_t listed = 0;
+#ifdef __EMSCRIPTEN__
+        if (std::FILE *f = std::fopen((std::string(pack_dir()) + "/index.txt").c_str(), "r")) {
+            char line[64] = "", file[96];
+            unsigned long long key;
+            unsigned w, h, scale, bytes;
+            if (std::fgets(line, sizeof line, f) && std::string(line).rfind("#mksm-pack 1 gzip-up", 0) == 0)
+                while (std::fscanf(f, " %llx %u %u %u %u %95s%*[^\n]", &key, &w, &h, &scale, &bytes, file) == 6)
+                    if (std::has_single_bit(w) && std::has_single_bit(h) && w <= 1024 && h <= 1024 && (scale == 2 || scale == 4 || scale == 8) &&
+                        bytes == w * h * scale * scale * 4)
+                        files.insert(key), remote[key] = {w * scale, bytes / 4, static_cast<std::uint32_t>(std::countr_zero(scale)), file}, ++listed,
+                        sizes[std::countr_zero(w)] |= 1u << std::countr_zero(h);
+            std::fclose(f);
+        }
+#else
         std::error_code ec;
         for (const auto &e : std::filesystem::directory_iterator(pack_dir(), ec))
             if (e.path().extension() == ".pam") files.insert(std::strtoull(e.path().stem().c_str(), nullptr, 16));
-        std::size_t listed = 0;
         if (std::FILE *f = std::fopen((std::string(pack_dir()) + "/sizes.txt").c_str(), "r")) {
             unsigned long long key;
             unsigned w, h;
@@ -118,6 +144,7 @@ struct Pack {
                     ++listed, sizes[std::countr_zero(w)] |= 1u << std::countr_zero(h);
             std::fclose(f);
         }
+#endif
         sized = listed == files.size();
         std::fprintf(stderr, "[texpack] %zu replacements in %s%s\n", files.size(), pack_dir(), sized ? ", sizes listed" : "");
     }
@@ -128,6 +155,7 @@ Pack &pack() {
     return p;
 }
 
+#ifndef __EMSCRIPTEN__
 // 1 read, 0 unreadable, -1 more than room pixels (left unread)
 int read_pam(const std::string &path, std::vector<std::uint32_t> &px, std::uint32_t &w, std::uint32_t &h, std::size_t room = SIZE_MAX) {
     std::FILE *f = std::fopen(path.c_str(), "rb");
@@ -188,6 +216,32 @@ Loader &loader() {
     static Loader l;
     return l;
 }
+#else
+// Web: no thread to spare and no files. The render thread asks for a texture (replacement), the browser's main thread
+// starts the fetch (service), and pack-worker.js fetches it (Cache Storage first), inflates and un-filters it straight
+// into px and sets state the way ps2web_fetch does (3 in, 4 failed). At most 4 fetches and 64 MB in flight, 128 MB in
+// but not yet taken (the oldest dropped), and 24 MB of replacements taken a frame (each one is a buffer write).
+// ponytail: requests in order; a requested texture's map siblings first once index lines carry maps.
+constexpr std::size_t kFlying = 4, kFlyingBytes = 64u << 20, kInBytes = 128u << 20, kFrameBytes = 24u << 20;
+struct Fetch {
+    std::uint32_t width, words, shift;
+    std::string file;
+    std::vector<std::uint32_t> px;
+    std::atomic<std::uint32_t> state{0};  // 0 queued, 2 fetching, 3 in, 4 failed (ps2web_fetch)
+    bool in = false, failed = false;      // as service saw it
+};
+struct Fetches {
+    std::mutex m;
+    std::unordered_map<std::uint64_t, std::unique_ptr<Fetch>> all;  // queued, fetching or in, until taken
+    std::deque<std::uint64_t> wanted, in;                           // queued; in, oldest first
+    std::vector<std::uint64_t> flying;
+    std::size_t flying_bytes = 0, in_bytes = 0;
+};
+Fetches &fetches() {
+    static Fetches q;
+    return q;
+}
+#endif
 
 }
 
@@ -349,6 +403,43 @@ std::uint64_t key_uncounted(const State &st) {
 std::vector<std::uint32_t> replacement(std::uint64_t key, std::uint32_t tw, std::uint32_t th, std::uint32_t &scale, std::size_t room) {
     Pack &p = pack();
     if (!p.files.count(key)) return {};
+#ifdef __EMSCRIPTEN__
+    const Pack::Remote &r = p.remote.at(key);
+    if (r.words > room) return {};  // not fetched until it fits
+    if (r.width != (1u << (tw + r.shift)) || r.words != r.width << (th + r.shift)) {
+        std::fprintf(stderr, "[texpack] %s: %ux%u is not 2, 4 or 8 times %ux%u\n", r.file.c_str(), r.width, r.words / r.width, 1u << tw, 1u << th);
+        p.files.erase(key);
+        return {};
+    }
+    Fetches &q = fetches();
+    std::lock_guard lock(q.m);
+    auto it = q.all.find(key);
+    if (it == q.all.end()) {
+        Fetch &f = *q.all.emplace(key, std::make_unique<Fetch>()).first->second;
+        f.width = r.width, f.words = r.words, f.shift = r.shift, f.file = r.file;
+        q.wanted.push_back(key);
+        return {};
+    }
+    Fetch &f = *it->second;
+    if (f.failed) {
+        std::fprintf(stderr, "[texpack] %s: fetch failed\n", r.file.c_str());
+        q.all.erase(it);
+        p.files.erase(key);
+        return {};
+    }
+    static std::uint64_t frame = ~0ull;
+    static std::size_t taken = 0;
+    if (frame != frame_count()) frame = frame_count(), taken = 0;
+    if (!f.in || (taken && taken + f.words * 4ull > kFrameBytes)) return {};
+    taken += f.words * 4ull;
+    q.in.erase(std::find(q.in.begin(), q.in.end(), key));
+    q.in_bytes -= f.words * 4ull;
+    std::vector<std::uint32_t> px = std::move(f.px);
+    scale = f.shift;
+    q.all.erase(it);
+    ++g_stats.loads, g_stats.load_mb += px.size() * 4.0 / (1 << 20);
+    return px;
+#else
     char name[64];
     std::snprintf(name, sizeof name, "/%016llx.pam", static_cast<unsigned long long>(key));
     Loaded f;
@@ -380,7 +471,44 @@ std::vector<std::uint32_t> replacement(std::uint64_t key, std::uint32_t tw, std:
     }
     p.files.erase(key);  // unreadable or the wrong size: one attempt per key
     return {};
+#endif
 }
+
+#ifdef __EMSCRIPTEN__
+void service(Fetcher fetch) {
+    if (!pack_dir()) return;
+    Fetches &q = fetches();
+    std::lock_guard lock(q.m);
+    for (std::size_t i = 0; i < q.flying.size();) {
+        Fetch &f = *q.all.at(q.flying[i]);
+        const std::uint32_t state = f.state.load(std::memory_order_acquire);
+        if (state != 3 && state != 4) {
+            ++i;
+            continue;
+        }
+        q.flying_bytes -= f.words * 4ull;
+        if (state == 3) f.in = true, q.in.push_back(q.flying[i]), q.in_bytes += f.words * 4ull;
+        else f.failed = true, f.px = {};
+        q.flying[i] = q.flying.back();
+        q.flying.pop_back();
+    }
+    while (q.in_bytes > kInBytes) {
+        q.in_bytes -= q.all.at(q.in.front())->words * 4ull;
+        q.all.erase(q.in.front());
+        q.in.pop_front();
+    }
+    while (!q.wanted.empty() && q.flying.size() < kFlying) {
+        Fetch &f = *q.all.at(q.wanted.front());
+        if (!q.flying.empty() && q.flying_bytes + f.words * 4ull > kFlyingBytes) break;
+        q.flying.push_back(q.wanted.front());
+        q.wanted.pop_front();
+        q.flying_bytes += f.words * 4ull;
+        f.px.resize(f.words);
+        f.state.store(2, std::memory_order_release);
+        fetch(f.file.c_str(), f.px.data(), static_cast<int>(f.words * 4), static_cast<int>(f.width * 4), &f.state);
+    }
+}
+#endif
 
 Stats &stats() { return g_stats; }
 Stats take_stats() { return std::exchange(g_stats, {}); }

@@ -1,4 +1,5 @@
 #include "lockstep_id.hpp"
+#include "../runtime/src/gs/texpack.hpp"
 #include "ps2/disc.hpp"
 #include "ps2/memory.hpp"
 #include "ps2/system.hpp"
@@ -44,6 +45,12 @@ EM_JS(void, ps2web_fetch, (const char *url, double offset, int size, void *out, 
             console.warn('disc read failed', e);
             finish(4);
         });
+});
+
+// texture pack files: web/pack-worker.js fills out and sets state (texpack::service)
+EM_JS(void, ps2web_pack_fetch, (const char *file, void *out, int bytes, int stride, std::atomic<std::uint32_t> *state), {
+    if (Module.packFetch) return Module.packFetch(UTF8ToString(file), out, bytes, stride, state >> 2, HEAPU8.buffer);
+    Atomics.store(HEAP32, state >> 2, 4);
 });
 
 EM_JS(int, ps2web_save_program, (const char *name, const std::uint8_t *code, int size), {
@@ -774,6 +781,7 @@ int main(int argc, char **argv) {
     };
     for (;;) {
         service_disc();
+        ps2::gs::texpack::service(ps2web_pack_fetch);
         const ps2::Rendered rendered = ps2::render_pending(surface, copy ? blit : none, wait_shown, 6.0);
         if (rendered == ps2::Rendered::presented) ps2web_frame_done();
         if (rendered != ps2::Rendered::idle) {

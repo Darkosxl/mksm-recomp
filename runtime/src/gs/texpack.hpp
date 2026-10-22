@@ -2,6 +2,7 @@
 
 #include "gs.hpp"
 
+#include <atomic>
 #include <cstddef>
 #include <cstdint>
 #include <vector>
@@ -30,6 +31,12 @@ std::uint64_t key(const State &st);
 // The pack's pixels for a key, 2^scale times the given size, read from disk (the caller keeps what it needs); empty
 // when the pack has none, or they are more than room pixels (they stay with the pack, unread or loaded, until they fit).
 std::vector<std::uint32_t> replacement(std::uint64_t key, std::uint32_t tw, std::uint32_t th, std::uint32_t &scale, std::size_t room);
+#ifdef __EMSCRIPTEN__
+// Web: starts the fetches replacement() asked for (on the browser's main thread): fetch(file, out, bytes, row bytes,
+// state) fills out with the index's file and sets state to 3, or 4 when it fails (host/web.cpp, web/pack-worker.js).
+using Fetcher = void (*)(const char *file, void *out, int bytes, int stride, std::atomic<std::uint32_t> *state);
+void service(Fetcher fetch);
+#endif
 // Texture-pack work on the render thread since the last call (PS2_FRAME_LOG).
 struct Stats {
     std::uint32_t decodes = 0, loads = 0;
