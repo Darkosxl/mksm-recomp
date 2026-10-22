@@ -831,9 +831,10 @@ int main(int argc, char **argv) {
             return 1;
         }
         for (;;) {
+            // read before serving: a disc or pack request made while serving then ends the wait, not its 50 ms timeout
+            const std::uint32_t seen = ps2::main_work();
             service_disc();
             ps2::gs::texpack::service(ps2web_pack_fetch);
-            const std::uint32_t seen = ps2::main_work();
             const double start = emscripten_get_now();
             bool presented = false;
             if (ps2::run_gpu_jobs(8.0, presented)) {
