@@ -4,8 +4,12 @@
 // server/node_modules for signal.mjs. Usage, routes and the security model: mksm/notes/web-host.md.
 //
 //   node server/host.mjs [--port 8620] [--build build/web-mksm] [--disc games/mksm/disc.iso] [--tunnel-url https://…]
+//                        [--pack <dir> [--pack-variants 2]]
+// --pack serves an HD texture pack (remaster/webpack.py output: current.json, <id>.txt, obj/) at /pack/; its
+// current.json is answered with only the --pack-variants (comma list, default all) and "background": false, so a
+// home uplink only sends the textures a game actually asks for.
 import { randomBytes } from 'node:crypto';
-import { statSync } from 'node:fs';
+import { readFileSync, statSync } from 'node:fs';
 import { createServer } from 'node:http';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -19,13 +23,18 @@ const { values: opt } = parseArgs({
     build: { type: 'string', default: join(ROOT, 'build', 'web-mksm') },
     disc: { type: 'string', default: join(ROOT, 'games', 'mksm', 'disc.iso') },
     'tunnel-url': { type: 'string' },
+    pack: { type: 'string' },
+    'pack-variants': { type: 'string' },
   },
 });
-const BUILD = resolve(opt.build), DISC = resolve(opt.disc);
+const BUILD = resolve(opt.build), DISC = resolve(opt.disc), PACK = opt.pack === undefined ? null : resolve(opt.pack);
 const die = (msg) => { console.error(`host: ${msg}`); process.exit(1); };
 const isFile = (f) => { try { return statSync(f).isFile(); } catch { return false; } };
 if (!isFile(join(BUILD, 'ps2web.html'))) die(`no ps2web.html in ${BUILD} (build it with mksm/build.sh <iso> --web)`);
 if (!isFile(DISC)) die(`no disc image at ${DISC} (pass --disc <iso>)`);
+if (PACK && !isFile(join(PACK, 'current.json'))) die(`no current.json in ${PACK} (make the pack with remaster/webpack.py)`);
+const VARIANTS = opt['pack-variants']?.split(',');
+if (VARIANTS && !VARIANTS.every((v) => /^\d+$/.test(v))) die('--pack-variants must be a comma list like 2 or 2,4');
 
 const ROOM = /^[abcdefghijkmnpqrstuvwxyz23456789]{12}$/; // signal.mjs room ids
 const httpsOrigin = (s) => {
@@ -119,6 +128,14 @@ async function toSignal(url, res, cookie) {
 }
 
 const BUILD_FILE = /^\/([\w-][\w.-]*\.(?:html|js|mjs|wasm|data))$/; // top-level build outputs only, no CMake files etc.
+// Pack indexes and objects are content-named (never change) and already gzip: sent as-is, no Content-Encoding.
+const PACK_FILE = /^\/pack\/([0-9a-f]{16}\.txt|obj\/[0-9a-f]{16}\.[0-9a-f]{12}\.tex)$/;
+const IMMUTABLE = { 'Content-Type': 'application/octet-stream', 'Cache-Control': 'private, max-age=31536000, immutable' };
+function packCurrent() {
+  const cur = JSON.parse(readFileSync(join(PACK, 'current.json'), 'utf8'));
+  for (const k of Object.keys(cur)) if (VARIANTS && /^\d+$/.test(k) && !VARIANTS.includes(k)) delete cur[k];
+  return { ...cur, background: false };
+}
 
 async function handle(req, res) {
   const url = new URL(req.url, 'http://local');
@@ -153,6 +170,15 @@ async function handle(req, res) {
     return send(res, 401, DENIED, 'text/html; charset=utf-8');
   if (path === '/turn') return send(res, 404, 'no TURN server in host mode\n');
   if (path === '/disc.iso') return serveFile(req, res, DISC, { gzip: false });
+  if (path.startsWith('/pack/')) {
+    if (!PACK) return send(res, 404, 'no texture pack\n');
+    if (path === '/pack/current.json') {
+      if (req.method !== 'GET' && req.method !== 'HEAD') return send(res, 405, 'GET only\n', undefined, { Allow: 'GET, HEAD' });
+      return send(res, 200, packCurrent(), undefined, { 'Cache-Control': 'no-cache' });
+    }
+    const p = PACK_FILE.exec(path);
+    return p ? serveFile(req, res, join(PACK, p[1]), { gzip: false, headers: IMMUTABLE }) : send(res, 404, 'not found\n');
+  }
   const m = path === '/' ? [, 'ps2web.html'] : BUILD_FILE.exec(path);
   if (!m) return send(res, 404, 'not found\n');
   serveFile(req, res, join(BUILD, m[1]));
@@ -183,6 +209,7 @@ localHosts = new Set(['localhost', '127.0.0.1', '[::1]'].flatMap(hostPart));
 localOrigins = new Set(['localhost', '127.0.0.1', '[::1]'].map((h) => `http://${h}${PORT === 80 ? '' : `:${PORT}`}`));
 console.log(`host: listening on http://127.0.0.1:${PORT}`);
 console.log(`host: build ${BUILD}, disc ${DISC} (${(statSync(DISC).size / 1073741824).toFixed(2)} GB), signal.mjs pid ${signal.child.pid}`);
+if (PACK) console.log(`host: texture pack ${PACK} (variants ${VARIANTS?.join(',') ?? 'all'}, no background download)`);
 console.log(`host: play at http://localhost:${PORT}/ps2web.html?room=new`);
 
 let closing = false;

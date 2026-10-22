@@ -94,7 +94,8 @@ function parseRange(header, size) {
 
 // GET/HEAD of one file. A Range request gets raw bytes (206, or 416), never gzip. Otherwise <file>.gz is sent with
 // Content-Encoding: gzip when gzip is on, the client accepts it and the .gz is not older than the file.
-export function serveFile(req, res, file, { gzip = true } = {}) {
+// `headers` are added to (or replace) the defaults on a found file; a 404 keeps the defaults.
+export function serveFile(req, res, file, { gzip = true, headers: extra = {} } = {}) {
   if (req.method !== 'GET' && req.method !== 'HEAD')
     return res.writeHead(405, { ...ISOLATION, Allow: 'GET, HEAD', 'Content-Type': 'text/plain' }).end('method not allowed\n');
   let st;
@@ -102,7 +103,7 @@ export function serveFile(req, res, file, { gzip = true } = {}) {
   if (!st.isFile()) return notFound(res);
   const headers = {
     ...ISOLATION, 'Content-Type': TYPES[extname(file).toLowerCase()] || 'application/octet-stream',
-    'Accept-Ranges': 'bytes', 'Last-Modified': st.mtime.toUTCString(),
+    'Accept-Ranges': 'bytes', 'Last-Modified': st.mtime.toUTCString(), ...extra,
   };
   if (gzip) headers.Vary = 'Accept-Encoding';
   let path = file, start = 0, end = st.size - 1, status = 200;

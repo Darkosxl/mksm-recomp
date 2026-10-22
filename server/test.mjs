@@ -4,7 +4,7 @@
 // /auth (and /invite?room= redirects, ROOM_URL), /turn credentials, rooms (create/join/relay/full/leave/
 // expiry), the binary relay (byte-exact both ways, size cap, 20 MiB paced by the rate limit and held by a
 // stalled receiver's backlog, lossless and in order; ~8 s of the run) and, through Caddy, the auth gate,
-// headers, precompression and disc Range requests.
+// headers, precompression, disc Range requests and the texture pack (/pack/: no-cache pointer, immutable raw objects).
 // usage: [CADDY=/path/to/caddy] node test.mjs [--no-caddy]   (Caddy >= 2.11: 2.10.x answers precompressed files with 206)
 import assert from 'node:assert/strict';
 import { execFileSync, spawn } from 'node:child_process';
@@ -117,6 +117,8 @@ let signal = await startSignal();
 const root = join(tmp, 'root'), build = randomBytes(32).toString('hex');
 const wasm = Buffer.concat([Buffer.from('\0asm\x01\0\0\0'), Buffer.alloc(64 * 1024, 7)]);
 const disc = randomBytes(3 * 1024 * 1024 + 123);
+const packId = randomBytes(8).toString('hex'), tex = `${randomBytes(8).toString('hex')}.${randomBytes(6).toString('hex')}.tex`;
+const index = Buffer.from(`#mksm-pack 1 gzip-up\n${tex.slice(0, 16)} 64 64 4 65536 ${tex}\n`), texBody = gzipSync(randomBytes(50_000));
 if (caddy) {
   mkdirSync(join(root, 'v', build), { recursive: true });
   writeFileSync(join(root, 'index.html'), readFileSync(join(here, 'site', 'index.html')));
@@ -125,6 +127,11 @@ if (caddy) {
   writeFileSync(join(root, 'v', build, 'ps2web.wasm'), wasm);
   writeFileSync(join(root, 'v', build, 'ps2web.wasm.gz'), gzipSync(wasm, { level: 9 }));
   writeFileSync(join(root, 'disc.iso'), disc);
+  mkdirSync(join(root, 'pack', 'obj'), { recursive: true });
+  writeFileSync(join(root, 'pack', 'current.json'), JSON.stringify({ 4: packId }) + '\n');
+  writeFileSync(join(root, 'pack', `${packId}.txt`), index);
+  writeFileSync(join(root, 'pack', 'obj', tex), texBody);
+  writeFileSync(join(root, 'pack', 'obj', tex + '.gz'), gzipSync(texBody)); // a stray sidecar must still not be used
   await start('caddy', CADDY, ['run', '--config', join(here, 'Caddyfile'), '--adapter', 'caddyfile'], {
     DOMAIN: base, MKSM_ROOT: root, SIGNAL_ADDR: `127.0.0.1:${signalPort}`, CADDY_ADMIN: 'off',
     XDG_CONFIG_HOME: join(tmp, 'xdg'), XDG_DATA_HOME: join(tmp, 'xdg'),
@@ -497,7 +504,8 @@ if (caddy) {
     assert.equal(res.headers.get('cross-origin-resource-policy'), 'same-origin');
   };
   await check('caddy: every path is 401 without the cookie, the disc included, and 401s are not cacheable', async () => {
-    for (const path of ['/', '/play/abcdefghijkm', '/current.json', `/v/${build}/ps2web.wasm`, `/v/${build}/ps2web.html`, '/disc.iso', '/nope'])
+    for (const path of ['/', '/play/abcdefghijkm', '/current.json', `/v/${build}/ps2web.wasm`, `/v/${build}/ps2web.html`, '/disc.iso', '/nope',
+      '/pack/current.json', `/pack/${packId}.txt`, `/pack/obj/${tex}`, '/pack/obj/x.tex'])
       for (const method of ['GET', 'HEAD']) {
         const res = await get(path, { range: 'bytes=0-9' }, { method });
         assert.equal(res.status, 401, `${method} ${path}`);
@@ -517,6 +525,27 @@ if (caddy) {
     const res = await get('/current.json', { cookie });
     assert.equal(res.headers.get('cache-control'), 'no-cache');
     assert.deepEqual(await res.json(), { build });
+  });
+  await check('caddy: pack current.json is no-cache; indexes and objects immutable octet-stream, raw bytes, no Content-Encoding', async () => {
+    const cur = await get('/pack/current.json', { cookie });
+    assert.equal(cur.status, 200);
+    isolation(cur);
+    assert.equal(cur.headers.get('cache-control'), 'no-cache');
+    assert.deepEqual(await cur.json(), { 4: packId });
+    for (const [path, body] of [[`/pack/${packId}.txt`, index], [`/pack/obj/${tex}`, texBody]]) {
+      const res = await get(path, { cookie, 'accept-encoding': 'gzip, br' });
+      assert.equal(res.status, 200, path);
+      isolation(res);
+      assert.equal(res.headers.get('cache-control'), 'private, max-age=31536000, immutable', path);
+      assert.equal(res.headers.get('content-type'), 'application/octet-stream', path);
+      assert.equal(res.headers.get('content-encoding'), null, path);
+      assert.equal(Number(res.headers.get('content-length')), body.length, path);
+      assert.ok(Buffer.from(await res.arrayBuffer()).equals(body), path);
+    }
+    const missing = await get(`/pack/obj/${'0'.repeat(16)}.${'0'.repeat(12)}.tex`, { cookie });
+    assert.equal(missing.status, 404);
+    assert.equal(missing.headers.get('cache-control'), null, 'a 404 must not be cached as immutable');
+    assert.equal((await get('/pack/obj/', { cookie })).status, 404, 'no directory listing');
   });
   await check('caddy: build files are immutable and served precompressed as application/wasm', async () => {
     const res = await get(`/v/${build}/ps2web.wasm`, { cookie, 'accept-encoding': 'br, gzip' });
