@@ -118,6 +118,7 @@
   <button id="fullscreen" type="button" title="Fullscreen (F or double click)">Fullscreen</button></div>
 <button id="exit-fullscreen" type="button">Exit fullscreen</button>
 <div id="overlay"><div id="panel"><p id="help" hidden></p><button id="start" disabled>Loading…</button></div></div>
+<script src="pack.js"></script>
 <script>
 const statusEl = document.getElementById('status');
 const CARD_DIR = '/memcard', CARD_FILE = '/memcard/Mcd001.ps2', CARD_BYTES = 8650752;
@@ -695,6 +696,7 @@ var Module = {
       try { FS.mkdir('/session'); } catch (e) {}
     }
     Module.ENV.PS2_SCALE = scale;
+    PS2Pack.prepare(Module, params);
     Module.addRunDependency('disc');
     Promise.all([fetch(Module.discUrl, { method: 'HEAD' }), chooseGpu().catch((e) => 'GPU check failed: ' + e)]).then(([r, gpu]) => {
       Module.discSize = Number(r.headers.get('content-length')) || 0;
@@ -725,7 +727,7 @@ var Module = {
                             '% gs ' + ((renderIdle - lastRenderIdle) / span * 100).toFixed(0) +
                             '%   heap ' + memory + ' MB   audio ' + Module.audioQueuedMs().toFixed(0) + ' ms' +
                             (interpreted > lastInterpreted ? '   vu1 interpreted ' + Math.round((interpreted - lastInterpreted) * 1000 / span) + '/s' : '') +
-                            (session ? '   ' + lockstepStats() : '') + (Module.prefetchText ? '   ' + Module.prefetchText : '');
+                            (session ? '   ' + lockstepStats() : '') + (Module.prefetchText ? '   ' + Module.prefetchText : '') + (Module.packText ? '   ' + Module.packText : '');
       lastInterpreted = interpreted;
       lastEmuIdle = emuIdle;
       lastRenderIdle = renderIdle;
@@ -817,7 +819,9 @@ document.getElementById('start').addEventListener('click', async () => {
       return;
     }
   }
-  if (cached) prefetchDisc();
+  // the HD texture pack after the disc (?packbg=0|1 overrides)
+  if (cached) prefetchDisc().catch(() => {}).then(() => params.get('packbg') !== '0' && PS2Pack.background(Module));
+  else if (params.get('packbg') === '1') PS2Pack.background(Module);
   Module.running = true;
   Module.callMain(Module.arguments);
   if (session) session.run();
