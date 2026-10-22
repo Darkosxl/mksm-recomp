@@ -97,7 +97,15 @@ enum Pipeline { kUpload, kCopyRead, kCopyWrite, kLoadClut, kDisplay, kRaster, kR
 const char *const kEntryPoints[kPipelines] = {"upload", "copy_read", "copy_write", "load_clut", "display", "raster", "resolve", "snapshot", "decode", "raster", "fail_args", "display_yuv"};
 
 constexpr std::uint32_t kParamStride = 256;
-constexpr std::uint32_t kClutSlots = 2048;
+// CLUT slots: games reload the CLUT before most draws and every load takes a new slot; a job holds at most this many
+// loads, more forces a submit mid-frame (nether and forest ran 2 jobs a frame at 2048). PS2_CLUT_SLOTS: A/B
+std::uint32_t clut_slots() {
+    static const std::uint32_t n = [] {
+        const char *e = std::getenv("PS2_CLUT_SLOTS");
+        return e ? std::clamp<std::uint32_t>(static_cast<std::uint32_t>(std::strtoul(e, nullptr, 10)), 64u, 32768u) : 8192u;
+    }();
+    return n;
+}
 constexpr std::uint32_t kClutEntries = 512;
 constexpr std::uint32_t kPrimWords = 28;
 // hw_draw's records (native.wgsl hw_vs): only the words the render pipeline reads, xy (record words 4-9), then fog, the
@@ -200,8 +208,63 @@ bool g_prof_on = false;
 std::uint32_t g_prof_untimed = 0;  // passes past kProfPasses in one submit
 constexpr std::uint32_t kProfPasses = 2048;  // 4096 queries, the most a query set may hold
 WGPUPassTimestampWrites g_prof_writes = WGPU_PASS_TIMESTAMP_WRITES_INIT;
-const WGPUPassTimestampWrites *prof_slot(const char *what, std::uint32_t command, std::uint32_t a = 0, std::uint32_t b = 0) {
-    if (!g_prof_on) return nullptr;
+// PS2_WEB_GPUPROF=1 (web): every pass of every job timestamped (in PS2_GPU_PROFILE's query set) and counted by its kind,
+// a render pass's the highest of its draws' (NativeDraw::kind), a compute pass's of its dispatches'. At the job's end the
+// times go into one of a ring of readbacks, summed jobs later; a job finding the ring busy is not measured (nothing
+// waits). Every 600 jobs a line, per frame: the passes' GPU time, all and by kind, and the span from the first pass's
+// start to the last one's end (gaps: the rest, between the passes; the staging copies before the first are outside it).
+// Chrome rounds timestamps to 100 us unless launched with --enable-webgpu-developer-features.
+// import: tiles or a run into a target; xfer: between targets; shadow: a batch reading its own target; chain: the glow's
+// levels (chain_flush); compute: uploads, CLUT loads, copies; writeback: targets to VRAM; present: onto the canvas
+enum ProfKind : std::uint8_t { kProfImport, kProfXfer, kProfDraw, kProfShadow, kProfChain, kProfCompute, kProfDecode, kProfRaster, kProfDisplay, kProfWriteback, kProfCheck, kProfPresent, kProfKinds };
+const char *const kProfKindNames[kProfKinds] = {"import", "xfer", "draw", "shadow", "chain", "compute", "decode", "raster", "display", "writeback", "check", "present"};
+const ProfKind kProfOf[kPipelines] = {kProfCompute, kProfCompute, kProfCompute, kProfCompute, kProfDisplay, kProfRaster, kProfCompute, kProfCompute, kProfDecode, kProfRaster, kProfCompute, kProfDisplay};
+struct ProfRead {
+    WGPUBuffer buffer = nullptr;
+    std::vector<ProfKind> kinds;  // its job's passes'
+    bool frame = false;
+    std::atomic<std::uint8_t> state = 0;  // 0 free, 1 mapping, 2 mapped, 3 failed
+};
+struct ProfSums {
+    std::uint64_t ns[kProfKinds] = {}, passes[kProfKinds] = {}, inside = 0, span = 0;
+    std::uint32_t jobs = 0, measured = 0, frames = 0, untimed = 0;
+};
+struct GpuProf {
+    std::array<ProfRead, 8> ring;
+    ProfRead *job = nullptr;  // the job being encoded's readback (none: not measured)
+    std::vector<ProfKind> kinds;  // its passes so far
+    std::size_t open = SIZE_MAX;  // the pass being encoded, when timed
+    ProfSums sums;
+} g_gp;
+bool gpuprof() {
+#ifdef __EMSCRIPTEN__
+    static const bool on = [] {
+        const char *e = std::getenv("PS2_WEB_GPUPROF");
+        return e && *e && *e != '0';
+    }();
+    return on && g_timestamps;
+#else
+    return false;
+#endif
+}
+const WGPUPassTimestampWrites *gpuprof_slot(ProfKind kind) {
+    GpuProf &p = g_gp;
+    if (!p.job) return nullptr;
+    p.open = p.kinds.size() < kProfPasses ? p.kinds.size() : SIZE_MAX;
+    if (p.open == SIZE_MAX) return ++p.sums.untimed, nullptr;
+    p.kinds.push_back(kind);
+    g_prof_writes = WGPU_PASS_TIMESTAMP_WRITES_INIT;
+    g_prof_writes.querySet = g_profile_queries;
+    g_prof_writes.beginningOfPassWriteIndex = static_cast<std::uint32_t>(p.open) * 2;
+    g_prof_writes.endOfPassWriteIndex = g_prof_writes.beginningOfPassWriteIndex + 1;
+    return &g_prof_writes;
+}
+void gpuprof_raise(ProfKind kind) {  // the pass being encoded holds a draw or dispatch of this kind
+    GpuProf &p = g_gp;
+    if (p.job && p.open < p.kinds.size()) p.kinds[p.open] = std::max(p.kinds[p.open], kind);
+}
+const WGPUPassTimestampWrites *prof_slot(ProfKind kind, const char *what, std::uint32_t command, std::uint32_t a = 0, std::uint32_t b = 0) {
+    if (!g_prof_on) return gpuprof_slot(kind);
     if (g_prof_passes.size() >= kProfPasses) return ++g_prof_untimed, nullptr;
     g_prof_writes = WGPU_PASS_TIMESTAMP_WRITES_INIT;
     g_prof_writes.querySet = g_profile_queries;
@@ -229,6 +292,7 @@ struct NativeDraw {
     std::uint32_t scissor[4] = {};
     double constant = -1.0;  // blend constant (FIX / 128); < 0: the pipeline does not read it (not set, reads_constant)
     bool vram = true;  // reads VRAM (an import, a texture neither decoded nor a target's): uploads stay behind it (hoist_commands)
+    ProfKind kind = kProfDraw;  // PS2_WEB_GPUPROF
 };
 std::vector<NativeDraw> g_native_draws;
 std::size_t g_native_emitted = 0;
@@ -725,10 +789,10 @@ std::uint64_t mix(std::uint64_t h, std::uint64_t v) {
 // CLUT contents by 16-entry block, per slot: the id of the load that last wrote the block (its registers and the
 // generations of the pages it read; gs.wgsl load_clut writes whole aligned blocks). A decode keys on the blocks it reads,
 // not on the slot: games reload the same CLUT before each draw, and every load takes a new slot.
-std::vector<std::array<std::uint64_t, 32>> g_clut_blocks(kClutSlots);
+std::vector<std::array<std::uint64_t, 32>> g_clut_blocks;  // clut_slots(), sized with g_clut
 
 std::uint64_t clut_key(const std::uint32_t *w) {
-    const std::array<std::uint64_t, 32> &b = g_clut_blocks[w[22] % kClutSlots];
+    const std::array<std::uint64_t, 32> &b = g_clut_blocks[w[22] % clut_slots()];
     if (w[14] == PSMT4 || w[14] == PSMT4HL || w[14] == PSMT4HH) return b[w[17] & 15u];
     if (w[14] != PSMT8 && w[14] != PSMT8H) return 0;
     std::uint64_t h = 0;
@@ -1309,15 +1373,18 @@ void ensure_capacity(std::size_t arena_words = g_arena.size(), std::size_t param
     if (changed || !g_group) rebuild_group();
 }
 
+void profile_queries() {
+    if (g_profile_queries) return;
+    WGPUQuerySetDescriptor qd = WGPU_QUERY_SET_DESCRIPTOR_INIT;
+    qd.type = WGPUQueryType_Timestamp;
+    qd.count = kProfPasses * 2;
+    g_profile_queries = wgpuDeviceCreateQuerySet(g_device, &qd);
+    g_profile_resolve = make_buffer(kProfPasses * 16, WGPUBufferUsage_QueryResolve | WGPUBufferUsage_CopySrc);
+    g_profile_read = make_buffer(kProfPasses * 16, WGPUBufferUsage_MapRead | WGPUBufferUsage_CopyDst);
+}
+
 void profile_submit() {
-    if (!g_profile_queries) {
-        WGPUQuerySetDescriptor qd = WGPU_QUERY_SET_DESCRIPTOR_INIT;
-        qd.type = WGPUQueryType_Timestamp;
-        qd.count = kProfPasses * 2;
-        g_profile_queries = wgpuDeviceCreateQuerySet(g_device, &qd);
-        g_profile_resolve = make_buffer(kProfPasses * 16, WGPUBufferUsage_QueryResolve | WGPUBufferUsage_CopySrc);
-        g_profile_read = make_buffer(kProfPasses * 16, WGPUBufferUsage_MapRead | WGPUBufferUsage_CopyDst);
-    }
+    profile_queries();
     ensure_capacity();
     wgpuQueueWriteBuffer(g_queue, g_data, 0, g_arena.data(), g_arena.size() * 4);
     wgpuQueueWriteBuffer(g_queue, g_params, 0, g_param_records.data(), g_param_records.size() * kParamStride);
@@ -1333,7 +1400,7 @@ void profile_submit() {
             continue;
         }
         WGPUComputePassDescriptor cd = WGPU_COMPUTE_PASS_DESCRIPTOR_INIT;
-        cd.timestampWrites = prof_slot(kEntryPoints[c.pipeline], i, c.x, c.y);
+        cd.timestampWrites = prof_slot(kProfOf[c.pipeline], kEntryPoints[c.pipeline], i, c.x, c.y);
         WGPUComputePassEncoder pass = wgpuCommandEncoderBeginComputePass(enc, &cd);
         wgpuComputePassEncoderSetPipeline(pass, g_pipelines[c.pipeline]);
         const std::uint32_t offset = c.param * kParamStride;
@@ -1394,13 +1461,77 @@ void profile_submit() {
     g_clut_loads = 0;
 }
 
+// PS2_WEB_GPUPROF: the readbacks back summed (a line every 600 jobs), and one free for the job about to be encoded
+void gpuprof_begin() {
+    GpuProf &p = g_gp;
+    ProfSums &s = p.sums;
+    profile_queries();
+    p.job = nullptr;
+    for (ProfRead &r : p.ring) {
+        if (!r.buffer) r.buffer = make_buffer(kProfPasses * 16, WGPUBufferUsage_MapRead | WGPUBufferUsage_CopyDst);
+        if (r.state == 2) {
+            const std::size_t n = r.kinds.size();
+            if (const auto *t = static_cast<const std::uint64_t *>(wgpuBufferGetConstMappedRange(r.buffer, 0, n * 16))) {
+                for (std::size_t k = 0; k < n; ++k) {
+                    const std::uint64_t ns = t[k * 2 + 1] > t[k * 2] ? t[k * 2 + 1] - t[k * 2] : 0;
+                    s.ns[r.kinds[k]] += ns;
+                    ++s.passes[r.kinds[k]];
+                    s.inside += ns;
+                }
+                s.span += t[n * 2 - 1] > t[0] ? t[n * 2 - 1] - t[0] : 0;
+                ++s.measured;
+                s.frames += r.frame;
+            }
+            wgpuBufferUnmap(r.buffer);
+        }
+        if (r.state >= 2) r.state = 0;
+        if (!r.state && !p.job) p.job = &r;
+    }
+    p.kinds.clear();
+    p.open = SIZE_MAX;
+    if (++s.jobs < 600) return;
+    const double f = std::max(s.frames, 1u), ms = 1e-6 / f;  // per frame
+    char kinds[512] = "";
+    int at = 0;
+    std::uint64_t passes = 0;
+    for (int k = 0; k < kProfKinds; ++k) {
+        passes += s.passes[k];
+        if (s.passes[k] && at < static_cast<int>(sizeof kinds))
+            at += std::snprintf(kinds + at, sizeof kinds - at, "%s%s %.2f/%.1f", at ? ", " : "", kProfKindNames[k], s.ns[k] * ms, s.passes[k] / f);
+    }
+    std::fprintf(stderr, "[web] gpuprof: frames %u, gpu ms/frame %.2f (ms/passes: %s), passes/frame %.1f, span ms/frame %.2f (gaps %.2f), %u of %u jobs measured, %u passes untimed\n",
+                 s.frames, s.inside * ms, kinds, passes / f, s.span * ms, (static_cast<double>(s.span) - static_cast<double>(s.inside)) * ms, s.measured, s.jobs, s.untimed);
+    s = {};
+}
+// The job's timestamps into its readback, ahead of the encoder's end; the readback to map once submitted (gpuprof_map)
+ProfRead *gpuprof_end(WGPUCommandEncoder enc, bool frame) {
+    GpuProf &p = g_gp;
+    ProfRead *r = std::exchange(p.job, nullptr);
+    if (!r || p.kinds.empty()) return nullptr;
+    const std::uint32_t n = static_cast<std::uint32_t>(p.kinds.size());
+    wgpuCommandEncoderResolveQuerySet(enc, g_profile_queries, 0, n * 2, g_profile_resolve, 0);
+    wgpuCommandEncoderCopyBufferToBuffer(enc, g_profile_resolve, 0, r->buffer, 0, n * 16);
+    std::swap(r->kinds, p.kinds);
+    r->frame = frame;
+    return r;
+}
+void gpuprof_map(ProfRead *r) {
+    r->state = 1;
+    WGPUBufferMapCallbackInfo cb = WGPU_BUFFER_MAP_CALLBACK_INFO_INIT;
+    cb.mode = WGPUCallbackMode_AllowSpontaneous;
+    cb.callback = [](WGPUMapAsyncStatus status, WGPUStringView, void *read, void *) { static_cast<ProfRead *>(read)->state = status == WGPUMapAsyncStatus_Success ? 2 : 3; };
+    cb.userdata1 = r;
+    wgpuBufferMapAsync(r->buffer, WGPUMapMode_Read, 0, r->kinds.size() * 16, cb);
+}
+
 // Browsers copy writes above about 1 MiB through a slower path, so large uploads go in pieces.
 using ParamRecords = std::vector<std::array<std::uint32_t, kParamStride / 4>>;
 
 // Copies the commands' data into the GPU buffers, encodes them and submits (render thread, or the submit worker).
-// staged: the arena and params are already uploaded (web, stage_uploads); enc: the encoder to add to (its copies first)
+// staged: the arena and params are already uploaded (web, stage_uploads); enc: the encoder to add to (its copies first);
+// frame: a present's, drawn without present_view (PS2_WEB_GPUPROF counts it)
 void run_commands(Arena &arena, ParamRecords &params, std::vector<Command> &commands, const std::vector<NativeDraw> &natives, WGPUTextureView present_view, bool staged = false,
-                  WGPUCommandEncoder enc = nullptr) {
+                  WGPUCommandEncoder enc = nullptr, bool frame = false) {
     ensure_capacity(arena.size(), params.size());
     if (!staged) {
         wgpuQueueWriteBuffer(g_queue, g_data, 0, arena.data(), arena.size() * 4);
@@ -1422,7 +1553,8 @@ void run_commands(Arena &arena, ParamRecords &params, std::vector<Command> &comm
         g_query_ready = g_query_pending = false;
     }
     // one compute pass holds every dispatch, unless native render passes split it (then no timestamps)
-    const bool measure = g_timestamps && !g_query_pending && natives.empty();
+    const bool measure = g_timestamps && !g_query_pending && natives.empty() && !gpuprof();
+    if (gpuprof()) gpuprof_begin();
     if (!enc) enc = wgpuDeviceCreateCommandEncoder(g_device, nullptr);
     wgpuCommandEncoderClearBuffer(enc, g_fail, 0, (kAlphaSlots + 1) * 4);  // the decodes' least alphas start over
     WGPUPassTimestampWrites writes = WGPU_PASS_TIMESTAMP_WRITES_INIT;
@@ -1430,7 +1562,7 @@ void run_commands(Arena &arena, ParamRecords &params, std::vector<Command> &comm
     writes.beginningOfPassWriteIndex = 0;
     writes.endOfPassWriteIndex = 1;
     WGPUComputePassDescriptor cd = WGPU_COMPUTE_PASS_DESCRIPTOR_INIT;
-    if (measure) cd.timestampWrites = &writes;
+    cd.timestampWrites = measure ? &writes : gpuprof_slot(kProfCompute);
     WGPUComputePassEncoder pass = wgpuCommandEncoderBeginComputePass(enc, &cd);
     ++g_compute_passes;
     Pipeline current = kPipelines;
@@ -1448,10 +1580,12 @@ void run_commands(Arena &arena, ParamRecords &params, std::vector<Command> &comm
         }
         if (!pass) {
             WGPUComputePassDescriptor again = WGPU_COMPUTE_PASS_DESCRIPTOR_INIT;
+            again.timestampWrites = gpuprof_slot(kProfCompute);
             pass = wgpuCommandEncoderBeginComputePass(enc, &again);
             ++g_compute_passes;
             current = kPipelines;
         }
+        gpuprof_raise(kProfOf[c.pipeline]);
         ++g_dispatches[c.pipeline];
         if (c.pipeline != current) {
             wgpuComputePassEncoderSetPipeline(pass, g_pipelines[c.pipeline]);
@@ -1478,6 +1612,7 @@ void run_commands(Arena &arena, ParamRecords &params, std::vector<Command> &comm
         WGPURenderPassDescriptor rd = WGPU_RENDER_PASS_DESCRIPTOR_INIT;
         rd.colorAttachmentCount = 1;
         rd.colorAttachments = &color;
+        rd.timestampWrites = gpuprof_slot(kProfPresent);
         WGPURenderPassEncoder rp = wgpuCommandEncoderBeginRenderPass(enc, &rd);
         const float w = static_cast<float>(g_surface_width), h = static_cast<float>(g_surface_height);
         const float vw = std::min(w, h * display_aspect()), vh = vw / display_aspect();
@@ -1488,10 +1623,12 @@ void run_commands(Arena &arena, ParamRecords &params, std::vector<Command> &comm
         wgpuRenderPassEncoderEnd(rp);
         wgpuRenderPassEncoderRelease(rp);
     }
+    ProfRead *const prof = gpuprof_end(enc, frame || present_view);
     WGPUCommandBuffer cmd = wgpuCommandEncoderFinish(enc, nullptr);
     wgpuQueueSubmit(g_queue, 1, &cmd);
     wgpuCommandBufferRelease(cmd);
     wgpuCommandEncoderRelease(enc);
+    if (prof) gpuprof_map(prof);
     if (measure) {
         g_query_pending = true;
         WGPUBufferMapCallbackInfo cb = WGPU_BUFFER_MAP_CALLBACK_INFO_INIT;
@@ -1687,7 +1824,7 @@ void run_job(Job &j) {
     // canvas would make it wait for the display)
     static const bool unpaced = std::getenv("PS2_WEB_UNPACED");
     if (unpaced && ps2_web_unshown()) {
-        run_commands(j.arena, j.params, j.commands, j.natives, nullptr, staged, enc);
+        run_commands(j.arena, j.params, j.commands, j.natives, nullptr, staged, enc, true);
         return;
     }
 #endif
@@ -1695,7 +1832,7 @@ void run_job(Job &j) {
     wgpuSurfaceGetCurrentTexture(g_surface, &st);
     if (st.status != WGPUSurfaceGetCurrentTextureStatus_SuccessOptimal && st.status != WGPUSurfaceGetCurrentTextureStatus_SuccessSuboptimal) {
         if (st.texture) wgpuTextureRelease(st.texture);
-        run_commands(j.arena, j.params, j.commands, j.natives, nullptr, staged, enc);
+        run_commands(j.arena, j.params, j.commands, j.natives, nullptr, staged, enc, true);
         configure_surface();
         return;
     }
@@ -1880,6 +2017,13 @@ void hoist_commands() {
     }
     for (CommandInfo &info : g_command_info) info.index = moved[info.index];
     g_commands.swap(out);
+}
+
+// A present's job goes to the worker hoisted, as submit()'s do: unmerged, an hw_draw's imports or blits and its draws
+// were two passes (a glow chain level too: 72 a frame, not 36). PS2_PRESENT_HOIST=0: unhoisted (A/B)
+bool present_hoist() {
+    static const char *e = std::getenv("PS2_PRESENT_HOIST");
+    return !e || std::strcmp(e, "0") != 0;
 }
 
 void submit(WGPUTextureView present_view = nullptr) {
@@ -2572,7 +2716,7 @@ void encode_native(WGPUCommandEncoder enc, const Command &c, const std::vector<N
     for (std::uint32_t i = 0; i < count; ++i) checks = checks || d[i].check;
     if (checks) {
         WGPUComputePassDescriptor cd = WGPU_COMPUTE_PASS_DESCRIPTOR_INIT;
-        cd.timestampWrites = prof_slot("native-check", c.x);
+        cd.timestampWrites = prof_slot(kProfCheck, "native-check", c.x);
         WGPUComputePassEncoder pass = wgpuCommandEncoderBeginComputePass(enc, &cd);
         wgpuComputePassEncoderSetPipeline(pass, g_native_check);
         for (std::uint32_t i = 0; i < count; ++i) {
@@ -2606,7 +2750,7 @@ void encode_native(WGPUCommandEncoder enc, const Command &c, const std::vector<N
         if (d[i].writeback[0]) {
             end();
             WGPUComputePassDescriptor cd = WGPU_COMPUTE_PASS_DESCRIPTOR_INIT;
-            cd.timestampWrites = prof_slot(d[i].compute ? "native-compute" : "native-writeback", c.x + i,
+            cd.timestampWrites = prof_slot(kProfWriteback, d[i].compute ? "native-compute" : "native-writeback", c.x + i,
                                            d[i].writeback[0] * d[i].writeback[1] * std::max(d[i].writeback[2], 1u), 0);
             WGPUComputePassEncoder pass = wgpuCommandEncoderBeginComputePass(enc, &cd);
             ++g_compute_passes;
@@ -2637,7 +2781,7 @@ void encode_native(WGPUCommandEncoder enc, const Command &c, const std::vector<N
             rd.colorAttachmentCount = 2;
             rd.colorAttachments = colors;
             rd.depthStencilAttachment = &depth;
-            rd.timestampWrites = prof_slot(split ? "native-import" : "native-render", c.x + i);
+            rd.timestampWrites = prof_slot(d[i].kind, split ? "native-import" : "native-render", c.x + i);
             prof_pass = g_prof_on && rd.timestampWrites ? &g_prof_passes.back() : nullptr;
             rp = wgpuCommandEncoderBeginRenderPass(enc, &rd);
             ++g_render_passes;
@@ -2648,6 +2792,7 @@ void encode_native(WGPUCommandEncoder enc, const Command &c, const std::vector<N
             constant = -1.0;
             bound = ~0u;
         }
+        gpuprof_raise(d[i].kind);
         if (const WGPUBindGroup g = d[i].source ? d[i].source : g_nat.none_group; g != source) {
             wgpuRenderPassEncoderSetBindGroup(rp, 1, g, 0, nullptr);
             source = g;
@@ -3186,6 +3331,7 @@ void tiles_import(Binding &b, const std::vector<std::uint32_t> &list) {
         if (part.empty()) continue;
         NativeDraw d;
         d.pipeline = native_pipeline(kNativeImport | kNativeTiles | (buffers == kTileColor ? kNativeColor : buffers == kTileZ ? kNativeZWrite : 0u));
+        d.kind = kProfImport;
         d.color = b.target.color_view;
         d.depth = b.target.depth_view;
         d.alpha = b.target.alpha_view;
@@ -3331,6 +3477,7 @@ void native_open(const State &st) {
     const std::uint32_t param = push_params({g_nat.fbp, g_nat.fbw, g_nat.fpsm, g_nat.zbp, g_nat.zpsm, 0u, 0u, width, height, 0u, 0u, 0u, 0u, zmax, f2u(scale), 0u});
     NativeDraw d;
     d.pipeline = native_pipeline(kNativeImport);
+    d.kind = kProfImport;
     d.color = g_nat.target.color_view;
     d.depth = g_nat.target.depth_view;
     d.alpha = g_nat.target.alpha_view;
@@ -3815,6 +3962,7 @@ void xfer_emit(Binding &x) {
         const int from = view_kind(y, g.ky), into = view_kind(x, g.kx);
         NativeDraw d;
         d.pipeline = xfer_pipeline(into == 2 ? kXferZ : kXferFrame);
+        d.kind = kProfXfer;
         d.source = xfer_group(y.target);
         d.color = x.target.color_view;
         d.depth = x.target.depth_view;
@@ -3990,6 +4138,7 @@ void hw_draw(Binding *const *src, Binding *zsrc, bool chained) {
         slots[k] = src[k] ? &src[k]->target : nullptr;
         if (src[k] == &x) own = k, self = true;
     }
+    const ProfKind kind = !self ? kProfDraw : chained ? kProfChain : kProfShadow;
     const WGPUBindGroup source = source_group(slots, zsrc ? &zsrc->target : nullptr);
     NativeTarget tg = x.target;  // what the draws go into
     if (self) {  // the shadow first gets what the target has newer (in the draws' pass)
@@ -4000,6 +4149,7 @@ void hw_draw(Binding *const *src, Binding *zsrc, bool chained) {
             const int *dr = x.dirty[k];
             NativeDraw d;
             d.pipeline = native_pipeline(kNativeBlit);
+            d.kind = kind;
             d.vram = false;
             d.color = tg.color_view;
             d.depth = tg.depth_view;
@@ -4087,6 +4237,7 @@ void hw_draw(Binding *const *src, Binding *zsrc, bool chained) {
             if ((flags & kRtHires) && rec[1] == 1) key |= kNativeRtHires;  // gs.wgsl RT_HIRES: sprites only (hw_fs)
             if (flags & kSourceZ) key |= kNativeSourceZ;
             d.pipeline = native_pipeline(key);
+            d.kind = kind;
             d.vram = !(key & (kNativeDecoded | kNativePlain | kNativeSourced)) || (key & kNativeSourceZ);
             d.color = tg.color_view;
             d.depth = tg.depth_view;
@@ -4663,7 +4814,8 @@ bool init(Mode m) {
     swizzle_tables(tables);
     g_tables = make_buffer(tables.size() * 4, WGPUBufferUsage_Storage | WGPUBufferUsage_CopyDst);
     wgpuQueueWriteBuffer(g_queue, g_tables, 0, tables.data(), tables.size() * 4);
-    g_clut = make_buffer(static_cast<std::uint64_t>(kClutSlots) * kClutEntries * 4, WGPUBufferUsage_Storage | WGPUBufferUsage_CopySrc | WGPUBufferUsage_CopyDst);
+    g_clut_blocks.resize(clut_slots());
+    g_clut = make_buffer(static_cast<std::uint64_t>(clut_slots()) * kClutEntries * 4, WGPUBufferUsage_Storage | WGPUBufferUsage_CopySrc | WGPUBufferUsage_CopyDst);
     g_scratch = make_buffer((static_cast<std::uint64_t>(g_copy_words) + 2ull * g_field_words) * 4, WGPUBufferUsage_Storage | WGPUBufferUsage_CopySrc);
     g_cache = make_buffer(static_cast<std::uint64_t>(kCacheWords) * 4, WGPUBufferUsage_Storage | WGPUBufferUsage_CopyDst);
     g_decoded = make_buffer((static_cast<std::uint64_t>(kDecodedWords) + (texpack::packing() ? kReplWords : 0u)) * 4,
@@ -5083,13 +5235,13 @@ void local_copy_back(std::uint64_t buf, std::uint64_t pos, std::uint64_t reg) {
 void load_clut_back(std::uint64_t tex0, std::uint64_t texclut) {
     chain_flush();
     flush_image();
-    if (g_clut_loads + 2 >= kClutSlots) {
+    if (g_clut_loads + 2 >= clut_slots()) {
         emit_all();
         submit();
     }
     const std::uint32_t psm = static_cast<std::uint32_t>(tex0 >> 20) & 0x3Fu;
     const std::uint32_t cpsm = (static_cast<std::uint32_t>(tex0 >> 51) & 0xFu) == 0 ? PSMCT32 : static_cast<std::uint32_t>(tex0 >> 51) & 0xFu;
-    const std::uint32_t next = (g_clut_slot + 1) % kClutSlots;
+    const std::uint32_t next = (g_clut_slot + 1) % clut_slots();
     const std::uint32_t tc = static_cast<std::uint32_t>(texclut);
     const std::uint32_t cbp = static_cast<std::uint32_t>(tex0 >> 37) & 0x3FFFu, csm = static_cast<std::uint32_t>(tex0 >> 55) & 1u;
     const std::uint32_t cbw = tc & 0x3Fu, cou = (tc >> 6) & 0x3Fu, cov = (tc >> 12) & 0x3FFu;
@@ -5461,7 +5613,7 @@ void local_copy(const State &s) {
 void load_clut(std::uint64_t tex0, std::uint64_t texclut) {
     if (split_on()) {
         split_post(kOpClut, {tex0, texclut});
-        g_split.clut = (g_split.clut + 1) % kClutSlots;
+        g_split.clut = (g_split.clut + 1) % clut_slots();
         return;
     }
     load_clut_back(tex0, texclut);
@@ -5803,6 +5955,7 @@ bool present(const DisplaySource &src) {
     g_last_width = src.width;
     g_last_height = src.height;
     if (g_worker_on) {
+        if (present_hoist()) hoist_commands();
         enqueue(true);
         after_submit();
         return true;

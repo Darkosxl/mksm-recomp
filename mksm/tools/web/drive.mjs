@@ -106,9 +106,12 @@ let xvfb = null;
   if (opt.xvfb) flags.unshift('--ozone-platform=x11', '--window-position=0,0', '--force-device-scale-factor=1');
 }
 if (opt.nvidia) Object.assign(env, { __NV_PRIME_RENDER_OFFLOAD: '1', __VK_LAYER_NV_optimus: 'NVIDIA_only' });
-// one heavy job at a time machine-wide, capped at 8 GB, no swap
+// one heavy job at a time machine-wide, capped at 3 GB, no swap. 3 s after taking the lock: runs that waited for another
+// Chrome sometimes lost the adapter ("A valid external Instance reference no longer exists"), likely the previous GPU
+// process still exiting. ("Failed to initialize vulkan surface" is in every Xvfb run, the compositor's, harmless.)
+// ponytail: fixed sleep, wait for the previous holder's scope to empty if it still happens
 const P = '/home/darkwarro/Documents/Twitter/PS2_REA';
-const chrome = spawn('flock', [`${P}/logs/heavy.lock`, 'systemd-run', '--user', '--scope', '-q', '-p', 'MemoryMax=3G', '-p', 'MemorySwapMax=0', '--',
+const chrome = spawn('flock', [`${P}/logs/heavy.lock`, 'sh', '-c', 'sleep 3; exec "$@"', 'sh', 'systemd-run', '--user', '--scope', '-q', '-p', 'MemoryMax=3G', '-p', 'MemorySwapMax=0', '--',
   '/home/darkwarro/.local/bin/chromium', ...flags], { env, detached: true, stdio: ['ignore', 'ignore', fs.openSync(path.join(opt.out, 'chrome-stderr.log'), 'w')] });
 let chromeExit = null;
 chrome.on('exit', (code, signal) => { chromeExit = { code, signal }; say(`[driver] chromium exited code=${code} signal=${signal}`); });

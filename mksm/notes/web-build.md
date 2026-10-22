@@ -126,6 +126,24 @@ shown), `sweep.sh` with `--frame-times`, 30 s per scene, p50/p95 of the frame ti
   for pipelines that read it, one submit per job.
 - academy and nether still wait for staging buffers ~40% of the main thread's time: the GPU process is still the limit.
 
+## Later the same day (2026-10-22)
+
+- **CLUT ring 8192 slots** (was 2048, `PS2_CLUT_SLOTS` for A/B). The game reloads the CLUT before nearly every draw, so
+  nether and forest ran past 2048 loads a frame and paid a second submit per frame.
+- **Present jobs are hoisted like every other job** (`PS2_PRESENT_HOIST=0` for A/B). The glow chain went from 72 to 36
+  passes a frame, and academy's GPU time from 9.6-10.0 to 8.35 ms a frame (`PS2_WEB_GPUPROF=1`). The fps change is
+  small: goro gained, and the rest held within noise.
+- **`feed_image` writes a page column span at a time and only reads until something differs.** That is 3.5-4x less CPU
+  for uploads into the CPU copy. It is exact, checked by a randomised old-vs-new test. fps did not change.
+- **The limit now is Chrome's GPU process main thread**, at ~100% of a core. Of its time, ~41% is the NVIDIA Vulkan
+  driver, ~29% Chrome/Dawn, ~17% memcpy (staging) and ~10% `clock_gettime`. The renderer waits for staging buffers on
+  every job in academy. Next suspect: the alpha-test pass/fail pipeline ping-pong, ~2100 pipeline binds a frame.
+- **Clean cooled pairs, p50/p95:** academy 104/71-79, nether 93-95/62-65, goro 116-119/70-95, foundry 87-91/58-70.
+  Single full sweeps swing 15-20 p95 fps with the laptop's background load and its 1.6-3.5 GHz clock.
+- **Tools:** `sweep.sh` waits for the CPU to cool below 70 C before each run. It logs per-second CPU temperature, clock,
+  load and top processes (`sys.txt`) plus the GPU (`gpu.csv`), and `WEB=<dir>` A/Bs two builds. `drive.mjs` sleeps 3 s
+  after taking the lock. `PS2_WEB_GPUPROF=1` with `--enable-webgpu-developer-features` gives GPU ms per pass kind.
+
 ## How it was tested (`mksm/tools/web/`)
 
 - **`drive.mjs`**: Node's built-in WebSocket over CDP.

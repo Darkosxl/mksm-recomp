@@ -192,14 +192,14 @@ void put(std::uint32_t a, T v) {
     if (std::memcmp(p, &v, sizeof v)) std::memcpy(p, &v, sizeof v), g_changed = true;
 }
 
-// put() for the upload loops: always stores and returns the bits it changed, which the loop ORs into a local (a branch
-// and a global store per texel cost the web GS thread more than the copy).
+// put() for the upload loops: returns the bits it would change, which the loop ORs into a local (a branch and a global
+// store per texel cost the web GS thread more than the copy), and stores with `store`.
 template <typename T>
-std::uint32_t put_diff(std::uint32_t a, T v) {
+std::uint32_t put_diff(std::uint32_t a, T v, bool store) {
     std::uint8_t *p = g_memory + wrap(a);
     T old;
     std::memcpy(&old, p, sizeof old);
-    std::memcpy(p, &v, sizeof v);
+    if (store) std::memcpy(p, &v, sizeof v);
     return static_cast<std::uint32_t>(old ^ v);
 }
 
@@ -331,27 +331,43 @@ void transfer_pixel(std::uint32_t value) {
     }
 }
 
-// Host->GS pixels of one packet into the CPU copy, with the registers decoded once and `write(x, y, value)` specialised
-// per format (transfer_pixel per texel cost ~5 ms a frame with the texture pack, which keeps this copy).
-template <std::uint32_t Bits, typename W>
-void feed_pixels(const std::uint8_t *data, std::size_t bytes, W write) {
+// Host->GS pixels of one packet into the CPU copy, with the registers decoded once and the stores specialised per format
+// (transfer_pixel per texel cost ~5 ms a frame with the texture pack, which keeps this copy). Returns the bits changed.
+// A row goes in spans that stay in one Pw-wide page column: `span(x, y)` takes the page address and swizzle row once
+// (per texel they were a fifth of feed_image on the web GS thread) and returns `texel(k, value, store)` for pixel x + k,
+// which returns the bits that differ and stores only with `store`.
+template <std::uint32_t Bits, std::uint32_t Pw, typename S>
+std::uint32_t feed_pixels(const std::uint8_t *data, std::size_t bytes, S span) {
     const std::uint64_t pos = g_state.trxpos, reg = g_state.trxreg;
     const std::uint32_t dsax = static_cast<std::uint32_t>(pos >> 32) & 0x7FFu, dsay = static_cast<std::uint32_t>(pos >> 48) & 0x7FFu;
     const std::uint32_t rrw = static_cast<std::uint32_t>(reg) & 0xFFFu, rrh = static_cast<std::uint32_t>(reg >> 32) & 0xFFFu;
-    if (!rrw) return;
+    if (!rrw) return 0;
     const std::size_t count = bytes * 8 / Bits;
+    const auto value = [data](std::size_t i) {
+        std::uint32_t v = 0;
+        if constexpr (Bits == 4) v = (data[i / 2] >> ((i & 1) * 4)) & 15u;
+        else std::memcpy(&v, data + i * (Bits / 8), Bits / 8);
+        return v;
+    };
     // A row at a time in locals: write()'s byte stores may alias g_transfer, which kept the position in memory per texel
     // (the web build's GS thread spent 20% here with the pack).
-    std::uint32_t tx = g_transfer.x, ty = g_transfer.y;
+    std::uint32_t tx = g_transfer.x, ty = g_transfer.y, diff = 0;
     bool active = g_transfer.active;
     for (std::size_t i = 0; i < count && active;) {
         const std::uint32_t y = (dsay + ty) & 0x7FFu;
         const std::size_t end = std::min<std::size_t>(count, i + (rrw - tx));
-        for (; i < end; ++i, ++tx) {
-            std::uint32_t v = 0;
-            if constexpr (Bits == 4) v = (data[i / 2] >> ((i & 1) * 4)) & 15u;
-            else std::memcpy(&v, data + i * (Bits / 8), Bits / 8);
-            write((dsax + tx) & 0x7FFu, y, v);
+        while (i < end) {
+            // x / Pw holds up to the next multiple of Pw, which is also where x wraps (2048)
+            const std::uint32_t x = (dsax + tx) & 0x7FFu, n = static_cast<std::uint32_t>(std::min<std::size_t>(end - i, Pw - (x & (Pw - 1))));
+            const auto texel = span(x, y);
+            // Only reads until a span differs, then stores it and the rest without reading (the CPU copy ends the same): the
+            // game uploads most of its textures again unchanged every frame, and either loop alone ran ~4x faster than
+            // a load, compare and store per texel (wasm and native).
+            if (!diff)
+                for (std::uint32_t k = 0; k < n; ++k) diff |= texel(k, value(i + k), false);
+            if (diff)
+                for (std::uint32_t k = 0; k < n; ++k) texel(k, value(i + k), true);
+            i += n, tx += n;
         }
         if (tx >= rrw) {
             tx = 0;
@@ -359,6 +375,7 @@ void feed_pixels(const std::uint8_t *data, std::size_t bytes, W write) {
         }
     }
     g_transfer.x = tx, g_transfer.y = ty, g_transfer.active = active;
+    return diff;
 }
 
 std::uint8_t g_carry[4];
@@ -386,33 +403,42 @@ void feed_image(const std::uint8_t *data, std::size_t bytes) {
         }
     } else {
         const std::uint32_t dbp = static_cast<std::uint32_t>(buf >> 32) & 0x3FFFu, dbw = static_cast<std::uint32_t>(buf >> 48) & 0x3Fu;
-        const auto any = [&](std::uint32_t x, std::uint32_t y, std::uint32_t v) { write_pixel(psm, dbp, dbw, x, y, v); };
+        // write_pixel() keeps g_changed itself: it reports no difference, so its read pass is the only one
+        const auto any = [&](std::uint32_t x, std::uint32_t y) { return [&, x, y](std::uint32_t k, std::uint32_t v, bool) { return write_pixel(psm, dbp, dbw, x + k, y, v), 0u; }; };
         switch (psm) {
         case PSMCT32:
-            feed_pixels<32>(data, bytes, [&](std::uint32_t x, std::uint32_t y, std::uint32_t v) { diff |= put_diff<std::uint32_t>(page_address(dbp, dbw, x, y, 64, 32) + g_off32[y & 31][x & 63], v); });
+            diff = feed_pixels<32, 64>(data, bytes, [&](std::uint32_t x, std::uint32_t y) {
+                const std::uint32_t base = page_address(dbp, dbw, x, y, 64, 32), *off = &g_off32[y & 31][x & 63];
+                return [base, off](std::uint32_t k, std::uint32_t v, bool store) { return put_diff<std::uint32_t>(base + off[k], v, store); };
+            });
             break;
         case PSMCT16:
-            feed_pixels<16>(data, bytes, [&](std::uint32_t x, std::uint32_t y, std::uint32_t v) {
-                diff |= put_diff<std::uint16_t>(page_address(dbp, dbw, x, y, 64, 64) + g_off16[y & 63][x & 63], static_cast<std::uint16_t>(v));
+            diff = feed_pixels<16, 64>(data, bytes, [&](std::uint32_t x, std::uint32_t y) {
+                const std::uint32_t base = page_address(dbp, dbw, x, y, 64, 64), *off = &g_off16[y & 63][x & 63];
+                return [base, off](std::uint32_t k, std::uint32_t v, bool store) { return put_diff<std::uint16_t>(base + off[k], static_cast<std::uint16_t>(v), store); };
             });
             break;
         case PSMT8:
-            feed_pixels<8>(data, bytes, [&](std::uint32_t x, std::uint32_t y, std::uint32_t v) {
-                diff |= put_diff<std::uint8_t>(page_address(dbp, dbw, x, y, 128, 64) + g_off8[y & 63][x & 127], static_cast<std::uint8_t>(v));
+            diff = feed_pixels<8, 128>(data, bytes, [&](std::uint32_t x, std::uint32_t y) {
+                const std::uint32_t base = page_address(dbp, dbw, x, y, 128, 64), *off = &g_off8[y & 63][x & 127];
+                return [base, off](std::uint32_t k, std::uint32_t v, bool store) { return put_diff<std::uint8_t>(base + off[k], static_cast<std::uint8_t>(v), store); };
             });
             break;
         case PSMT4:
-            feed_pixels<4>(data, bytes, [&](std::uint32_t x, std::uint32_t y, std::uint32_t v) {
-                const std::uint32_t n = g_off4[y & 127][x & 127], a = page_address(dbp, dbw, x, y, 128, 128) + n / 2;
-                const std::uint8_t b = get<std::uint8_t>(a);
-                diff |= put_diff<std::uint8_t>(a, (n & 1u) ? static_cast<std::uint8_t>((b & 0x0Fu) | (v << 4)) : static_cast<std::uint8_t>((b & 0xF0u) | v));
+            diff = feed_pixels<4, 128>(data, bytes, [&](std::uint32_t x, std::uint32_t y) {
+                const std::uint32_t base = page_address(dbp, dbw, x, y, 128, 128), *off = &g_off4[y & 127][x & 127];
+                return [base, off](std::uint32_t k, std::uint32_t v, bool store) {
+                    const std::uint32_t n = off[k], a = base + n / 2;
+                    const std::uint8_t b = get<std::uint8_t>(a);
+                    return put_diff<std::uint8_t>(a, (n & 1u) ? static_cast<std::uint8_t>((b & 0x0Fu) | (v << 4)) : static_cast<std::uint8_t>((b & 0xF0u) | v), store);
+                };
             });
             break;
         default:
-            if (bits == 4) feed_pixels<4>(data, bytes, any);
-            else if (bits == 8) feed_pixels<8>(data, bytes, any);
-            else if (bits == 16) feed_pixels<16>(data, bytes, any);
-            else feed_pixels<32>(data, bytes, any);
+            if (bits == 4) feed_pixels<4, 64>(data, bytes, any);
+            else if (bits == 8) feed_pixels<8, 64>(data, bytes, any);
+            else if (bits == 16) feed_pixels<16, 64>(data, bytes, any);
+            else feed_pixels<32, 64>(data, bytes, any);
         }
     }
     g_changed = g_changed || diff;
