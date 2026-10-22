@@ -1,5 +1,6 @@
 #pragma once
 
+#include <cstddef>
 #include <cstdint>
 
 // Native renderer, stages 1-2 (decomp/notes/native-renderer.md §5.2, §7.2-7.4): the world and character VU1 programs drawn
