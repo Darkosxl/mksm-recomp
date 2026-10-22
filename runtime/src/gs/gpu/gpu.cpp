@@ -161,6 +161,7 @@ std::uint32_t g_decoded_used = 0;
 // Blocks whose last write was rendering, per page (bit b: block b of the page): their samples may differ, so nothing that
 // keeps one value per texel (a decode, a texture-pack key) reads them. Uploads of whole words clear the blocks they fill.
 std::uint32_t g_drawn[512] = {};
+std::uint64_t g_drawn_gen = 0;  // bumped when g_drawn changes (pack_candidate's memo)
 // Pages whose last write was rendering, with no upload since (not even into part of them): render targets whose samples
 // may differ, which F_RT_HIRES sprites read on the fine grid. Uploaded data holds one value per texel.
 bool g_rt_pages[512] = {};
@@ -704,7 +705,9 @@ void mark_rendered(std::uint32_t bp, std::uint32_t bw, std::uint32_t psm, int x0
     const Range r = pages(bp, bw, psm, x0, y0, x1, y1);
     for (std::uint64_t at = r.lo; at < r.hi; at += 8192) g_rt_pages[(at >> 13) & 511u] = true;
     mark_uploaded(r);
-    each_block(bp, bw, psm, x0, y0, x1, y1, false, [](std::uint32_t page, std::uint32_t bits) { g_drawn[page & 511u] |= bits; });
+    each_block(bp, bw, psm, x0, y0, x1, y1, false, [](std::uint32_t page, std::uint32_t bits) {
+        if (bits & ~g_drawn[page & 511u]) g_drawn[page & 511u] |= bits, ++g_drawn_gen;
+    });
 }
 
 std::uint64_t page_gens(const Range &r) {
@@ -1182,7 +1185,9 @@ void finish_image_if_done() {
     if (psm != PSMCT32 && psm != PSMCT16 && psm != PSMCT16S && psm != PSMT8 && psm != PSMT4 && psm != PSMZ32 && psm != PSMZ16 && psm != PSMZ16S) return;
     const int rows = im.rrw ? static_cast<int>(im.total / im.rrw) : 0;
     each_block(im.dbp, im.dbw, psm, static_cast<int>(im.dsax), static_cast<int>(im.dsay), static_cast<int>(im.dsax + im.rrw) - 1, static_cast<int>(im.dsay) + rows - 1, true,
-               [](std::uint32_t page, std::uint32_t bits) { g_drawn[page & 511u] &= ~bits; });
+               [](std::uint32_t page, std::uint32_t bits) {
+                   if (g_drawn[page & 511u] & bits) g_drawn[page & 511u] &= ~bits, ++g_drawn_gen;
+               });
 }
 
 void flush_image() {
@@ -4688,7 +4693,17 @@ void flush_back();
 
 bool pack_candidate(const SetupCache &cache) {
     const std::uint32_t *w = cache.setup;
-    return !rendered(w[12], w[13], w[14], 0, 0, (1 << (w[15] & 0xFFu)) - 1, (1 << (w[15] >> 8)) - 1);
+    // by texture registers until g_drawn changes: the block walk per setup cost the web gsdraw thread ~9% with the pack
+    struct Memo {
+        std::uint64_t gen = ~0ull;
+        std::uint32_t bp, bw, psm, size;
+        bool ok;
+    };
+    static Memo memo[64];
+    Memo &m = memo[((w[12] ^ w[14] << 14 ^ w[15] << 20) * 0x9E3779B1u) >> 26];
+    if (m.gen != g_drawn_gen || m.bp != w[12] || m.bw != w[13] || m.psm != w[14] || m.size != w[15])
+        m = {g_drawn_gen, w[12], w[13], w[14], w[15], !rendered(w[12], w[13], w[14], 0, 0, (1 << (w[15] & 0xFFu)) - 1, (1 << (w[15] >> 8)) - 1)};
+    return m.ok;
 }
 
 void replace_texture(std::uint64_t key, SetupCache &cache) {
@@ -5533,6 +5548,7 @@ void write_state(const std::vector<std::uint32_t> &vram, std::uint32_t scale, co
     const std::uint32_t from = from_x * from_y, to = g_samples;
     const bool same = from_x == g_sx && from_y == g_sy;
     std::fill(std::begin(g_drawn), std::end(g_drawn), same && to > 1 ? ~0u : 0u);
+    ++g_drawn_gen;
     std::fill(std::begin(g_rt_pages), std::end(g_rt_pages), same && to > 1);
     std::vector<std::uint32_t> layers;
     if (!same || vram.size() != words * to) {

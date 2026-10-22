@@ -65,23 +65,24 @@ void page_span(std::uint32_t bp, std::uint32_t bw, std::uint32_t psm, std::uint3
     last = bp / 32 + (x + std::max<std::uint32_t>(w, 1) - 1) / pw + ((y + std::max<std::uint32_t>(h, 1) - 1) / ph) * per_row;
 }
 
-// Hash of one 8 KB page of the CPU copy of GS memory.
-std::uint64_t hash_page(std::uint32_t page) {
-    const std::uint8_t *m = memory() + static_cast<std::size_t>(page % kPages) * 8192;
-    std::uint64_t h = 0;
-    for (std::size_t i = 0; i < 8192; i += 8) {
-        std::uint64_t w;
-        std::memcpy(&w, m + i, 8);
-        h = (h ^ w) * 0x9E3779B97F4A7C15ull;
-        h ^= h >> 29;
-    }
-    return h;
-}
-
 // Word-wise mix for the cache ids (one multiply per word; the texture keys stay FNV over the decoded texels).
 std::uint64_t mix(std::uint64_t h, std::uint64_t v) {
     h = (h ^ v) * 0x9E3779B97F4A7C15ull;
     return h ^ (h >> 29);
+}
+
+// Hash of one 8 KB page of the CPU copy of GS memory.
+std::uint64_t hash_page(std::uint32_t page) {
+    const std::uint8_t *m = memory() + static_cast<std::size_t>(page % kPages) * 8192;
+    std::uint64_t h[4] = {0, 1, 2, 3};  // four chains, so the multiplies overlap: the game rewrites MBs of texture pages a frame
+    for (std::size_t i = 0; i < 8192; i += 32)
+        for (int k = 0; k < 4; ++k) {
+            std::uint64_t w;
+            std::memcpy(&w, m + i + k * 8, 8);
+            h[k] = (h[k] ^ w) * 0x9E3779B97F4A7C15ull;
+            h[k] ^= h[k] >> 29;
+        }
+    return mix(mix(mix(h[0], h[1]), h[2]), h[3]);
 }
 
 std::uint64_t fnv(std::uint64_t h, std::uint64_t v) {
@@ -220,9 +221,9 @@ Loader &loader() {
 // Web: no thread to spare and no files. The render thread asks for a texture (replacement), the browser's main thread
 // starts the fetch (service), and pack-worker.js fetches it (Cache Storage first), inflates and un-filters it straight
 // into px and sets state the way ps2web_fetch does (3 in, 4 failed). At most 4 fetches and 64 MB in flight, 128 MB in
-// but not yet taken (the oldest dropped), and 24 MB of replacements taken a frame (each one is a buffer write).
+// but not yet taken (the oldest dropped), and 8 MB of replacements taken a frame (each one is a buffer write, and a cold cache delivers many at once).
 // ponytail: requests in order; a requested texture's map siblings first once index lines carry maps.
-constexpr std::size_t kFlying = 4, kFlyingBytes = 64u << 20, kInBytes = 128u << 20, kFrameBytes = 24u << 20;
+constexpr std::size_t kFlying = 4, kFlyingBytes = 64u << 20, kInBytes = 128u << 20, kFrameBytes = 8u << 20;
 struct Fetch {
     std::uint32_t width, words, shift;
     std::string file;
@@ -320,19 +321,18 @@ std::uint32_t span_serial(std::uint32_t first, std::uint32_t last, bool &drawn) 
     return newest;
 }
 std::uint64_t key(const State &st) {
-    const auto t0 = std::chrono::steady_clock::now();
     const std::uint64_t eff = (st.prmodecont & 1u) ? st.prim : st.prmode, tex0 = st.ctx[(eff >> 9) & 1u].tex0;
-    if (!dump_dir() && !pack().fits((tex0 >> 26) & 0xFu, (tex0 >> 30) & 0xFu)) {
-        g_stats.key_ms += ms_since(t0);
-        return 0;
-    }
+    if (!dump_dir() && !pack().fits((tex0 >> 26) & 0xFu, (tex0 >> 30) & 0xFu)) return 0;
     struct Memo {
         std::uint64_t tex0, texa, epoch, key;
     };
     static Memo memo[64];
     Memo &m = memo[(tex0 * 0x9E3779B97F4A7C15ull) >> 58];
-    if (m.epoch != g_epoch || m.tex0 != tex0 || m.texa != st.texa) m = {tex0, st.texa, g_epoch, key_uncounted(st)};
-    g_stats.key_ms += ms_since(t0);
+    if (m.epoch != g_epoch || m.tex0 != tex0 || m.texa != st.texa) {
+        const auto t0 = timing() ? std::chrono::steady_clock::now() : std::chrono::steady_clock::time_point{};
+        m = {tex0, st.texa, g_epoch, key_uncounted(st)};
+        if (timing()) g_stats.key_ms += ms_since(t0);
+    }
     return m.key;
 }
 
@@ -512,6 +512,10 @@ void service(Fetcher fetch) {
 #endif
 
 Stats &stats() { return g_stats; }
+bool timing() {
+    static const bool on = std::getenv("PS2_FRAME_LOG");
+    return on;
+}
 Stats take_stats() { return std::exchange(g_stats, {}); }
 
 }

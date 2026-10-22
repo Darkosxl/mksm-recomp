@@ -44,5 +44,7 @@ struct Stats {
 };
 Stats &stats();
 Stats take_stats();
+// Whether to time that work: only with PS2_FRAME_LOG, a clock read goes through JS on the web (4% of its GS thread).
+bool timing();
 
 }

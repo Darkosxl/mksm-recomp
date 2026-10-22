@@ -192,6 +192,29 @@ void put(std::uint32_t a, T v) {
     if (std::memcmp(p, &v, sizeof v)) std::memcpy(p, &v, sizeof v), g_changed = true;
 }
 
+// put() for the upload loops: always stores and returns the bits it changed, which the loop ORs into a local (a branch
+// and a global store per texel cost the web GS thread more than the copy).
+template <typename T>
+std::uint32_t put_diff(std::uint32_t a, T v) {
+    std::uint8_t *p = g_memory + wrap(a);
+    T old;
+    std::memcpy(&old, p, sizeof old);
+    std::memcpy(p, &v, sizeof v);
+    return static_cast<std::uint32_t>(old ^ v);
+}
+
+// a == b over n bytes (n a multiple of 8), a word at a time: the web's memcmp goes byte by byte
+bool same_words(const void *a, const void *b, std::size_t n) {
+    std::uint64_t diff = 0;
+    for (std::size_t i = 0; i < n; i += 8) {
+        std::uint64_t x, y;
+        std::memcpy(&x, static_cast<const std::uint8_t *>(a) + i, 8);
+        std::memcpy(&y, static_cast<const std::uint8_t *>(b) + i, 8);
+        diff |= x ^ y;
+    }
+    return !diff;
+}
+
 std::uint32_t page_address(std::uint32_t bp, std::uint32_t bw, std::uint32_t x, std::uint32_t y, std::uint32_t pw, std::uint32_t ph) {
     const std::uint32_t per_row = std::max<std::uint32_t>(1, bw * 64 / pw);
     return bp * 256 + ((x / pw) + (y / ph) * per_row) * 8192;
@@ -317,16 +340,25 @@ void feed_pixels(const std::uint8_t *data, std::size_t bytes, W write) {
     const std::uint32_t rrw = static_cast<std::uint32_t>(reg) & 0xFFFu, rrh = static_cast<std::uint32_t>(reg >> 32) & 0xFFFu;
     if (!rrw) return;
     const std::size_t count = bytes * 8 / Bits;
-    for (std::size_t i = 0; i < count && g_transfer.active; ++i) {
-        std::uint32_t v = 0;
-        if constexpr (Bits == 4) v = (data[i / 2] >> ((i & 1) * 4)) & 15u;
-        else std::memcpy(&v, data + i * (Bits / 8), Bits / 8);
-        write((dsax + g_transfer.x) & 0x7FFu, (dsay + g_transfer.y) & 0x7FFu, v);
-        if (++g_transfer.x >= rrw) {
-            g_transfer.x = 0;
-            if (++g_transfer.y >= rrh) g_transfer.active = false;
+    // A row at a time in locals: write()'s byte stores may alias g_transfer, which kept the position in memory per texel
+    // (the web build's GS thread spent 20% here with the pack).
+    std::uint32_t tx = g_transfer.x, ty = g_transfer.y;
+    bool active = g_transfer.active;
+    for (std::size_t i = 0; i < count && active;) {
+        const std::uint32_t y = (dsay + ty) & 0x7FFu;
+        const std::size_t end = std::min<std::size_t>(count, i + (rrw - tx));
+        for (; i < end; ++i, ++tx) {
+            std::uint32_t v = 0;
+            if constexpr (Bits == 4) v = (data[i / 2] >> ((i & 1) * 4)) & 15u;
+            else std::memcpy(&v, data + i * (Bits / 8), Bits / 8);
+            write((dsax + tx) & 0x7FFu, y, v);
+        }
+        if (tx >= rrw) {
+            tx = 0;
+            if (++ty >= rrh) active = false;
         }
     }
+    g_transfer.x = tx, g_transfer.y = ty, g_transfer.active = active;
 }
 
 std::uint8_t g_carry[4];
@@ -341,8 +373,9 @@ void feed_image(const std::uint8_t *data, std::size_t bytes) {
     const std::uint32_t psm = static_cast<std::uint32_t>(g_state.bitbltbuf >> 56) & 0x3Fu;
     const std::uint64_t buf = g_state.bitbltbuf, pos = g_state.trxpos, reg = g_state.trxreg;  // before the transfer ends
     g_changed = false;
-    const auto t0 = std::chrono::steady_clock::now();
+    const auto t0 = texpack::timing() ? std::chrono::steady_clock::now() : std::chrono::steady_clock::time_point{};
     const std::uint32_t bits = bits_per_pixel(psm);
+    std::uint32_t diff = 0;
     if (bits == 24) {
         for (std::size_t i = 0; i < bytes && g_transfer.active; ++i) {
             g_carry[g_carried++] = data[i];
@@ -356,23 +389,23 @@ void feed_image(const std::uint8_t *data, std::size_t bytes) {
         const auto any = [&](std::uint32_t x, std::uint32_t y, std::uint32_t v) { write_pixel(psm, dbp, dbw, x, y, v); };
         switch (psm) {
         case PSMCT32:
-            feed_pixels<32>(data, bytes, [&](std::uint32_t x, std::uint32_t y, std::uint32_t v) { put<std::uint32_t>(page_address(dbp, dbw, x, y, 64, 32) + g_off32[y & 31][x & 63], v); });
+            feed_pixels<32>(data, bytes, [&](std::uint32_t x, std::uint32_t y, std::uint32_t v) { diff |= put_diff<std::uint32_t>(page_address(dbp, dbw, x, y, 64, 32) + g_off32[y & 31][x & 63], v); });
             break;
         case PSMCT16:
             feed_pixels<16>(data, bytes, [&](std::uint32_t x, std::uint32_t y, std::uint32_t v) {
-                put<std::uint16_t>(page_address(dbp, dbw, x, y, 64, 64) + g_off16[y & 63][x & 63], static_cast<std::uint16_t>(v));
+                diff |= put_diff<std::uint16_t>(page_address(dbp, dbw, x, y, 64, 64) + g_off16[y & 63][x & 63], static_cast<std::uint16_t>(v));
             });
             break;
         case PSMT8:
             feed_pixels<8>(data, bytes, [&](std::uint32_t x, std::uint32_t y, std::uint32_t v) {
-                put<std::uint8_t>(page_address(dbp, dbw, x, y, 128, 64) + g_off8[y & 63][x & 127], static_cast<std::uint8_t>(v));
+                diff |= put_diff<std::uint8_t>(page_address(dbp, dbw, x, y, 128, 64) + g_off8[y & 63][x & 127], static_cast<std::uint8_t>(v));
             });
             break;
         case PSMT4:
             feed_pixels<4>(data, bytes, [&](std::uint32_t x, std::uint32_t y, std::uint32_t v) {
                 const std::uint32_t n = g_off4[y & 127][x & 127], a = page_address(dbp, dbw, x, y, 128, 128) + n / 2;
                 const std::uint8_t b = get<std::uint8_t>(a);
-                put<std::uint8_t>(a, (n & 1u) ? static_cast<std::uint8_t>((b & 0x0Fu) | (v << 4)) : static_cast<std::uint8_t>((b & 0xF0u) | v));
+                diff |= put_diff<std::uint8_t>(a, (n & 1u) ? static_cast<std::uint8_t>((b & 0x0Fu) | (v << 4)) : static_cast<std::uint8_t>((b & 0xF0u) | v));
             });
             break;
         default:
@@ -382,7 +415,8 @@ void feed_image(const std::uint8_t *data, std::size_t bytes) {
             else feed_pixels<32>(data, bytes, any);
         }
     }
-    texpack::stats().mirror_ms += std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - t0).count();
+    g_changed = g_changed || diff;
+    if (texpack::timing()) texpack::stats().mirror_ms += std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - t0).count();
     if (texpack::active() && g_changed)
         texpack::touched(static_cast<std::uint32_t>(buf >> 32) & 0x3FFFu, static_cast<std::uint32_t>(buf >> 48) & 0x3Fu, psm, static_cast<std::uint32_t>(pos >> 32) & 0x7FFu,
                          static_cast<std::uint32_t>(pos >> 48) & 0x7FFu, static_cast<std::uint32_t>(reg) & 0xFFFu, static_cast<std::uint32_t>(reg >> 32) & 0xFFFu);
@@ -459,6 +493,26 @@ void load_clut(std::uint64_t tex0) {
     const bool eight = psm == PSMT8 || psm == PSMT8H;
     const std::uint32_t entries = eight ? 256u : 16u;
     const std::uint32_t texclut = static_cast<std::uint32_t>(g_state.texclut);
+    // The game loads one of a few CLUTs before each draw (thousands a frame): a CSM1 load whose block holds the bytes it
+    // held the last time those registers loaded takes the entries that load made, not 256 swizzled reads (8% of the web
+    // GS thread with the pack). The block is the first 1 KB (8-bit) or 64 bytes (4-bit) from cbp, CT32 or CT16.
+    struct Seen {
+        std::uint32_t params = ~0u;
+        std::uint8_t raw[1024];
+        std::uint32_t clut[256];
+    };
+    static Seen seen[16];
+    const std::uint32_t raw_bytes = eight ? 1024u : 64u, first = eight ? 0u : (csa & 15u) * 16u, src = cbp * 256u;
+    const bool memo = !csm && (cpsm == PSMCT32 || cpsm == PSMCT16) && src + raw_bytes <= kMemorySize;
+    const std::uint32_t params = cbp | cpsm << 14 | csa << 18 | static_cast<std::uint32_t>(eight) << 23;
+    Seen &m = seen[(params * 0x9E3779B1u) >> 28];
+    if (memo && m.params == params && same_words(m.raw, g_memory + src, raw_bytes)) {
+        if (!same_words(m.clut, g_state.clut + first, entries * 4)) {
+            std::memcpy(g_state.clut + first, m.clut, entries * 4);
+            if (texpack::active()) texpack::clut_loaded();
+        }
+        return;
+    }
     bool changed = false;  // the game reloads the same CLUT for most draws: the texture pack keys again only on a change
     for (std::uint32_t i = 0; i < entries; ++i) {
         std::uint32_t x, y;
@@ -488,6 +542,11 @@ void load_clut(std::uint64_t tex0) {
         const std::uint32_t slot = eight ? i : ((csa & 15u) * 16u + i) & 255u;
         changed |= g_state.clut[slot] != c;
         g_state.clut[slot] = c;
+    }
+    if (memo) {
+        m.params = params;
+        std::memcpy(m.raw, g_memory + src, raw_bytes);
+        std::memcpy(m.clut, g_state.clut + first, entries * 4);
     }
     if (texpack::active() && changed) texpack::clut_loaded();
 }
@@ -817,9 +876,9 @@ void write(std::uint32_t reg, std::uint64_t value) {
         if ((value & 3u) == 0) g_transfer.active = true;
         else if ((value & 3u) == 2) {
             g_changed = false;
-            const auto t0 = std::chrono::steady_clock::now();
+            const auto t0 = texpack::timing() ? std::chrono::steady_clock::now() : std::chrono::steady_clock::time_point{};
             if (cpu_memory()) local_copy();
-            texpack::stats().mirror_ms += std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - t0).count();
+            if (texpack::timing()) texpack::stats().mirror_ms += std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - t0).count();
             if (texpack::active() && g_changed)
                 texpack::touched(static_cast<std::uint32_t>(s.bitbltbuf >> 32) & 0x3FFFu, static_cast<std::uint32_t>(s.bitbltbuf >> 48) & 0x3Fu,
                                  static_cast<std::uint32_t>(s.bitbltbuf >> 56) & 0x3Fu, static_cast<std::uint32_t>(s.trxpos >> 32) & 0x7FFu,
