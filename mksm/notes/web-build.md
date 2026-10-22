@@ -29,6 +29,10 @@ python3 scripts/serve.py build/web-mksm games/mksm/disc.iso    # COOP/COEP + HTT
 - URL parameters (from `web/shell.html`):
   - `press=200:cross,700:p2:square` for scripted input;
   - `PS2_*` sets environment variables, e.g. `PS2_NO_VU_THREAD=1` or `PS2_SCALE=2`;
+  - `PS2_DISC_BLOCK=1` makes a disc cache miss block the emulation thread, as lockstep does. Without it a read whose
+    bytes are still in flight is retried 1 ms of emulated time later (`[disc] ... not here yet` in the console), so
+    guest timing follows the network and two runs differ. A `PS2_HASH_LOG` compared with another run or with the
+    desktop build needs it: `g7600.state` with it equals the desktop 600/600 frames.
   - `copy` presents through a 2D canvas copy;
   - `nocard` runs without a memory card.
 - The memory card lives in IndexedDB, which belongs to the page **origin** (scheme + host + port). Serving on a different

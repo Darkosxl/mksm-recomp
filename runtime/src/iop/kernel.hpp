@@ -134,6 +134,10 @@ std::uint64_t disc_read(std::uint32_t lsn, std::uint32_t sectors);
 // A sceCdSt* stream is read ahead into a ring buffer, so it only costs the media transfer time.
 std::uint64_t disc_stream(std::uint32_t lsn, std::uint32_t sectors);
 void disc_seek(std::uint32_t lsn);
+// Whether a read's sectors have arrived (natively always). On the web outside lockstep the disc streams over the
+// network: a read whose bytes are still in flight is retried 1 ms of emulated time later, so guest timing follows the
+// network and the run does not repeat (logged).
+bool disc_arrived(const Job &j);
 // Directory search through cdvdman's file system: volume descriptor and path table once, then
 // each directory not already in its one-directory cache.
 std::uint64_t disc_lookup(const std::string &path);

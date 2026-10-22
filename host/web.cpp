@@ -259,7 +259,16 @@ void read_ahead(std::uint64_t index) {
     for (std::uint64_t k = 1; k <= std::min(g_run * 2, kReadAhead); ++k) want(index + k);
 }
 
-bool lockstep() { return ps2::g_options.lockstep; }
+// Lockstep, or PS2_DISC_BLOCK=1 (a hash log compared with another run or the desktop build): a disc cache miss blocks
+// the emulation thread until the bytes arrive, so guest timing never depends on the network. Otherwise the emulated
+// drive waits for them (disc_arrived), which keeps the game running on a slow connection but makes a run unrepeatable.
+bool blocking_disc() {
+    static const bool asked = [] {
+        const char *env = std::getenv("PS2_DISC_BLOCK");
+        return env && *env && *env != '0';
+    }();
+    return ps2::g_options.lockstep || asked;
+}
 
 void note_disc_wait(double since) {
     const double waited = emscripten_get_now() - since;
@@ -304,7 +313,7 @@ const Slot *chunk_blocking(std::uint64_t index) {
 }
 
 const Slot *chunk(std::uint64_t index) {
-    if (lockstep()) return chunk_blocking(index);
+    if (blocking_disc()) return chunk_blocking(index);
     Slot *s = want(index);
     advance(index);
     read_ahead(std::max(index, g_last_chunk));
@@ -336,8 +345,8 @@ bool disc_ready(std::uint64_t offset, std::size_t size) {
         advance(index);
     }
     read_ahead(std::max(last, g_last_chunk));
-    // lockstep: the read itself blocks until the chunks arrive, so the guest always sees a ready drive
-    return ready || lockstep();
+    // blocking: the read itself waits for the chunks, so the guest always sees a ready drive
+    return ready || blocking_disc();
 }
 
 std::size_t read_disc(std::uint64_t offset, void *out, std::size_t size) {

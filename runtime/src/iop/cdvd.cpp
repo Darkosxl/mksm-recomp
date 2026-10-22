@@ -140,6 +140,16 @@ std::uint64_t disc_stream(std::uint32_t lsn, std::uint32_t sectors) {
 
 void disc_seek(std::uint32_t lsn) { access(lsn, 0); }
 
+bool disc_arrived(const Job &j) {
+    if (disc::ready(j.a, j.b)) return true;
+    static std::uint64_t waits = 0;
+    if (++waits <= 20 || waits % 100 == 0)
+        std::fprintf(stderr, "[disc] lsn %u count %u not here yet at frame %llu: the drive waits 1 ms more (%llu waits)\n", j.a, j.b,
+                     static_cast<unsigned long long>(ps2::frame_count()), static_cast<unsigned long long>(waits));
+    schedule(now() + usec_to_cycles(1000), j);
+    return false;
+}
+
 std::uint64_t disc_lookup(const std::string &raw) {
     std::string path = raw.substr(raw.find(':') == std::string::npos ? 0 : raw.find(':') + 1);
     std::replace(path.begin(), path.end(), '\\', '/');
@@ -199,10 +209,7 @@ void install_cdvd() {
     g_cd = CdState{};
     g_drive = Drive{};
     register_job(kJobCdRead, [](const Job &j) {
-        if (!disc::ready(j.a, j.b)) {
-            schedule(now() + usec_to_cycles(1000), j);
-            return;
-        }
+        if (!disc_arrived(j)) return;
         std::vector<std::uint8_t> data(static_cast<std::size_t>(j.b) * disc::kSector);
         disc::read(j.a, j.b, data.data());
         for (std::size_t i = 0; i < data.size(); ++i) write8(j.c + static_cast<std::uint32_t>(i), data[i]);

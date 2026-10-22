@@ -46,19 +46,13 @@ void install_cdvdfsv() {
     // hardware instead of running LLE against device and cdvdman calls the HLE lacks.
     register_hle_module("CDVDSTM", [] { return 2; });
     register_job(kJobFsvRead, [](const Job &j) {
-        if (!disc::ready(j.a, j.b)) {
-            schedule(now() + usec_to_cycles(1000), j);
-            return;
-        }
+        if (!disc_arrived(j)) return;
         read_to_ee(j.a, j.b, j.c);
         sif::complete_call(0x80000595u);
     });
     register_job(kJobFsvComplete, [](const Job &) { sif::complete_call(0x80000595u); });
     register_job(kJobFsvIopRead, [](const Job &j) {
-        if (!disc::ready(j.a, j.b)) {
-            schedule(now() + usec_to_cycles(1000), j);
-            return;
-        }
+        if (!disc_arrived(j)) return;
         std::vector<std::uint8_t> data(static_cast<std::size_t>(j.b) * disc::kSector);
         disc::read(j.a, j.b, data.data());
         for (std::size_t i = 0; i < data.size(); ++i) write8(j.c + static_cast<std::uint32_t>(i), data[i]);
