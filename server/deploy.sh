@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
 # Deploys the MKSM web build, disc image, signalling server and Caddy/coturn config to a VPS.
 # usage: server/deploy.sh <user@host> <domain>
-#   env: BUILD_DIR (default build/web-mksm), DISC (default games/mksm/disc.iso)
+#   env: BUILD_DIR (default build/web-mksm), DISC (default games/mksm/disc.iso),
+#        PACK_DIR (HD texture pack dir made by remaster/webpack.py, e.g. remaster-data/textures/web; unset: no pack step)
 # The ssh user must be root or have passwordless sudo. Safe to rerun: unchanged pieces are skipped.
 set -euo pipefail
 
@@ -15,6 +16,7 @@ here=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
 repo=$(dirname "$here")
 BUILD_DIR=${BUILD_DIR:-$repo/build/web-mksm}
 DISC=${DISC:-$repo/games/mksm/disc.iso}
+PACK_DIR=${PACK_DIR:-}
 
 # One multiplexed ssh connection for every step below.
 ctl=$(mktemp -d)
@@ -27,7 +29,7 @@ remote_root() { remote "if [ \"\$(id -u)\" = 0 ]; then bash -s -- $*; else sudo 
 
 say "preflight"
 command -v rsync >/dev/null || die "rsync is not installed locally"
-for f in ps2web.wasm ps2web.js ps2web.html; do
+for f in ps2web.wasm ps2web.js ps2web.html lockstep.js lockstep-emu.js disc-sw.js; do
     [ -f "$BUILD_DIR/$f" ] || die "missing $BUILD_DIR/$f (run scripts/build_web.sh mksm)"
 done
 for z in "$BUILD_DIR"/ps2web.*.gz "$BUILD_DIR"/ps2web.*.br; do
@@ -35,15 +37,30 @@ for z in "$BUILD_DIR"/ps2web.*.gz "$BUILD_DIR"/ps2web.*.br; do
     if [ "${z%.*}" -nt "$z" ]; then die "$z is older than ${z%.*}; rebuild or delete it"; fi
 done
 [ -f "$DISC" ] || die "missing disc image $DISC"
+pack_index=()
+if [ -n "$PACK_DIR" ]; then
+    [ -f "$PACK_DIR/current.json" ] && [ -d "$PACK_DIR/obj" ] || die "$PACK_DIR has no current.json or obj/ (make it with remaster/webpack.py)"
+    # current.json = {"<variant>": "<16 hex index id>", ...}; every index it names goes up with it.
+    for id in $(grep -oE '"[0-9]+" *: *"[0-9a-f]{16}"' "$PACK_DIR/current.json" | sed -E 's/.*"([0-9a-f]{16})"$/\1/'); do
+        [ -f "$PACK_DIR/$id.txt" ] || die "missing $PACK_DIR/$id.txt (named by current.json)"
+        pack_index+=("$PACK_DIR/$id.txt")
+    done
+    [ ${#pack_index[@]} -gt 0 ] || die "$PACK_DIR/current.json names no index"
+fi
 for f in signal.mjs package.json package-lock.json mksm-signal.service mksm-invite Caddyfile turnserver.conf site/index.html; do
     [ -f "$here/$f" ] || die "missing server/$f"
 done
 # The build id covers every served artifact (not only the wasm), so a page-only change still gets a new
-# immutable directory instead of being skipped as "already on the server".
-hash=$(cd "$BUILD_DIR" && sha256sum ps2web.html ps2web.js ps2web.wasm $(ls ps2web.data 2>/dev/null) | sha256sum | cut -d' ' -f1)
+# immutable directory instead of being skipped as "already on the server". The .gz/.br sidecars follow their source
+# (checked above) and are left out: gzip stores the mtime, so they would change the id on every rebuild.
+mapfile -t served < <(cd "$BUILD_DIR" && for f in ps2web.* *.js prefetch.json; do
+    [ -f "$f" ] || continue
+    case $f in *.gz | *.br) ;; *) echo "$f" ;; esac
+done | LC_ALL=C sort -u)
+hash=$(cd "$BUILD_DIR" && sha256sum "${served[@]}" | sha256sum | cut -d' ' -f1)
 [[ $hash =~ ^[0-9a-f]{64}$ ]] || die "could not hash the build"
 disc_size=$(stat -c%s "$DISC")
-echo "build $hash, disc $disc_size bytes -> $host ($domain)"
+echo "build $hash (${served[*]}), disc $disc_size bytes${PACK_DIR:+, pack $PACK_DIR} -> $host ($domain)"
 
 say "bootstrap (user, directories, secrets)"
 remote_root "$domain" <<'BOOT'
@@ -122,7 +139,8 @@ say "build $hash"
 if remote "test -d /srv/mksm/v/$hash"; then
     echo "already on the server, skipping"
 else
-    push -rlpt --chmod=D755,F644 --include='ps2web.*' --exclude='*' "$BUILD_DIR/" "$host:/srv/mksm/v/.incoming-$hash/"
+    push -rlpt --chmod=D755,F644 --include='ps2web.*' --include='*.js' --include=prefetch.json --exclude='*' \
+        "$BUILD_DIR/" "$host:/srv/mksm/v/.incoming-$hash/"
     remote "mv /srv/mksm/v/.incoming-$hash /srv/mksm/v/$hash"
 fi
 
@@ -136,6 +154,24 @@ else
     [ "$avail" -gt $((disc_size - part_size + 256 * 1024 * 1024)) ] || die "only $avail bytes free in /srv/mksm"
     push --inplace --partial --info=progress2 --perms --chmod=F644 "$DISC" "$host:/srv/mksm/disc.iso.part"
     remote 'mv -f /srv/mksm/disc.iso.part /srv/mksm/disc.iso'
+fi
+
+if [ -n "$PACK_DIR" ]; then
+    say "texture pack"
+    # Objects and indexes are content-named and never change, so only new ones go up; current.json flips last, once
+    # everything it points at is in place. The bytes to send are what a dry run of the same upload would send.
+    obj=(--include='*.tex' --exclude='*' "$PACK_DIR/obj/" "$host:/srv/mksm/pack/obj/")
+    remote 'umask 022 && mkdir -p /srv/mksm/pack/obj'
+    need=$(push -rlpt --ignore-existing --dry-run --stats --no-human-readable "${obj[@]}" |
+        sed -n 's/^Total transferred file size: \([0-9]*\).*/\1/p')
+    avail=$(remote 'df -P -B1 /srv/mksm | awk "NR == 2 { print \$4 }"')
+    [[ $need =~ ^[0-9]+$ ]] || die "could not size the pack upload"
+    echo "$need bytes of new objects, $avail bytes free"
+    [ "$avail" -gt $((need + 256 * 1024 * 1024)) ] || die "only $avail bytes free in /srv/mksm"
+    push -rlpt --chmod=D755,F644 --ignore-existing --partial-dir=.partial --info=progress2 "${obj[@]}"
+    push -rlpt --chmod=F644 "${pack_index[@]}" "$host:/srv/mksm/pack/"
+    push -rlpt --chmod=F644 "$PACK_DIR/current.json" "$host:/srv/mksm/pack/.current.json.tmp"
+    remote 'chmod 644 /srv/mksm/pack/.current.json.tmp && mv -f /srv/mksm/pack/.current.json.tmp /srv/mksm/pack/current.json'
 fi
 
 say "current.json -> $hash"

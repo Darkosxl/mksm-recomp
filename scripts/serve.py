@@ -4,9 +4,13 @@
 usage: serve.py <build dir> <disc image> [port] [--record <dir for unrecorded VU1 programs>]
                 [--files <dir of extra flat files, e.g. lockstep input scripts>]
                 [--disc-delay <ms>[,<jitter ms>]] [--disc-fail <fraction>]
+                [--pack <HD texture pack dir: current.json, <id>.txt, obj/ (remaster/webpack.py)>]
 
 --disc-delay and --disc-fail throttle disc.iso reads (every Range request waits ms + random(0..jitter), and a
 fraction of them answer 503) to test the lockstep host's blocking disc fetch.
+
+--pack serves /pack/current.json, /pack/<id>.txt and /pack/obj/<key>.<sha>.tex as stored (the .tex files are gzip
+bytes the page decompresses itself, so never with Content-Encoding).
 """
 
 import http.server
@@ -31,6 +35,9 @@ RECORD = option('--record')
 RECORD = RECORD and os.path.abspath(RECORD)
 FILES = option('--files')
 FILES = FILES and os.path.abspath(FILES)
+PACK = option('--pack')
+PACK = PACK and os.path.abspath(PACK)
+PACK_FILE = re.compile(r'/pack/(current\.json|[0-9a-f]{16}\.txt|obj/[0-9a-f]{16}\.[0-9a-f]{12}\.tex)')
 DELAY = [float(x) for x in option('--disc-delay', '0').split(',')] + [0.0]
 FAIL = float(option('--disc-fail', '0'))
 BUILD = os.path.abspath(sys.argv[1])
@@ -40,6 +47,10 @@ TYPES = {'.html': 'text/html', '.js': 'text/javascript', '.mjs': 'text/javascrip
          '.data': 'application/octet-stream', '.args': 'text/plain', '.txt': 'text/plain', '.json': 'application/json'}
 
 
+def in_pack(path):
+    return bool(PACK) and path.startswith(PACK + os.sep)
+
+
 class Handler(http.server.BaseHTTPRequestHandler):
     def target(self):
         path = self.path.split('?', 1)[0]
@@ -47,6 +58,10 @@ class Handler(http.server.BaseHTTPRequestHandler):
             path = '/ps2web.html'
         if path == '/disc.iso':
             return DISC
+        if path.startswith('/pack/'):
+            match = PACK and PACK_FILE.fullmatch(path)
+            full = match and os.path.join(PACK, match.group(1))
+            return full if full and os.path.isfile(full) else None
         name = os.path.normpath(path.lstrip('/'))
         if name.startswith('..') or os.sep in name:
             return None
@@ -56,7 +71,9 @@ class Handler(http.server.BaseHTTPRequestHandler):
         return full if os.path.isfile(full) else None
 
     def headers_for(self, path, length, encoding=None):
-        self.send_header('Content-Type', TYPES.get(os.path.splitext(path)[1], 'application/octet-stream'))
+        ext = os.path.splitext(path)[1]
+        raw = in_pack(path) and ext != '.json'  # pack .txt/.tex: opaque bytes
+        self.send_header('Content-Type', 'application/octet-stream' if raw else TYPES.get(ext, 'application/octet-stream'))
         if encoding:
             self.send_header('Content-Encoding', encoding)
             self.send_header('Vary', 'Accept-Encoding')
@@ -83,7 +100,7 @@ class Handler(http.server.BaseHTTPRequestHandler):
             return
         packed = path + '.gz'
         if ('Range' not in self.headers and 'gzip' in self.headers.get('Accept-Encoding', '') and os.path.isfile(packed)
-                and os.path.getmtime(packed) >= os.path.getmtime(path)):
+                and os.path.getmtime(packed) >= os.path.getmtime(path) and not in_pack(path)):
             self.send_response(200)
             self.headers_for(path, os.path.getsize(packed), 'gzip')
             with open(packed, 'rb') as f:
@@ -136,5 +153,5 @@ class Handler(http.server.BaseHTTPRequestHandler):
         pass
 
 
-print('serving %s and %s on http://127.0.0.1:%d/' % (BUILD, DISC, PORT))
+print('serving %s and %s%s on http://127.0.0.1:%d/' % (BUILD, DISC, PACK and ' and pack ' + PACK or '', PORT))
 http.server.ThreadingHTTPServer(('127.0.0.1', PORT), Handler).serve_forever()

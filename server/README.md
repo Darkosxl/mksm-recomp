@@ -10,7 +10,8 @@ No VPS? See [Host mode](#host-mode): the player who opens the lobby serves every
 - Debian 12 / Ubuntu 24.04 or similar, with a public IPv4 address.
 - A domain (or subdomain) whose A record points at that address.
 - Open ports: 80/tcp (ACME + redirect), 443/tcp (443/udp optional, for HTTP/3), 3478/udp+tcp (STUN/TURN), 49160–49200/udp (TURN relays).
-- ≥10 GB disk (3.3 GB disc image + ~100 MB per build kept), ≥100 Mbps uplink. 1 vCPU / 1 GB RAM is enough.
+- ≥20 GB disk (3.3 GB disc image, 1.4 GB HD texture pack (both variants) plus the changed textures of every later pack version, ~100 MB per build kept), ≥100 Mbps uplink. 1 vCPU / 1 GB RAM is enough.
+- Traffic: a new player who lets everything download pulls ~4 GB (disc ~2.4 GB + texture pack 1.09 GB (4x) / 0.31 GB (2x)); returning players read their browser caches. Check the VPS plan's traffic allowance before sharing invites widely.
 - An ssh login that is root or has passwordless sudo.
 - Caddy ≥ 2.11. 2.10.x answers precompressed `.br`/`.gz` files with `206 Partial Content` ([caddy#7250](https://github.com/caddyserver/caddy/issues/7250)); `deploy.sh` refuses it.
 
@@ -49,17 +50,31 @@ The first deploy generates `COOKIE_SECRET`, `ADMIN_SECRET` and `TURN_SECRET` on 
 
 Rebuild (`scripts/build_web.sh mksm`) and rerun `server/deploy.sh user@host your.domain`.
 
-- Builds are immutable under `/v/<hash>/`, where the hash is a SHA-256 over `ps2web.{html,js,wasm,data}` (not only the wasm, so a page-only change still gets a new directory). A running session keeps loading the build it started with, and a room stays pinned to the build it was created on.
+- Builds are immutable under `/v/<hash>/`, where the hash is a SHA-256 over every file uploaded there: `ps2web.*` (the `.gz`/`.br` sidecars aside), the page's `*.js` modules (`lockstep.js`, `lockstep-emu.js`, `disc-sw.js`, …) and `prefetch.json` (not only the wasm, so a page-only change still gets a new directory). A running session keeps loading the build it started with, and a room stays pinned to the build it was created on.
 - `current.json` (`{"build": "<hash>"}`) flips atomically, only after the new build directory is complete.
 - The disc image is uploaded only when its size differs from the copy on the server (resumable).
 - Services restart only when their code or config changed; Caddy is reloaded gracefully.
 - Old builds are not pruned. To prune by hand: `cat /srv/mksm/current.json; ls -t /srv/mksm/v`, then `rm -r` the directories the current pointer does not name.
 
+## HD texture pack
+
+Optional; the game runs with the original textures without it. Make both variants into one directory (unchanged textures keep their object, so a rerun only adds what changed), then deploy with `PACK_DIR`:
+
+```sh
+/usr/bin/python3 remaster/webpack.py <pack-v2> <out> --scale 4    # <out>: normally remaster-data/textures/web, never in git
+/usr/bin/python3 remaster/webpack.py <pack-v2> <out> --scale 2
+PACK_DIR=<out> server/deploy.sh user@host your.domain
+```
+
+- Layout: `obj/<key>.<sha12>.tex` (gzip of the texture, content-named), `<id>.txt` (one index per variant, content-named), `current.json` (`{"2": "<id>", "4": "<id>"}`). Size from pack-v2 (1211 textures): 1.09 GB (4x), 0.31 GB (2x).
+- `deploy.sh` checks that `current.json` names indexes that exist, checks free disk against what a dry run of the upload would send (+256 MB), uploads only new objects (resumable, `.partial/`), then the indexes, then flips `/srv/mksm/pack/current.json` atomically. Objects and indexes of older pack versions stay (a page still on an old index keeps working); prune by hand.
+- Objects and indexes are served as stored (`application/octet-stream`, `immutable`, never a `Content-Encoding`: the page decompresses them itself and keeps them compressed in Cache Storage); `current.json` is `no-cache`.
+
 ## Server layout
 
 | Path | What |
 |---|---|
-| `/srv/mksm/` | Web root: `index.html`, `current.json`, `disc.iso`, `v/<hash>/` builds |
+| `/srv/mksm/` | Web root: `index.html`, `current.json`, `disc.iso`, `v/<hash>/` builds, `pack/` HD textures |
 | `/opt/mksm/` | `signal.mjs`, `package.json`, `node_modules/`; `etc/` holds the staged unit and configs |
 | `/etc/mksm/signal.env` | Secrets and settings for `signal.mjs` (root:mksm, 0640) |
 | `/etc/mksm/caddy.env` | `DOMAIN`, `MKSM_ROOT`, `SIGNAL_ADDR` for the Caddyfile (no secrets) |
@@ -101,6 +116,8 @@ Revoking an invite also signs out everyone who joined through it. Changing `COOK
 | `/current.json` | `{"build": "<hash>"}`, `no-cache` | cookie |
 | `/v/<hash>/ps2web.*` | build, `immutable`, `.br`/`.gz` when accepted | cookie |
 | `/disc.iso` | disc image, Range requests | cookie |
+| `/pack/current.json` | `{"<variant>": "<index id>"}`, `no-cache` | cookie |
+| `/pack/<id>.txt`, `/pack/obj/<key>.<sha12>.tex` | pack indexes and objects, `immutable`, raw bytes | cookie |
 | `/ws`, `/turn` | `signal.mjs` | cookie (checked by Caddy and again by `signal.mjs`) |
 | `/invite?t=[&room=]` | `signal.mjs`: token → cookie → `302 /` (or `ROOM_URL` with the room) | none |
 | `/admin/*` | `signal.mjs` | `Authorization: Bearer <ADMIN_SECRET>` |
@@ -164,9 +181,10 @@ Session flow:
 - `host.mjs` listens on 127.0.0.1 only (default port 8620). It serves the build (`--build`, top-level `*.html/js/mjs/wasm/data` only, `.gz` when accepted) and the disc (`--disc`, at `/disc.iso`, Range) with COOP/COEP/CORP, using the static server exported by `scripts/lockstep_env.mjs`. It spawns `signal.mjs` with per-run random secrets (memory only), `DATA_DIR` in a temp directory and `ROOM_URL=/ps2web.html?room={room}`, and proxies `/ws`, `/auth` and `/invite` to it. `/admin` is not exposed; `/turn` is 404 (no TURN: the page uses public STUN and falls back to the binary relay above).
 - **Gate:** every path except `/invite` needs the cookie, except for the host's own browser: TCP peer 127.0.0.1/::1, no proxy header (`Cf-*`, `X-Forwarded-*`, `Forwarded`, `X-Real-IP`, `CDN-Loop`, `Via`; cloudflared always adds `Cf-Connecting-IP` and `X-Forwarded-For`), a loopback `Host`, and `Origin`/`Sec-Fetch-Site` (when present) not naming another site. host.mjs adds its own cookie to that browser's `/ws` and `/auth` requests. A remote WebSocket with an `Origin` must come from the tunnel URL.
 - **`/host-info`** (local only) → `{tunnelUrl, inviteToken, inviteUrl, inviteUsed, room}`. `?room=<id>` records the host's room and adds `&room=<id>` to `inviteUrl`; `?new=1` mints a new single-use invite (revoking the previous one if it is unused). `POST /host-info/tunnel?url=https://…` (local only) sets the tunnel URL; `host.sh` calls it once cloudflared prints its `*.trycloudflare.com` URL.
+- `--pack <dir>` serves a texture pack at `/pack/` (same routes and headers as above, strict file names). Its `current.json` is answered with only the `--pack-variants` (comma list, default all) and `"background": false`, so the page fetches a texture only when the game asks for it. `host.sh` passes `--pack <checkout>/../../remaster-data/textures/web --pack-variants 2` (the 2x variant: a home uplink) when that pack exists; `--pack DIR` / `--no-pack` change it.
 - `host.sh` downloads `tools/cloudflared` (pinned release, SHA-256 checked) on first use, runs `npm ci` here if `node_modules` is missing, starts host.mjs and `cloudflared tunnel --no-autoupdate --url http://127.0.0.1:<port>`, prints the host's URL and the invite, and stops all of it on Ctrl-C.
 
-Tests: `node host_test.mjs` (host.mjs on loopback: the gate with cloudflared-like headers, `/host-info`, single-use invite and room redirect, gzip, Range, `/ws` rules, relay through the proxy) and `node host_tunnel_test.mjs` (needs internet: `host.sh` with a real quick tunnel, then the gate, invite, Range, throughput and relay through it).
+Tests: `node host_test.mjs` (host.mjs on loopback: the gate with cloudflared-like headers, `/host-info`, single-use invite and room redirect, gzip, Range, the `/pack/` routes, `/ws` rules, relay through the proxy) and `node host_tunnel_test.mjs` (needs internet: `host.sh` with a real quick tunnel, then the gate, invite, Range, throughput and relay through it).
 
 ## Local test
 
@@ -174,6 +192,6 @@ Tests: `node host_test.mjs` (host.mjs on loopback: the gate with cloudflared-lik
 cd server && npm install && node test.mjs        # or CADDY=/path/to/caddy-2.11 node test.mjs, or --no-caddy
 ```
 
-Starts `signal.mjs` on a free loopback port with throwaway secrets (and, when `caddy` is installed, Caddy with this Caddyfile and a temp web root holding a fake build and disc) and checks invites (including `&room=` and `ROOM_URL`), cookies, `/auth`, `/turn`, rooms (create, join, relay, third-peer reject, leave notifications, drop-in, expiry), personal codes (derivation, join by owner and by code, offline, info, replaced, same-page rejoin, owner leaving closes the room, nickname sanitising, probe rate limit), the binary relay (byte-exact, size cap, 20 MiB paced by the rate limit and held by a stalled receiver, lossless and in order), and through Caddy the auth gate on every path, the isolation and cache headers, precompressed wasm and disc Range reads.
+Starts `signal.mjs` on a free loopback port with throwaway secrets (and, when `caddy` is installed, Caddy with this Caddyfile and a temp web root holding a fake build and disc) and checks invites (including `&room=` and `ROOM_URL`), cookies, `/auth`, `/turn`, rooms (create, join, relay, third-peer reject, leave notifications, drop-in, expiry), personal codes (derivation, join by owner and by code, offline, info, replaced, same-page rejoin, owner leaving closes the room, nickname sanitising, probe rate limit), the binary relay (byte-exact, size cap, 20 MiB paced by the rate limit and held by a stalled receiver, lossless and in order), and through Caddy the auth gate on every path, the isolation and cache headers, precompressed wasm, disc Range reads and the texture pack (`no-cache` pointer; immutable raw objects with no `Content-Encoding`, even with a stray `.gz` beside them).
 
 `signal.mjs` alone: `COOKIE_SECRET=… ADMIN_SECRET=… TURN_SECRET=… node signal.mjs` (each ≥ 32 characters; also `HOST`, `PORT` 8787, `DATA_DIR` ./data, `PUBLIC_ORIGIN`, `TURN_HOST`, `TURN_PORT` 3478, `TURN_TTL` 3600, `ROOM_GRACE_MS` 600000, `ROOM_URL` `/play/{room}`, `RELAY_MAX` 262144, `RELAY_RATE` 8000000 bytes/s, `RELAY_BURST` 1048576, `RELAY_BACKLOG` 4194304, `PROBE_BURST` 30, `PROBE_PER_MIN` 20).

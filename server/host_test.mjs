@@ -2,10 +2,11 @@
 // Local test of host.mjs (host-as-server mode), no tunnel: starts host.mjs on a free loopback port with a temp
 // build dir and a small random disc, then checks the localhost bypass and the cookie gate (requests made to look like
 // cloudflared's: loopback peer + Cf-Connecting-Ip / X-Forwarded-For + the tunnel's Host), /host-info, the single-use
-// invite and its room redirect, static files (gzip, Range), /ws access rules and the binary relay through the proxy.
+// invite and its room redirect, static files (gzip, Range), the texture pack routes (--pack, --pack-variants), /ws
+// access rules and the binary relay through the proxy.
 // usage: cd server && npm install && node host_test.mjs
 import assert from 'node:assert/strict';
-import { spawn } from 'node:child_process';
+import { spawn, spawnSync } from 'node:child_process';
 import { randomBytes } from 'node:crypto';
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { request } from 'node:http';
@@ -54,21 +55,37 @@ writeFileSync(join(build, 'ps2web.wasm.gz'), gzipSync(wasm, { level: 9 }));
 writeFileSync(join(build, 'CMakeCache.txt'), 'CMAKE_HOME_DIRECTORY=/home/someone\n'); // must not be served
 writeFileSync(join(build, '.ninja_log'), 'x\n');
 writeFileSync(join(tmp, 'disc.iso'), disc);
+// texture pack: two variants, an object (gzip bytes) with a .gz beside it and a file that is neither index nor object
+const pack = join(tmp, 'pack'), hex = (n) => randomBytes(n).toString('hex');
+const ids = { 2: hex(8), 4: hex(8) }, tex = `${hex(8)}.${hex(6)}.tex`, texBody = gzipSync(randomBytes(50_000));
+const indexes = { 2: Buffer.from(`#mksm-pack 1 gzip-up\n${tex.slice(0, 16)} 64 64 2 16384 ${tex}\n`), 4: Buffer.from('#mksm-pack 1 gzip-up\n') };
+mkdirSync(join(pack, 'obj'), { recursive: true });
+writeFileSync(join(pack, 'current.json'), JSON.stringify(ids) + '\n');
+for (const v of [2, 4]) writeFileSync(join(pack, `${ids[v]}.txt`), indexes[v]);
+writeFileSync(join(pack, 'obj', tex), texBody);
+writeFileSync(join(pack, 'obj', tex + '.gz'), gzipSync(texBody));
+writeFileSync(join(pack, 'notes.txt'), 'x\n');
 
 // ---- start host.mjs ----
-host = spawn(process.execPath, [join(here, 'host.mjs'), '--port', '0', '--build', build, '--disc', join(tmp, 'disc.iso')], { stdio: ['ignore', 'pipe', 'pipe'] });
-host.log = '';
-const port = await new Promise((resolve, reject) => {
-  const timer = setTimeout(() => reject(new Error('host.mjs did not start:\n' + host.log)), 15_000);
-  const onData = (d) => {
-    host.log += d;
-    const m = host.log.match(/host: listening on http:\/\/127\.0\.0\.1:(\d+)[^]*signal\.mjs pid (\d+)/);
-    if (m) { clearTimeout(timer); signalPid = Number(m[2]); resolve(Number(m[1])); }
-  };
-  host.stdout.on('data', onData);
-  host.stderr.on('data', onData);
-  host.on('exit', (code) => reject(new Error(`host.mjs exited with ${code}:\n${host.log}`)));
-});
+function startHost(args) {
+  const h = spawn(process.execPath, [join(here, 'host.mjs'), '--port', '0', '--build', build, '--disc', join(tmp, 'disc.iso'), ...args], { stdio: ['ignore', 'pipe', 'pipe'] });
+  h.log = '';
+  h.started = new Promise((resolve, reject) => { // -> [port, signal.mjs pid]
+    const timer = setTimeout(() => reject(new Error('host.mjs did not start:\n' + h.log)), 15_000);
+    const onData = (d) => {
+      h.log += d;
+      const m = h.log.match(/host: listening on http:\/\/127\.0\.0\.1:(\d+)[^]*signal\.mjs pid (\d+)/);
+      if (m) { clearTimeout(timer); resolve([Number(m[1]), Number(m[2])]); }
+    };
+    h.stdout.on('data', onData);
+    h.stderr.on('data', onData);
+    h.on('exit', (code) => reject(new Error(`host.mjs exited with ${code}:\n${h.log}`)));
+  });
+  return h;
+}
+host = startHost(['--pack', pack, '--pack-variants', '2']); // as mksm/host.sh runs it
+let port;
+[port, signalPid] = await host.started;
 const base = `http://127.0.0.1:${port}`;
 const TUNNEL = 'https://test-host-abc.trycloudflare.com';
 // What cloudflared adds to every request it forwards (it connects from loopback too).
@@ -76,8 +93,8 @@ const REMOTE = { host: new URL(TUNNEL).host, 'cf-connecting-ip': '203.0.113.7', 
 console.log(`testing host.mjs ${base} (signal.mjs pid ${signalPid})`);
 
 // Raw HTTP (fetch can't set Host and would decompress): -> { status, headers, body: Buffer }.
-const http = (path, { method = 'GET', headers = {} } = {}) => new Promise((resolve, reject) => {
-  const req = request(base + path, { method, headers: { host: `127.0.0.1:${port}`, ...headers } }, (res) => {
+const http = (path, { method = 'GET', headers = {}, at = port } = {}) => new Promise((resolve, reject) => {
+  const req = request(`http://127.0.0.1:${at}${path}`, { method, headers: { host: `127.0.0.1:${at}`, ...headers } }, (res) => {
     const chunks = [];
     res.on('data', (c) => chunks.push(c));
     res.on('end', () => resolve({ status: res.statusCode, headers: res.headers, body: Buffer.concat(chunks) }));
@@ -138,7 +155,7 @@ await check('localhost-direct: page, wasm and disc without a cookie, with COOP/C
   for (const h of ['localhost', '[::1]']) assert.equal((await http('/', { headers: { host: `${h}:${port}` } })).status, 200, h);
 });
 await check('remote (cloudflared-like) without a cookie: 401 on /, the page, wasm and disc, GET and HEAD, not cacheable', async () => {
-  for (const path of ['/', '/ps2web.html', '/ps2web.wasm', '/ps2web.js', '/disc.iso', '/turn', '/nope'])
+  for (const path of ['/', '/ps2web.html', '/ps2web.wasm', '/ps2web.js', '/disc.iso', '/turn', '/nope', '/pack/current.json', `/pack/${ids[2]}.txt`, `/pack/obj/${tex}`])
     for (const method of ['GET', 'HEAD']) {
       const res = await remote(path, { range: 'bytes=0-9' }, method);
       assert.equal(res.status, 401, `${method} ${path}`);
@@ -288,6 +305,57 @@ await check('disc: HEAD size, Range reads (206, exact bytes), suffix/open ranges
   const multi = await remote('/disc.iso', { cookie, range: 'bytes=0-1,5-6' });
   assert.equal(multi.status, 200, 'several ranges: whole file');
   assert.equal(multi.body.length, n);
+});
+
+// ---- texture pack ----
+await check('pack: current.json has only --pack-variants and background:false, no-cache', async () => {
+  const res = await remote('/pack/current.json', { cookie });
+  assert.equal(res.status, 200);
+  isolation(res);
+  assert.equal(res.headers['cache-control'], 'no-cache');
+  assert.equal(res.headers['content-type'], 'application/json');
+  assert.deepEqual(JSON.parse(res.body), { 2: ids[2], background: false });
+  assert.equal((await remote('/pack/current.json', { cookie }, 'POST')).status, 405);
+});
+await check('pack: indexes and objects as stored (octet-stream, immutable), never Content-Encoding, even with a .gz beside', async () => {
+  for (const [path, body] of [[`/pack/${ids[2]}.txt`, indexes[2]], [`/pack/${ids[4]}.txt`, indexes[4]], [`/pack/obj/${tex}`, texBody]])
+    for (const method of ['GET', 'HEAD']) {
+      const res = await remote(path, { cookie, 'accept-encoding': 'gzip, deflate, br' }, method);
+      assert.equal(res.status, 200, `${method} ${path}`);
+      isolation(res);
+      assert.equal(res.headers['content-type'], 'application/octet-stream', path);
+      assert.equal(res.headers['cache-control'], 'private, max-age=31536000, immutable', path);
+      assert.equal(res.headers['content-encoding'], undefined, path);
+      assert.equal(Number(res.headers['content-length']), body.length, path);
+      if (method === 'GET') assert.ok(res.body.equals(body), path);
+    }
+  const missing = await http(`/pack/obj/${'0'.repeat(16)}.${'0'.repeat(12)}.tex`);
+  assert.equal(missing.status, 404);
+  assert.equal(missing.headers['cache-control'], 'no-store', 'a 404 must not be cached as immutable');
+});
+await check('pack: only index and object names are served (no other files, sidecars, upper case, traversal)', async () => {
+  for (const path of ['/pack/', '/pack/obj/', '/pack/notes.txt', `/pack/obj/${tex}.gz`, `/pack/${ids[2].toUpperCase()}.txt`, `/pack/${tex}`,
+    `/pack/obj/${ids[2]}.txt`, `/pack/obj/${tex}/`, '/pack/current.json/', '/pack/..%2fdisc.iso', '/pack/obj/..%2f..%2fcurrent.json',
+    '/pack/%2e%2e/%2e%2e/etc/passwd', `/pack/obj/%2e%2e%2f${ids[2]}.txt`, `/pack/${ids[2]}.txt%00`])
+    assert.equal((await http(path)).status, 404, path);
+});
+await check('pack: no --pack is 404; no --pack-variants lists all; a dir without current.json or bad variants stop host.mjs', async () => {
+  const run = (args) => spawnSync(process.execPath, [join(here, 'host.mjs'), '--port', '0', '--build', build, '--disc', join(tmp, 'disc.iso'), ...args], { encoding: 'utf8', timeout: 10_000 });
+  for (const [args, err] of [[['--pack', build], /no current\.json/], [['--pack', pack, '--pack-variants', '2,x'], /--pack-variants/]]) {
+    const r = run(args);
+    assert.equal(r.status, 1, r.stderr);
+    assert.match(r.stderr, err);
+  }
+  const [bare, all] = [startHost([]), startHost(['--pack', pack])];
+  try {
+    const [[barePort], [allPort]] = await Promise.all([bare.started, all.started]);
+    for (const path of ['/pack/current.json', `/pack/${ids[2]}.txt`, `/pack/obj/${tex}`])
+      assert.equal((await http(path, { at: barePort })).status, 404, path);
+    assert.deepEqual(JSON.parse((await http('/pack/current.json', { at: allPort })).body), { ...ids, background: false });
+  } finally {
+    for (const h of [bare, all]) h.kill('SIGTERM');
+    await Promise.all([bare, all].map((h) => h.exitCode !== null || new Promise((r) => h.once('exit', r))));
+  }
 });
 
 // ---- /ws and the binary relay through the proxy ----

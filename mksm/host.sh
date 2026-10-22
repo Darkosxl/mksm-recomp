@@ -1,12 +1,16 @@
 #!/usr/bin/env bash
 # Host MK:SM from this PC for the browser build: server/host.mjs serves the game + your disc on 127.0.0.1 only, and a
 # free Cloudflare quick tunnel (cloudflared, no account) gives friends an https://*.trycloudflare.com address for it.
-# usage: mksm/host.sh [--port N] [--no-tunnel] [--open] [--build DIR] [--disc ISO]
+# usage: mksm/host.sh [--port N] [--no-tunnel] [--open] [--build DIR] [--disc ISO] [--pack DIR | --no-pack]
 #   --port N      local port for host.mjs (default 8620)
 #   --no-tunnel   don't download or start cloudflared: only this PC can reach the game
 #   --open        open your own game page in the default browser (xdg-open)
 #   --build DIR   browser build to serve (default build/web-mksm, made by  mksm/build.sh <your.iso> --web)
 #   --disc ISO    disc image to stream (default games/mksm/disc.iso, linked by mksm/build.sh)
+#   --pack DIR    HD texture pack (default <checkout>/../../remaster-data/textures/web, made by remaster/webpack.py;
+#                 skipped with a note when it is missing). Friends get the 2x variant, each texture only when the game
+#                 asks for it (no background download over a home uplink)
+#   --no-pack     original textures only
 # Ctrl-C stops the tunnel and the server. Environment: HOST_MJS replaces server/host.mjs (tests).
 set -euo pipefail
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
@@ -18,6 +22,7 @@ CF="$ROOT/tools/cloudflared"
 HOST_MJS=${HOST_MJS:-$ROOT/server/host.mjs}
 
 port=8620; tunnel=1; open=0; build="$ROOT/build/web-mksm"; disc="$ROOT/games/mksm/disc.iso"
+pack="$(cd "$ROOT/../.." && pwd)/remaster-data/textures/web"; pack_given=0
 while [ $# -gt 0 ]; do
   case "$1" in
     --port) port=${2:?--port needs a number}; shift ;;
@@ -25,7 +30,9 @@ while [ $# -gt 0 ]; do
     --open) open=1 ;;
     --build) build=${2:?--build needs a directory}; shift ;;
     --disc) disc=${2:?--disc needs a disc image}; shift ;;
-    -h|--help) sed -n '2,10s/^# \{0,1\}//p' "$0"; exit 0 ;;
+    --pack) pack=${2:?--pack needs a directory}; pack_given=1; shift ;;
+    --no-pack) pack= ;;
+    -h|--help) sed -n '2,14s/^# \{0,1\}//p' "$0"; exit 0 ;;
     *) echo "unknown option $1 (see mksm/host.sh --help)" >&2; exit 2 ;;
   esac
   shift
@@ -95,6 +102,14 @@ if (exec 3<> "/dev/tcp/127.0.0.1/$port") 2> /dev/null; then
   die "something is already listening on 127.0.0.1:$port (another mksm/host.sh?): stop it or pick another --port"
 fi
 build=$(realpath "$build"); disc=$(realpath "$disc")
+pack_args=()
+if [ -n "$pack" ] && [ -f "$pack/current.json" ]; then
+  pack_args=(--pack "$(realpath "$pack")" --pack-variants 2)
+  echo "== HD texture pack $pack (2x variant, each texture sent when a game asks for it)"
+elif [ -n "$pack" ]; then
+  [ "$pack_given" = 0 ] || die "no texture pack at $pack (current.json is missing): make it with remaster/webpack.py, or leave out --pack"
+  echo "== no HD texture pack at $pack: original textures only (make it with remaster/webpack.py)"
+fi
 
 if [ ! -d "$ROOT/server/node_modules/ws" ]; then
   echo "== installing the server's dependencies (npm ci in server/)"
@@ -125,7 +140,7 @@ fields() {
   node -e 'const j = JSON.parse(require("fs").readFileSync(0, "utf8"));
     console.log([j.inviteUrl, j.room, j.inviteUsed, j.tunnelUrl].map(v => v == null ? "" : String(v)).join("|"))'
 }
-node "$HOST_MJS" --port "$port" --build "$build" --disc "$disc" > "$logdir/host.log" 2>&1 &
+node "$HOST_MJS" --port "$port" --build "$build" --disc "$disc" "${pack_args[@]}" > "$logdir/host.log" 2>&1 &
 host_pid=$!
 for i in $(seq 150); do # ~15 s
   kill -0 "$host_pid" 2> /dev/null || died host host.mjs "$host_pid"
