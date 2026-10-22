@@ -171,7 +171,9 @@ struct PipeFrames {
 } g_pipe_frames;
 
 void write_frames() {
+#ifdef __linux__
     pthread_setname_np(pthread_self(), "frames");
+#endif
     PipeFrames &q = g_pipe_frames;
     PipeFrames::Frame last;
     std::unique_lock lock(q.m);
