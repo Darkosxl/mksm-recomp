@@ -1,6 +1,6 @@
 // Drives the ps2web build in Chromium over CDP for tests (mksm/notes/web-build.md). Never touches the user's desktop:
 // Chromium runs headless or headful inside a private Xvfb, with a temporary profile (or --profile), muted, and the
-// user's chromium-flags.conf kept out. Every launch takes logs/heavy.lock and an 8 GB memory cap.
+// user's chromium-flags.conf kept out. Every launch takes logs/heavy.lock and a 3 GB memory cap.
 // usage: node drive.mjs --url URL --out DIR [options]
 //   --seconds N --until-frame F        stop conditions (wall clock / emulated frame)
 //   --shots f1,f2 --shot-every-frames K   screenshots (CDP) at emulated frames
@@ -15,6 +15,10 @@
 //   --cpu-profile FRAME:SECONDS        CPU profiles from FRAME for SECONDS: main thread -> OUT/main.cpuprofile, each
 //                                      worker (pthread) -> OUT/worker-N.cpuprofile
 //   --cpu-throttle N                   slow the page's main thread N times (CDP Emulation.setCPUThrottlingRate)
+//   --frame-times                      ms between presented frames from the first one -> OUT/frame-ms.txt (p50/p95)
+//   --trace FRAME:SECONDS              Chrome trace with the GPU process's native slices -> OUT/trace.json
+//   --gpu-calls [+]FRAME:SECONDS       count WebGPU calls per frame (+FRAME: after the first frame) -> OUT/gpu-calls.txt
+//   With --nvidia a run that got no WebGPU adapter (the software renderer) fails, so the caller can retry it.
 //   buttons: cross circle square triangle l1 r1 l2 r2 select start l3 r3 up down left right
 import { spawn, execFileSync } from 'node:child_process';
 import fs from 'node:fs';
@@ -38,6 +42,9 @@ for (let i = 0; i < argv.length; ++i) {
   else if (a === '--eval-at') { const s = next(); const c = s.indexOf(':'); opt.evalAt.push({ frame: Number(s.slice(0, c)), js: s.slice(c + 1), done: false }); }
   else if (a === '--reload-at') opt.reloadAt = Number(next());
   else if (a === '--cpu-throttle') opt.cpuThrottle = Number(next());
+  else if (a === '--frame-times') opt.frameTimes = true;
+  else if (a === '--trace') { const [f, secs] = next().split(':').map(Number); opt.trace = { frame: f, ms: secs * 1000 }; }
+  else if (a === '--gpu-calls') { const [f, secs] = next().split(':'); opt.gpuCalls = { frame: Number(f), rel: f[0] === '+', ms: secs * 1000 }; }  // +F: F frames after the first
   else if (a === '--cpu-profile') { const [f, secs] = next().split(':').map(Number); opt.cpuProfile = { frame: f, ms: secs * 1000 }; }
   else if (a === '--no-start') opt.noStart = true;
   else if (a === '--flags') opt.flags = next().split(' ').filter(Boolean);
@@ -81,19 +88,27 @@ delete env.WAYLAND_DISPLAY;
 let xvfb = null;
 {
   // a private X server for both modes (the NVIDIA PRIME Vulkan driver hides the dGPU without a DISPLAY)
-  // a private X server: the window never reaches the user's Wayland desktop
-  const display = ':' + (90 + Math.floor(Math.random() * 9));
-  xvfb = spawn('Xvfb', [display, '-screen', '0', '1280x1024x24', '-nolisten', 'tcp'], { stdio: 'ignore', detached: true });
+  // a private X server: the window never reaches the user's Wayland desktop. A random display from :90, and Xvfb says
+  // when it is up on it (-displayfd) or exits when it is taken: before, a taken one went unnoticed (other drives start
+  // theirs while waiting for heavy.lock) and Chrome got the other run's display, gone once that run ended: no adapter
+  let display = null;
+  for (let n = 90 + Math.floor(Math.random() * 100); !display; n = 90 + (n - 89) % 100) {
+    xvfb = spawn('Xvfb', [`:${n}`, '-displayfd', '1', '-screen', '0', '1280x1024x24', '-nolisten', 'tcp'], { stdio: ['ignore', 'pipe', 'ignore'], detached: true });
+    display = await new Promise((resolve) => {
+      let out = '';
+      xvfb.stdout.on('data', (d) => (out += d).includes('\n') && resolve(':' + out.trim()));
+      xvfb.on('exit', () => resolve(null));
+    });
+  }
   env.DISPLAY = display;
   delete env.WAYLAND_DISPLAY;
   env.XDG_SESSION_TYPE = 'x11';
   if (opt.xvfb) flags.unshift('--ozone-platform=x11', '--window-position=0,0', '--force-device-scale-factor=1');
-  execFileSync('sleep', ['1']);
 }
 if (opt.nvidia) Object.assign(env, { __NV_PRIME_RENDER_OFFLOAD: '1', __VK_LAYER_NV_optimus: 'NVIDIA_only' });
 // one heavy job at a time machine-wide, capped at 8 GB, no swap
 const P = '/home/darkwarro/Documents/Twitter/PS2_REA';
-const chrome = spawn('flock', [`${P}/logs/heavy.lock`, 'systemd-run', '--user', '--scope', '-q', '-p', 'MemoryMax=8G', '-p', 'MemorySwapMax=0', '--',
+const chrome = spawn('flock', [`${P}/logs/heavy.lock`, 'systemd-run', '--user', '--scope', '-q', '-p', 'MemoryMax=3G', '-p', 'MemorySwapMax=0', '--',
   '/home/darkwarro/.local/bin/chromium', ...flags], { env, detached: true, stdio: ['ignore', 'ignore', fs.openSync(path.join(opt.out, 'chrome-stderr.log'), 'w')] });
 let chromeExit = null;
 chrome.on('exit', (code, signal) => { chromeExit = { code, signal }; say(`[driver] chromium exited code=${code} signal=${signal}`); });
@@ -113,7 +128,7 @@ process.on('SIGTERM', () => { cleanup(); process.exit(143); });
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 async function devtoolsPort() {
-  for (let i = 0; i < 600; ++i) {  // the flock may wait for another heavy job
+  for (let i = 0; i < 3600; ++i) {  // the flock may wait for another heavy job (up to an hour)
     if (chromeExit) throw new Error('chromium exited before devtools came up');
     try { return Number(fs.readFileSync(path.join(profile, 'DevToolsActivePort'), 'utf8').split('\n')[0]); } catch {}
     await sleep(1000);
@@ -218,6 +233,32 @@ async function main() {
   await call('Inspector.enable').catch(() => {});
   if (opt.cpuThrottle) await call('Emulation.setCPUThrottlingRate', { rate: opt.cpuThrottle });
   if (opt.fakePads) await call('Page.addScriptToEvaluateOnNewDocument', { source: fakePadSource(opt.fakePads) });
+  // --gpu-calls: count every WebGPU method call (window.__gpuCalls, on while it is an object)
+  if (opt.gpuCalls) await call('Page.addScriptToEvaluateOnNewDocument', { source: `(() => {
+    for (const k of ['GPUQueue', 'GPUDevice', 'GPUCommandEncoder', 'GPURenderPassEncoder', 'GPUComputePassEncoder', 'GPUBuffer', 'GPUTexture', 'GPUCanvasContext']) {
+      const p = self[k] && self[k].prototype;
+      if (!p) continue;
+      for (const m of Object.getOwnPropertyNames(p)) {
+        const d = Object.getOwnPropertyDescriptor(p, m);
+        if (typeof d.value !== 'function' || m === 'constructor') continue;
+        const f = d.value, name = k.slice(3) + '.' + m;
+        let prev1 = null, prev2 = null;
+        const seen = new Set();
+        p[m] = function (...a) {
+          const c = self.__gpuCalls;
+          if (c) {
+            c[name] = (c[name] || 0) + 1;
+            if (name === 'RenderPassEncoder.setPipeline') {  // A B A: ping-pong between two pipelines
+              if (a[0] === prev2) c['  ..back to the one before'] = (c['  ..back to the one before'] || 0) + 1;
+              if (!seen.has(a[0])) { seen.add(a[0]); c['  ..distinct pipelines (total)'] = seen.size; }
+              prev2 = prev1, prev1 = a[0];
+            } else if (name === 'RenderPassEncoder.draw' && a[0] <= 6) c['  ..draws of <= 6 vertices'] = (c['  ..draws of <= 6 vertices'] || 0) + 1;
+          }
+          return f.apply(this, a);
+        };
+      }
+    }
+  })()` });
   const evaluate = async (expression, userGesture = false) => {
     const r = await call('Runtime.evaluate', { expression, returnByValue: true, userGesture, awaitPromise: true });
     if (r.exceptionDetails) throw new Error('eval failed: ' + (r.exceptionDetails.exception && r.exceptionDetails.exception.description || r.exceptionDetails.text));
@@ -267,7 +308,12 @@ async function main() {
     if (reload) await call('Page.reload', { ignoreCache: false }); else await call('Page.navigate', { url: opt.url });
     for (let i = 0; ; ++i) {
       const state = await evaluate(`(() => { const b = document.getElementById('start'); return { ready: !!(b && !b.disabled), text: b ? b.textContent : '', status: document.getElementById('status').textContent, help: document.getElementById('help') && document.getElementById('help').textContent } })()`).catch(() => null);
-      if (state && state.ready) { say(`[driver] start button ready after ${((Date.now() - navStart) / 1000).toFixed(2)} s; status: ${state.status}; help: ${state.help || ''}`); break; }
+      if (state && state.ready) {
+        say(`[driver] start button ready after ${((Date.now() - navStart) / 1000).toFixed(2)} s; status: ${state.status}; help: ${state.help || ''}`);
+        // a benchmark on the software renderer measures the wrong thing: fail so the caller can retry
+        if (opt.nvidia && /no adapter|software renderer/.test(state.status)) { say('[driver] FAIL: no WebGPU adapter with --nvidia'); return false; }
+        break;
+      }
       if (state && /Unsupported/.test(state.text)) { say('[driver] unsupported browser: ' + state.help); await shot('unsupported'); return false; }
       if (i % 20 === 0) say('[driver] waiting for start: ' + JSON.stringify(state));
       if (i > 1200) { say('[driver] start never became ready'); await shot('nostart'); return false; }
@@ -289,9 +335,29 @@ async function main() {
   const shotLabels = new Map();
   while (Date.now() < deadline && !chromeExit) {
     const s = await evaluate(`({ frame: typeof Module !== 'undefined' && Module._ps2web_frames ? Module._ps2web_frames() : -1, stats: document.getElementById('stats').textContent, status: document.getElementById('status').textContent })`).catch((e) => ({ frame: -2, stats: String(e.message), status: '' }));
-    if (s.frame > 0 && firstFrameAt === null) { firstFrameAt = Date.now(); say('[driver] first emulated frame'); }
+    if (s.frame > 0 && firstFrameAt === null) {
+      firstFrameAt = Date.now();
+      say('[driver] first emulated frame');
+      // ms between presented frames, one per line in frame-ms.txt at the end
+      if (opt.frameTimes) await evaluate('Module.frameMs = []');
+      if (opt.gpuCalls && opt.gpuCalls.rel) opt.gpuCalls.frame += s.frame;
+    }
     if (s.stats !== lastStats) { say(`frame=${s.frame} ${s.stats} | ${s.status}`); lastStats = s.stats; }
     lastFrame = s.frame;
+    if (opt.gpuCalls && !opt.gpuCalls.at && s.frame >= opt.gpuCalls.frame) {
+      opt.gpuCalls.at = Date.now();
+      opt.gpuCalls.from = s.frame;
+      await evaluate('self.__gpuCalls = {}');
+    } else if (opt.gpuCalls && opt.gpuCalls.at && !opt.gpuCalls.done && Date.now() - opt.gpuCalls.at >= opt.gpuCalls.ms) {
+      opt.gpuCalls.done = true;
+      const c = await evaluate('(() => { const c = self.__gpuCalls; self.__gpuCalls = null; return c; })()');
+      const frames = Math.max(1, s.frame - opt.gpuCalls.from);
+      const rows = Object.entries(c || {}).sort((a, b) => b[1] - a[1]);
+      const total = rows.reduce((n, r) => n + (r[0].startsWith(' ') ? 0 : r[1]), 0);
+      const text = `WebGPU calls over ${frames} emulated frames: ${(total / frames).toFixed(1)} a frame\n` + rows.map(([k, n]) => `${(k.includes('(total)') ? n : n / frames).toFixed(2).padStart(10)}  ${k}`).join('\n');
+      fs.writeFileSync(path.join(opt.out, 'gpu-calls.txt'), text + '\n');
+      say('[driver] ' + text.split('\n')[0]);
+    }
     for (const e of opt.evalAt) if (!e.done && s.frame >= e.frame) {
       e.done = true;
       const v = await evaluate(e.js).catch((err) => 'ERR ' + err.message);
@@ -318,6 +384,27 @@ async function main() {
         fs.writeFileSync(path.join(opt.out, k ? `worker-${k}.cpuprofile` : 'main.cpuprofile'), JSON.stringify(prof));
       }
       say('[driver] cpu profile written at frame ' + s.frame);
+    }
+    // --trace FRAME:SECONDS: a Chrome trace (renderer + GPU process native slices, which CPU profiles show as "(program)")
+    if (opt.trace && !opt.trace.at && s.frame >= opt.trace.frame) {
+      opt.trace.at = Date.now();
+      await send('Tracing.start', { transferMode: 'ReturnAsStream', traceConfig: { recordMode: 'recordContinuously', includedCategories: ['toplevel', 'gpu', 'gpu.dawn', 'gpu.service', 'webgpu', 'blink', 'v8', 'cc', 'viz', 'ipc', 'mojom', 'disabled-by-default-devtools.timeline', 'disabled-by-default-gpu.dawn', 'disabled-by-default-gpu.service'] } });
+      say(`[driver] trace started at frame ${s.frame}`);
+    }
+    if (opt.trace && opt.trace.at && !opt.trace.done && Date.now() - opt.trace.at >= opt.trace.ms) {
+      opt.trace.done = true;
+      const complete = new Promise((resolve) => listeners.push((msg) => { if (msg.method === 'Tracing.tracingComplete') resolve(msg.params.stream); }));
+      await send('Tracing.end');
+      const stream = await complete;
+      const out = fs.createWriteStream(path.join(opt.out, 'trace.json'));
+      for (;;) {
+        const r = await send('IO.read', { handle: stream, size: 1 << 20 });
+        out.write(r.base64Encoded ? Buffer.from(r.data, 'base64') : r.data);
+        if (r.eof) break;
+      }
+      out.end();
+      await send('IO.close', { handle: stream });
+      say('[driver] trace written at frame ' + s.frame);
     }
     while (pendingShots.length && s.frame >= pendingShots[0]) { const at = pendingShots.shift(); await shot((shotLabels.get(at) || 'f') + '-f' + s.frame); }
     if (s.frame >= nextShotFrame) { await shot('f' + s.frame); while (nextShotFrame <= s.frame) nextShotFrame += opt.shotEvery; }
@@ -359,6 +446,7 @@ async function main() {
     }
     await sleep(opt.control ? 150 : 500);
   }
+  if (opt.frameTimes) fs.writeFileSync(path.join(opt.out, 'frame-ms.txt'), await evaluate(`(Module.frameMs || []).map((x) => x.toFixed(2)).join('\\n')`).catch(() => ''));
   await shot('final-f' + lastFrame);
   return finish(0);
 }
