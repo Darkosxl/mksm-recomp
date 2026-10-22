@@ -451,7 +451,8 @@ bool cache_insert(std::uint64_t key, const std::uint8_t *bytes, std::size_t n, s
             if (!evict_front()) return false;
         g_cache_head = 0;
     }
-    while (!g_cache_ring.empty() && g_cache_ring.front().offset < g_cache_head + words)
+    // only the previous lap's entries the new one overlaps (this lap's sit below the head)
+    while (!g_cache_ring.empty() && g_cache_ring.front().offset >= g_cache_head && g_cache_ring.front().offset < g_cache_head + words)
         if (!evict_front()) return false;
     offset = g_cache_head;
     std::uint32_t *to = g_cache_copy.data() + offset;
