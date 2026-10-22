@@ -66,7 +66,7 @@
     <details>
       <summary>Controls</summary>
       <p>Gamepad: plug it in and press any button on it. Standard layout: A/✕, B/○, X/□, Y/△, bumpers L1/R1, triggers L2/R2, sticks, Start, Select/Back.</p>
-      <p>Keyboard: <kbd>←↑→↓</kbd> d-pad and left stick, <kbd>Z</kbd> ✕, <kbd>X</kbd> ○, <kbd>A</kbd> □, <kbd>S</kbd> △, <kbd>Q</kbd> L1, <kbd>W</kbd> R1, <kbd>1</kbd> L2, <kbd>2</kbd> R2, <kbd>Enter</kbd> Start, <kbd>Backspace</kbd> Select. Double-click the picture for fullscreen.</p>
+      <p>Keyboard: <kbd>W</kbd><kbd>A</kbd><kbd>S</kbd><kbd>D</kbd> left stick, <kbd>←↑→↓</kbd> d-pad, <kbd>Space</kbd> ✕, <kbd>Esc</kbd> ○, <kbd>J</kbd> □, <kbd>K</kbd> △, <kbd>Q</kbd> L1, <kbd>C</kbd> R1, <kbd>Shift</kbd> L2, <kbd>E</kbd> R2, <kbd>Enter</kbd> Start, <kbd>Backspace</kbd> Select. Double-click the picture for fullscreen.</p>
     </details>
   </form>
 </div>
@@ -77,8 +77,11 @@ const B = { SELECT: 1, L3: 2, R3: 4, START: 8, UP: 16, RIGHT: 32, DOWN: 64, LEFT
             TRIANGLE: 4096, CIRCLE: 8192, CROSS: 16384, SQUARE: 32768 };
 // W3C "standard" gamepad button order
 const PAD = [B.CROSS, B.CIRCLE, B.SQUARE, B.TRIANGLE, B.L1, B.R1, B.L2, B.R2, B.SELECT, B.START, B.L3, B.R3, B.UP, B.DOWN, B.LEFT, B.RIGHT];
-const KEYS = { ArrowUp: B.UP, ArrowDown: B.DOWN, ArrowLeft: B.LEFT, ArrowRight: B.RIGHT, KeyZ: B.CROSS, KeyX: B.CIRCLE, KeyA: B.SQUARE,
-               KeyS: B.TRIANGLE, KeyQ: B.L1, KeyW: B.R1, Digit1: B.L2, Digit2: B.R2, Enter: B.START, Backspace: B.SELECT };
+// the keyboard layout of web/input.js and host/window.cpp; W A S D (0 here) are the left stick
+const KEYS = { ArrowUp: B.UP, ArrowDown: B.DOWN, ArrowLeft: B.LEFT, ArrowRight: B.RIGHT, Space: B.CROSS, Escape: B.CIRCLE,
+               KeyJ: B.SQUARE, KeyK: B.TRIANGLE, KeyQ: B.L1, KeyC: B.R1,
+               ShiftLeft: B.L2, ShiftRight: B.L2, KeyE: B.R2, Enter: B.START, NumpadEnter: B.START, Backspace: B.SELECT,
+               KeyW: 0, KeyA: 0, KeyS: 0, KeyD: 0 };
 const MSG_INPUT = 1, MSG_PING = 2, MSG_PONG = 3;
 
 const $ = (id) => document.getElementById(id);
@@ -208,10 +211,8 @@ let scripted = null;
 function readInput() {
   const s = { buttons: 0, lx: 128, ly: 128, rx: 128, ry: 128, l2: 255, r2: 255 };
   for (const k of keys) s.buttons |= KEYS[k] || 0;
-  if (keys.has('ArrowLeft')) s.lx = 0;
-  if (keys.has('ArrowRight')) s.lx = 255;
-  if (keys.has('ArrowUp')) s.ly = 0;
-  if (keys.has('ArrowDown')) s.ly = 255;
+  if (keys.has('KeyA') !== keys.has('KeyD')) s.lx = keys.has('KeyA') ? 0 : 255;
+  if (keys.has('KeyW') !== keys.has('KeyS')) s.ly = keys.has('KeyW') ? 0 : 255;
   const gp = firstPad();
   if (gp) {
     gp.buttons.forEach((b, i) => { if (i < PAD.length && b.pressed) s.buttons |= PAD[i]; });

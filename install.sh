@@ -73,7 +73,7 @@ cat << 'EOF'
 == done. To play:
    remaster/play.sh               the remaster (3x6, widescreen, HD textures if you have a pack)
    remaster/play.sh --original    the original look
-   remaster/play.sh --pad2        the same, with the keyboard as player 2 (local co-op)
+   remaster/play.sh --coop        local co-op: the keyboard is player 1, a controller player 2
 Saves go to games/mksm/card.ps2. Controls: see README.md.
 EOF
 if [ "$play" = 1 ]; then

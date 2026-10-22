@@ -70,7 +70,7 @@ int usage() {
                  "              [--disc image.iso] [--memcard card.ps2] [--pal | --ntsc] [--trace-syscalls] [--trace-io] [--trace-threads]\n"
                  "              [--trace-iop] [--trace-iop-hle] [--frames-dir dir] [--frames-pipe path] [--frame-every n]\n"
                  "              [--press frame:[p2:]button[+button][:frames]]... [--press2 frame:button[+button][:frames]]...\n"
-                 "              [--stick frame:[p2:]lx,ly[:frames]]... [--stick2 frame:lx,ly[:frames]]... [--pad2]\n"
+                 "              [--stick frame:[p2:]lx,ly[:frames]]... [--stick2 frame:lx,ly[:frames]]... [--coop | --pad2]\n"
                  "              [--window] [--fullscreen]\n"
                  "              [--host [port]] [--stun stun:host:port] [--bitrate kbit/s] [--encoder h264_nvenc|libx264]\n"
                  "              [--save-state frame:file] [--load-state file]\n"
@@ -87,6 +87,8 @@ int main(int argc, char **argv) {
     std::string load_path;
     // a second controller is plugged into port 2 when asked for, or when the input script drives it
     bool pad2 = false;
+    // local co-op (--coop, or its old name --pad2): the keyboard is player 1 and the first controller player 2
+    [[maybe_unused]] bool coop = false;
     [[maybe_unused]] bool host = false;
     [[maybe_unused]] bool lockstep = false;
 #ifdef PS2_LOCKSTEP
@@ -121,7 +123,7 @@ int main(int argc, char **argv) {
             if (press.pad == 1) pad2 = true;
             ps2::g_options.presses.push_back(press);
         }
-        else if (a == "--pad2") pad2 = true;
+        else if (a == "--coop" || a == "--pad2") pad2 = coop = true;
 #ifdef PS2_LOCKSTEP
         else if (a == "--lockstep" && i + 1 < argc) {
             lockstep = true;
@@ -177,7 +179,7 @@ int main(int argc, char **argv) {
     // a network player owns controller 2, which stays plugged in from boot so the game always sees it
     if (pad2 || host || lockstep) ps2::set_pad_connected(1, true);
 #ifdef PS2_WINDOW
-    if (window && !open_window(fullscreen, pad2 && !host && !lockstep, host || lockstep)) return 1;
+    if (window && !open_window(fullscreen, coop && !host && !lockstep, host || lockstep)) return 1;
 #ifdef PS2_LOCKSTEP
     if (window && lockstep) {
         ls.audio_queued_ms = window_audio_queued_ms;

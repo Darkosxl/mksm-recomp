@@ -114,7 +114,9 @@
     <option value="1x">Remaster 1x</option>
     <option value="original">Original</option>
   </select>
+  <button id="quality-reload" type="button" hidden title="Auto quality picked a lower setting for this computer; it applies when the game starts again">Reload</button>
   <button id="controls-toggle" type="button" hidden>Hide controls</button>
+  <button id="coop" type="button" hidden aria-pressed="false" title="Local co-op: the keyboard is player 1 and the first controller player 2 (a second controller joins the keyboard as player 1)">Co-op off</button>
   <button id="kick" type="button" hidden title="Send the other player back to the menu">Kick</button>
   <button id="export-card" type="button" title="Download the memory card in slot 1 as a .ps2 file">Export card</button>
   <button id="import-card" type="button" title="Put a .ps2 memory card file in slot 1">Import card</button>
@@ -353,6 +355,26 @@ qualitySelect.addEventListener('change', () => {
   location.href = url.href;
 });
 
+// Auto: 5 one-second windows in a row under 57 fps while the EE and VU1 have time to spare (so the renderer or the GPU
+// is the limit) step one rung down for the next start: scale and pack are fixed at start, and it never reloads by itself
+const qualityReload = document.getElementById('quality-reload');
+let slowWindows = 0, autoFrom = 0;
+function autoQuality(fps, emuIdle, vuIdle) {
+  if (quality !== 'auto' || slowWindows < 0) return;
+  autoFrom ||= performance.now() + 10000;  // not while it settles after the start
+  if (performance.now() < autoFrom) return;
+  slowWindows = fps < 57 && emuIdle > 10 && vuIdle > 10 ? slowWindows + 1 : 0;
+  const order = Object.keys(RUNGS), next = order[order.indexOf(rung) + 1];
+  if (slowWindows < 5 || !next) return;
+  slowWindows = -1;
+  try { localStorage.setItem('ps2web-auto-rung', next); } catch (e) { return; }
+  console.log('[quality] auto: ' + rung + ' -> ' + next + ' from the next start');
+  qualityReload.textContent = 'Quality ' + qualitySelect.querySelector('option[value="' + next + '"]').textContent + (session ? ' next start' : ' (reload)');
+  qualityReload.disabled = !!session;  // never mid co-op
+  qualityReload.hidden = false;
+}
+qualityReload.addEventListener('click', () => location.reload());
+
 const controlsButton = document.getElementById('controls-toggle');
 let hideControls = false;
 try { hideControls = localStorage.getItem('ps2web-hide-controls') === '1'; } catch (e) {}
@@ -404,6 +426,9 @@ function toggleFullscreen() {
   const result = requestFullscreen.call(root, { navigationUI: 'hide' });
   if (result && result.then) {
     result.then(() => {
+      // Esc is Circle: in fullscreen the pad keys come to the page
+      // (Chrome and Edge; holding Esc still leaves fullscreen, as do F and the Exit fullscreen button)
+      if (navigator.keyboard && navigator.keyboard.lock) navigator.keyboard.lock([...Object.keys(PS2Input.keyMap), ...PS2Input.stickKeys]).catch(() => {});
       if (document.body.classList.contains('touch') && screen.orientation && screen.orientation.lock) screen.orientation.lock('landscape').catch(() => {});
     }).catch(() => {});
   }
@@ -471,8 +496,42 @@ async function startAudio() {
 
 // key map, gamepad buttons and axes: input.js (shared with the landing page's controller check)
 PS2Input.listen();
-// the keyboard and touch controls are player 1 along with the first gamepad, a second gamepad is player 2
+// The keyboard and touch controls are player 1. A gamepad takes the first free player when it appears: player 1 then
+// player 2, or with Co-op on player 2 then player 1 (so one gamepad plays against the keyboard, and a second joins the
+// keyboard as player 1). It keeps that player while connected, so plugging in or losing another never moves it. Co-op
+// is local only (offline games); with a code each browser has one player, the keyboard and its first gamepad.
 const players = [0, 1].map(() => ({ plugged: false, pad: -1, pressure: '', strong: 0, weak: 0, rumbleAt: 0 }));
+const padPorts = new Map();  // gamepad index -> port
+const coopButton = document.getElementById('coop');
+let coop = false;
+if (!lockstepMode) try { coop = localStorage.getItem('ps2web-coop') === '1'; } catch (e) {}
+function showCoop() {
+  coopButton.textContent = coop ? 'Co-op on' : 'Co-op off';
+  coopButton.setAttribute('aria-pressed', String(coop));
+}
+coopButton.hidden = lockstepMode;
+showCoop();
+coopButton.addEventListener('click', () => {
+  coop = !coop;
+  padPorts.clear();  // every gamepad takes a player again by the new order
+  try { localStorage.setItem('ps2web-coop', coop ? '1' : '0'); } catch (e) {}
+  showCoop();
+  coopButton.blur();  // Space and Enter are pad keys
+});
+function portPads(pads) {
+  for (const index of [...padPorts.keys()]) if (!pads.some((pad) => pad.index === index)) padPorts.delete(index);
+  const out = [null, null];
+  for (const pad of pads) {
+    if (!padPorts.has(pad.index)) {
+      const taken = new Set(padPorts.values());
+      const port = (coop ? [1, 0] : [0, 1]).find((p) => !taken.has(p));
+      if (port === undefined) continue;
+      padPorts.set(pad.index, port);
+    }
+    out[padPorts.get(pad.index)] = pad;
+  }
+  return out;
+}
 const motorStrength = (v) => v < 16 ? 0 : Math.sqrt(v / 255);
 const readLocal = (gamepad, own) => PS2Input.readLocal(gamepad, own, touchPad);
 const NEUTRAL_PAD = { buttons: 0, lx: 128, ly: 128, rx: 128, ry: 128, l2: 0, r2: 0, pressure: new Array(16).fill(255) };
@@ -492,7 +551,7 @@ function sendPad(port, pad) {
 }
 function pollPlayer(port, gamepad, own) {
   const player = players[port];
-  const plugged = port === 0 || !!gamepad;
+  const plugged = port === 0 || coop || !!gamepad;
   if (plugged !== player.plugged) {
     player.plugged = plugged;
     Module._ps2web_pad_connected(port, plugged ? 1 : 0);
@@ -555,8 +614,9 @@ function pollInput() {
     sendPad(1 - slot, NEUTRAL_PAD);
     return;
   }
-  pollPlayer(0, pads[0] || null, true);
-  pollPlayer(1, pads[1] || null, false);
+  const [pad1, pad2] = portPads(pads);
+  pollPlayer(0, pad1, true);
+  pollPlayer(1, pad2, false);
 }
 
 // some browsers cannot show a canvas drawn by another GPU (hybrid laptops on Linux), so each adapter draws a few test frames first
@@ -730,7 +790,7 @@ var Module = {
     // (host/lockstep_id.cpp), so both peers must pass the same ones; render and logging settings are each peer's own
     // the remaster look (remaster/play.sh) on every rung: the widescreen patch changes what the game computes, so co-op
     // peers at different quality still match
-    Object.assign(Module.ENV, { PS2_GS_HW: '1', PS2_PNACH: '/game/widescreen.pnach', PS2_ASPECT: '16:9', PS2_FIELD_FLAG: '4F4D68,66189C,67B758' });
+    Object.assign(Module.ENV, { PS2_GS_HW: '1', PS2_PNACH: '/game/widescreen.pnach', PS2_ASPECT: '16:9', PS2_FIELD_FLAG: '4F4D68,66189C,67B758', PS2_PIPELINES: '/game/pipelines-hw.txt' });
     for (const [key, value] of params) if (key.startsWith('PS2_')) Module.ENV[key] = value;
     if (lockstepMode) {
       if (params.get('lsvu') === '0') Module.ENV.PS2_NO_VU_THREAD = '1';
@@ -773,6 +833,7 @@ var Module = {
                             (interpreted > lastInterpreted ? '   vu1 interpreted ' + Math.round((interpreted - lastInterpreted) * 1000 / span) + '/s' : '') +
                             (session ? '   ' + lockstepStats() : '') + (Module.prefetchText ? '   ' + Module.prefetchText : '') + (Module.packText ? '   ' + Module.packText : '');
       showLobby();
+      autoQuality(frames * 1000 / span, (emuIdle - lastEmuIdle) / span * 100, (vuIdle - lastVuIdle) / span * 100);
       lastInterpreted = interpreted;
       lastEmuIdle = emuIdle;
       lastRenderIdle = renderIdle;

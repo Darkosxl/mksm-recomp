@@ -5,9 +5,10 @@
 #include <functional>
 #include <string>
 
-// keyboard_pad2 plugs controller 2 into the second port and drives it from the keyboard (IJKL + numpad);
-// remote_pad2 leaves the second port alone because a network player drives it
-bool open_window(bool fullscreen, bool keyboard_pad2 = false, bool remote_pad2 = false);
+// the keyboard is always player 1. Otherwise the first controller is player 1 too and a second one player 2; coop
+// (local co-op) makes the first controller player 2 and keeps the second port plugged in. remote_pad2 leaves the
+// second port alone because a network player drives it
+bool open_window(bool fullscreen, bool coop = false, bool remote_pad2 = false);
 // plays emulator sound through the window's audio device (does nothing without one)
 void window_queue_audio(const std::int16_t *samples, std::size_t frames);
 // text appended to the window title once a second

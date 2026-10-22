@@ -34,21 +34,15 @@ struct KeyBinding {
     std::uint16_t button;
 };
 
+// the keyboard is player 1, with the layout of OAleex's Shaolin Monks recomp (keys by position); W A S D are the left
+// stick (poll_port). Same keys as web/input.js and the README's Controls table.
 constexpr KeyBinding kKeys[] = {
-    {SDL_SCANCODE_UP, kUp},         {SDL_SCANCODE_DOWN, kDown},     {SDL_SCANCODE_LEFT, kLeft},
-    {SDL_SCANCODE_RIGHT, kRight},   {SDL_SCANCODE_Z, kCross},       {SDL_SCANCODE_X, kCircle},
-    {SDL_SCANCODE_A, kSquare},      {SDL_SCANCODE_S, kTriangle},    {SDL_SCANCODE_Q, kL1},
-    {SDL_SCANCODE_W, kR1},          {SDL_SCANCODE_1, kL2},          {SDL_SCANCODE_2, kR2},
-    {SDL_SCANCODE_RETURN, kStart},  {SDL_SCANCODE_BACKSPACE, kSelect},
-};
-
-// player 2 on the same keyboard: IJKL is the d-pad and left stick, the numpad holds the other buttons
-constexpr KeyBinding kKeys2[] = {
-    {SDL_SCANCODE_I, kUp},          {SDL_SCANCODE_K, kDown},        {SDL_SCANCODE_J, kLeft},
-    {SDL_SCANCODE_L, kRight},       {SDL_SCANCODE_KP_2, kCross},    {SDL_SCANCODE_KP_6, kCircle},
-    {SDL_SCANCODE_KP_4, kSquare},   {SDL_SCANCODE_KP_8, kTriangle}, {SDL_SCANCODE_KP_7, kL1},
-    {SDL_SCANCODE_KP_9, kR1},       {SDL_SCANCODE_KP_1, kL2},       {SDL_SCANCODE_KP_3, kR2},
-    {SDL_SCANCODE_KP_ENTER, kStart}, {SDL_SCANCODE_KP_PLUS, kSelect},
+    {SDL_SCANCODE_UP, kUp},          {SDL_SCANCODE_DOWN, kDown},        {SDL_SCANCODE_LEFT, kLeft},
+    {SDL_SCANCODE_RIGHT, kRight},    {SDL_SCANCODE_SPACE, kCross},      {SDL_SCANCODE_ESCAPE, kCircle},
+    {SDL_SCANCODE_LCTRL, kCircle},   {SDL_SCANCODE_RCTRL, kCircle},     {SDL_SCANCODE_J, kSquare},
+    {SDL_SCANCODE_K, kTriangle},     {SDL_SCANCODE_Q, kL1},             {SDL_SCANCODE_C, kR1},
+    {SDL_SCANCODE_LSHIFT, kL2},      {SDL_SCANCODE_RSHIFT, kL2},        {SDL_SCANCODE_E, kR2},
+    {SDL_SCANCODE_RETURN, kStart},   {SDL_SCANCODE_KP_ENTER, kStart},   {SDL_SCANCODE_BACKSPACE, kSelect},
 };
 
 struct PadBinding {
@@ -70,9 +64,10 @@ SDL_Window *g_window = nullptr;
 SDL_Renderer *g_renderer = nullptr;
 SDL_Texture *g_texture = nullptr;
 SDL_AudioDeviceID g_audio = 0;
-// the keyboard drives the first controller port along with the first game controller, a second one is player 2
+// g_pads[port]: the controller that drives that port (0 = player 1, which the keyboard always drives too)
 SDL_GameController *g_pads[2] = {};
-bool g_keyboard_pad2 = false;
+// local co-op (--coop): the first controller is player 2 and the keyboard player 1; port 2 stays plugged in
+bool g_coop = false;
 bool g_remote_pad2 = false;
 std::function<std::string()> g_status;
 // lockstep co-op: the frame gate replaces pace() (it waits for both inputs and keeps 59.94 Hz), and the first
@@ -147,13 +142,15 @@ void rumble(int port) {
     SDL_GameControllerRumble(pad, static_cast<Uint16>(strong * 65535.0), weak ? 0xFFFF : 0, strong > 0.0 || weak ? 200 : 0);
 }
 
-// a new controller takes the first free port, the second one plugs in player 2
+// a new controller takes the first free port: player 1 then player 2, or in co-op player 2 then player 1 (so one
+// controller plays against the keyboard, and with two the second joins the keyboard as player 1). A controller keeps
+// its port until it is unplugged, so plugging in or losing another never moves it.
 void open_pad(int device) {
     const SDL_JoystickID id = SDL_JoystickGetDeviceInstanceID(device);
     for (SDL_GameController *pad : g_pads)
         if (pad && SDL_JoystickInstanceID(SDL_GameControllerGetJoystick(pad)) == id) return;
-    for (int port = 0; port < 2; ++port)
-        if (!g_pads[port]) {
+    for (int i = 0; i < 2; ++i)
+        if (const int port = g_coop ? 1 - i : i; !g_pads[port]) {
             g_pads[port] = SDL_GameControllerOpen(device);
             return;
         }
@@ -162,25 +159,20 @@ void open_pad(int device) {
 void poll_port(int port) {
     static bool plugged[2] = {};
     SDL_GameController *pad = g_pads[port];
-    const bool keyboard = port == 0 || g_keyboard_pad2;
-    if (port > 0 && plugged[port] != (pad != nullptr || keyboard)) {
-        plugged[port] = pad != nullptr || keyboard;
+    if (port > 0 && plugged[port] != (pad != nullptr || g_coop)) {
+        plugged[port] = pad != nullptr || g_coop;
         ps2::set_pad_connected(port, plugged[port]);
     }
     std::uint16_t pressed = 0;
     std::uint8_t l2 = 0xFF, r2 = 0xFF;
     std::uint8_t lx = 0x80, ly = 0x80, rx = 0x80, ry = 0x80;
-    if (keyboard) {
+    if (port == 0) {
         const Uint8 *keys = SDL_GetKeyboardState(nullptr);
-        const bool first = port == 0;
-        const KeyBinding *b = first ? std::begin(kKeys) : std::begin(kKeys2);
-        const KeyBinding *const end = first ? std::end(kKeys) : std::end(kKeys2);
-        for (; b != end; ++b)
-            if (keys[b->key]) pressed |= b->button;
-        if (keys[first ? SDL_SCANCODE_LEFT : SDL_SCANCODE_J]) lx = 0x00;
-        if (keys[first ? SDL_SCANCODE_RIGHT : SDL_SCANCODE_L]) lx = 0xFF;
-        if (keys[first ? SDL_SCANCODE_UP : SDL_SCANCODE_I]) ly = 0x00;
-        if (keys[first ? SDL_SCANCODE_DOWN : SDL_SCANCODE_K]) ly = 0xFF;
+        for (const KeyBinding &b : kKeys)
+            if (keys[b.key]) pressed |= b.button;
+        // W A S D: the left stick, opposite keys cancel out
+        if (keys[SDL_SCANCODE_A] != keys[SDL_SCANCODE_D]) lx = keys[SDL_SCANCODE_A] ? 0x00 : 0xFF;
+        if (keys[SDL_SCANCODE_W] != keys[SDL_SCANCODE_S]) ly = keys[SDL_SCANCODE_W] ? 0x00 : 0xFF;
     }
     if (pad) {
         for (const PadBinding &b : kPadButtons)
@@ -431,8 +423,8 @@ void set_window_lockstep(std::function<void()> frame_gate, WindowPadSink pad_sin
 
 double window_audio_queued_ms() { return g_audio ? SDL_GetQueuedAudioSize(g_audio) / static_cast<double>(kAudioBytesPerMs) : 0.0; }
 
-bool open_window(bool fullscreen, bool keyboard_pad2, bool remote_pad2) {
-    g_keyboard_pad2 = keyboard_pad2;
+bool open_window(bool fullscreen, bool coop, bool remote_pad2) {
+    g_coop = coop;
     g_remote_pad2 = remote_pad2;
     if (SDL_Init(SDL_INIT_VIDEO | SDL_INIT_AUDIO | SDL_INIT_GAMECONTROLLER) != 0) {
         std::fprintf(stderr, "SDL: %s\n", SDL_GetError());

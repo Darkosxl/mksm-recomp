@@ -2,7 +2,8 @@
 # Play Shaolin Monks Remastered (faithful mode): 1440p-class supersampling (PS2_SCALE 3x6), 16:9 widescreen (game
 # patch; HUD and movies stay 4:3), the upscaled texture pack and the fixed glow. Saves use the same memory card as
 # the original game. --original plays the unmodified game with the same build and card.
-# usage: remaster/play.sh [--original] [ps2run args, e.g. --fullscreen]   env: PS2_SCALE (default 3x6; 2x4 is faster), PS2_GS_HW
+# --coop (old name --pad2) is local co-op: the keyboard is player 1 and the first controller player 2.
+# usage: remaster/play.sh [--original] [ps2run args, e.g. --fullscreen, --coop]   env: PS2_SCALE (default 3x6; 2x4 is faster), PS2_GS_HW
 set -euo pipefail
 here=$(cd "$(dirname "$0")/.." && pwd)
 D=$(cd "$here/../.." && pwd)/remaster-data

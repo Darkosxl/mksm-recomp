@@ -5,10 +5,12 @@
 (() => {
   // PS2 pad bits, bit k = NAMES[k] (the order of the native --press names)
   const NAMES = ['select', 'l3', 'r3', 'start', 'up', 'right', 'down', 'left', 'l2', 'r2', 'l1', 'r1', 'triangle', 'circle', 'cross', 'square'];
-  const keyMap = { ArrowUp: 4, ArrowRight: 5, ArrowDown: 6, ArrowLeft: 7, KeyZ: 14, KeyX: 13, KeyA: 15, KeyS: 12,
-                   KeyQ: 10, KeyW: 11, Digit1: 8, Digit2: 9, Enter: 3, Backspace: 0 };
-  // left stick: I up, J left, K down, L right
-  const stickKeys = new Set(['KeyI', 'KeyJ', 'KeyK', 'KeyL']);
+  // the layout of OAleex's Shaolin Monks recomp, as host/window.cpp kKeys (keys by position), less Ctrl for Circle:
+  // Ctrl + W (Circle + stick up) would close the tab outside fullscreen
+  const keyMap = { ArrowUp: 4, ArrowRight: 5, ArrowDown: 6, ArrowLeft: 7, Space: 14, Escape: 13,
+                   KeyJ: 15, KeyK: 12, KeyQ: 10, KeyC: 11, ShiftLeft: 8, ShiftRight: 8, KeyE: 9, Enter: 3, NumpadEnter: 3, Backspace: 0 };
+  // left stick: W up, A left, S down, D right (opposite keys cancel out)
+  const stickKeys = new Set(['KeyW', 'KeyA', 'KeyS', 'KeyD']);
   // [standard Gamepad API button index, PS2 bit]
   const padButtons = [[0, 14], [1, 13], [2, 15], [3, 12], [4, 10], [5, 11], [6, 8], [7, 9], [8, 0], [9, 3], [10, 1], [11, 2],
                       [12, 4], [13, 6], [14, 7], [15, 5]];
@@ -36,10 +38,8 @@
     if (own) {
       if (touch) buttons |= touch.buttons;
       for (const k of keys) if (k in keyMap) buttons |= 1 << keyMap[k];
-      if (keys.has('KeyJ')) lx = 0;
-      if (keys.has('KeyL')) lx = 255;
-      if (keys.has('KeyI')) ly = 0;
-      if (keys.has('KeyK')) ly = 255;
+      if (keys.has('KeyA') !== keys.has('KeyD')) lx = keys.has('KeyA') ? 0 : 255;
+      if (keys.has('KeyW') !== keys.has('KeyS')) ly = keys.has('KeyW') ? 0 : 255;
       if (touch && touch.stick) {
         lx = axis(touch.x);
         ly = axis(touch.y);
@@ -65,13 +65,17 @@
     return { buttons, lx, ly, rx, ry, l2, r2, pressure };
   }
 
-  // Key legend: [[PS2 button name, key label], ...] in pad order, then the stick.
-  const keyLabel = (code) => ({ ArrowUp: '↑', ArrowRight: '→', ArrowDown: '↓', ArrowLeft: '←' })[code] || code.replace(/^(Key|Digit)/, '');
+  // Key legend: [[PS2 button name, key label], ...] in pad order, then the stick; a button's keys share one row.
+  const LABELS = { ArrowUp: '↑', ArrowRight: '→', ArrowDown: '↓', ArrowLeft: '←', Escape: 'Esc', ControlLeft: 'Ctrl',
+                   ControlRight: 'Ctrl', ShiftLeft: 'Shift', ShiftRight: 'Shift', NumpadEnter: 'Enter' };
+  const keyLabel = (code) => LABELS[code] || code.replace(/^(Key|Digit)/, '');
   function legend() {
     const out = [];
-    for (let bit = 0; bit < NAMES.length; bit++)
-      for (const [code, b] of Object.entries(keyMap)) if (b === bit) out.push([NAMES[bit], keyLabel(code)]);
-    out.push(['left stick', 'I J K L']);
+    for (let bit = 0; bit < NAMES.length; bit++) {
+      const labels = new Set(Object.keys(keyMap).filter((code) => keyMap[code] === bit).map(keyLabel));
+      if (labels.size) out.push([NAMES[bit], [...labels].join(' / ')]);
+    }
+    out.push(['left stick', 'W A S D']);
     return out;
   }
 
