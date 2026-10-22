@@ -23,7 +23,9 @@ const TURN_PORT = Number(env.TURN_PORT || 3478), TURN_TTL = Number(env.TURN_TTL 
 const GRACE_MS = Number(env.ROOM_GRACE_MS || 600_000);
 const COOKIE = '__Host-mksm', COOKIE_AGE = 400 * 86400; // 400 days is Chrome's cap
 const MAX_ROOMS = 1000, ROOM_CHARS = 'abcdefghijkmnpqrstuvwxyz23456789'; // 12 chars of 32 = 60 bits
-const ROOM_ID = new RegExp(`^[${ROOM_CHARS}]{12}$`);
+// Rooms: 12 chars (`create`) or a player's 8-char personal code (40 bits, codeOf()).
+const CODE = new RegExp(`^[${ROOM_CHARS}]{8}$`), ROOM_ID = new RegExp(`^[${ROOM_CHARS}]{8}(?:[${ROOM_CHARS}]{4})?$`);
+const OWNER = /^[0-9a-f]{32}$/, TAB = /^[0-9a-f]{8,32}$/;
 // Where /invite?room=<id> lands: a same-site path template. The VPS site serves /play/<room>.
 const ROOM_URL = env.ROOM_URL || '/play/{room}';
 if (!ROOM_URL.startsWith('/') || ROOM_URL.startsWith('//') || /[\s\\]/.test(ROOM_URL) || !ROOM_URL.includes('{room}')) {
@@ -43,6 +45,8 @@ const positive = (name, fallback) => {
 const RELAY_MAX = positive('RELAY_MAX', 256 * 1024), RELAY_RATE = positive('RELAY_RATE', 8_000_000);
 const RELAY_BURST = positive('RELAY_BURST', 1 << 20), RELAY_BACKLOG = positive('RELAY_BACKLOG', 4 << 20);
 const TEXT_MAX = 64 * 1024; // JSON frames
+// Personal-code probes (info / join by code) per invite: a bucket of PROBE_BURST refilled at PROBE_PER_MIN.
+const PROBE_BURST = positive('PROBE_BURST', 30), PROBE_PER_MIN = positive('PROBE_PER_MIN', 20);
 
 // Invites persist in DATA_DIR/invites.json, keyed by id. Only a hash of each token is stored.
 const DATA_DIR = env.DATA_DIR || './data', FILE = join(DATA_DIR, 'invites.json');
@@ -60,6 +64,18 @@ const save = () => {
 const sha256 = (s) => createHash('sha256').update(s).digest('hex');
 const same = (a, b) => timingSafeEqual(Buffer.from(sha256(String(a))), Buffer.from(sha256(String(b))));
 const sign = (s) => createHmac('sha256', COOKIE_SECRET).update(s).digest('base64url');
+// A player's personal code: the first 40 bits of HMAC(COOKIE_SECRET, 'code:' + owner) as 8 room chars. owner is the
+// player's 16 random bytes (hex, kept by their browser), so nobody can work out someone else's code offline.
+function codeOf(owner) {
+  let bits = createHmac('sha256', COOKIE_SECRET).update('code:' + owner).digest().readUIntBE(0, 5), code = '';
+  for (let i = 0; i < 8; i++, bits = Math.floor(bits / 32)) code = ROOM_CHARS[bits % 32] + code;
+  return code;
+}
+// Display name: NFKC, no control/format (bidi, zero-width) or line separator chars, spaces collapsed, <= 20 code
+// points. null when none was sent.
+const nickOf = (s) => typeof s === 'string'
+  ? Array.from(s.normalize('NFKC').replace(/[\p{Cc}\p{Cf}\p{Zl}\p{Zp}]/gu, '').replace(/\s+/g, ' ').trim()).slice(0, 20).join('').trim() || 'Player'
+  : null;
 
 // Cookie value: <invite id>.<issued unix seconds>.<HMAC>. Revoking the invite logs its users out.
 function user(req) {
@@ -208,24 +224,35 @@ function handle(ws, msg) {
       idle(created);
       return out(ws, { type: 'created', room: id, build });
     }
+    case 'code':
+      if (!OWNER.test(msg.owner)) return fail(ws, 'bad-request', 'code');
+      return out(ws, { type: 'code', code: codeOf(msg.owner) });
     case 'info': {
+      const personal = CODE.test(msg.room);
+      if (personal && !probe(ws)) return fail(ws, 'rate-limited', 'info');
       const found = rooms.get(msg.room);
-      if (!found) return fail(ws, 'not-found', 'info');
-      return out(ws, { type: 'info', room: found.id, build: found.build, peers: found.peers.length });
+      if (!found) return fail(ws, personal ? 'offline' : 'not-found', 'info');
+      const reply = { type: 'info', room: found.id, build: found.build, peers: found.peers.length };
+      return out(ws, found.owner ? { ...reply, nick: found.peers[0].nick } : reply);
     }
     case 'join': {
       if (room) return fail(ws, 'already-joined', 'join');
+      const tab = TAB.test(msg.tab) ? msg.tab : null;
+      if (msg.owner !== undefined) return joinOwner(ws, msg, tab);
+      const personal = CODE.test(msg.room);
+      if (personal && !probe(ws)) return fail(ws, 'rate-limited', 'join');
       const target = rooms.get(msg.room);
-      if (!target) return fail(ws, 'not-found', 'join');
+      if (!target) return fail(ws, personal ? 'offline' : 'not-found', 'join');
+      const same = tab && target.peers.find((p) => p.tab === tab);
+      if (same) return swap(same, ws);
       if (target.peers.length >= 2) return fail(ws, 'full', 'join');
       if (msg.build && target.build && msg.build !== target.build) return fail(ws, 'build-mismatch', 'join');
       const peer = target.peers[0];
       clearTimeout(target.timer);
       target.peers.push(ws);
-      ws.room = target;
-      ws.host = !peer;
-      out(ws, { type: 'joined', room: target.id, id: ws.id, host: ws.host, peer: peer ? peer.id : null, build: target.build });
-      if (peer) out(peer, { type: 'peer-joined', peer: ws.id });
+      Object.assign(ws, { room: target, host: !peer, tab, nick: target.owner ? nickOf(msg.nick) ?? 'Player' : nickOf(msg.nick) });
+      out(ws, { type: 'joined', room: target.id, id: ws.id, host: ws.host, peer: peer ? peer.id : null, build: target.build, ...nickField(peer) });
+      if (peer) out(peer, { type: 'peer-joined', peer: ws.id, ...nickField(ws) });
       return;
     }
     case 'leave':
@@ -246,9 +273,65 @@ function handle(ws, msg) {
   }
 }
 
+const nickField = (peer) => (peer?.nick != null ? { nick: peer.nick } : {});
+
+// Personal room (code = codeOf(owner)): the owner is always its host (P1, whose memory card is used) and the room
+// exists only while the owner is in it. A newer page of the same owner replaces the older one, which gets `replaced`.
+function joinOwner(ws, msg, tab) {
+  if (!OWNER.test(msg.owner)) return fail(ws, 'bad-request', 'join');
+  const id = codeOf(msg.owner);
+  let target = rooms.get(id);
+  const old = target?.peers.find((p) => p.host);
+  if (old && tab && old.tab === tab) return swap(old, ws);
+  if (target) closeRoom(target, { type: 'replaced' });
+  if (rooms.size >= MAX_ROOMS) return fail(ws, 'busy', 'join');
+  const build = typeof msg.build === 'string' && /^[0-9a-f]{1,64}$/.test(msg.build) ? msg.build : null;
+  target = { id, build, peers: [ws], timer: null, owner: true };
+  rooms.set(id, target);
+  Object.assign(ws, { room: target, host: true, tab, nick: nickOf(msg.nick) ?? 'Player' });
+  out(ws, { type: 'joined', room: id, id: ws.id, host: true, peer: null, build, nick: null });
+}
+
+// The same page (tab) joining again, e.g. reconnecting before the server noticed its old socket drop: the new socket
+// takes the old one's place and id, and the other peer is not told.
+function swap(old, ws) {
+  const room = old.room, peer = room.peers.find((p) => p !== old);
+  room.peers[room.peers.indexOf(old)] = ws;
+  Object.assign(ws, { id: old.id, room, host: old.host, tab: old.tab, nick: old.nick });
+  old.room = null;
+  flow(old);
+  old.terminate();
+  out(ws, { type: 'joined', room: room.id, id: ws.id, host: ws.host, peer: peer ? peer.id : null, build: room.build, ...(room.owner ? { nick: peer?.nick ?? null } : nickField(peer)) });
+}
+
+// Ends a personal room (its owner left or was replaced): no promotion, the guest is told closed:true and is out too.
+function closeRoom(room, ownerMsg) {
+  rooms.delete(room.id);
+  const owner = room.peers.find((p) => p.host);
+  for (const p of room.peers.splice(0)) {
+    p.room = null;
+    flow(p);
+    if (p !== owner) out(p, { type: 'peer-left', peer: owner?.id ?? null, closed: true });
+    else if (ownerMsg) out(p, ownerMsg);
+  }
+}
+
+// Personal codes are 40 bits: guesses (info / join by code) are limited per invite.
+const probes = new Map();
+function probe(ws) {
+  const t = performance.now(), bucket = probes.get(ws.user) || { tokens: PROBE_BURST, at: t };
+  bucket.tokens = Math.min(PROBE_BURST, bucket.tokens + ((t - bucket.at) * PROBE_PER_MIN) / 60000);
+  bucket.at = t;
+  probes.set(ws.user, bucket);
+  if (bucket.tokens < 1) return false;
+  bucket.tokens--;
+  return true;
+}
+
 function leave(ws) {
   const room = ws.room;
   if (!room) return;
+  if (room.owner && ws.host) return closeRoom(room);
   ws.room = null;
   flow(ws); // no room: released
   room.peers = room.peers.filter((p) => p !== ws);
