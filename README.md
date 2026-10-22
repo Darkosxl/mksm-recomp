@@ -3,13 +3,13 @@
 </p>
 
 <p align="center">
-  <a href="#install-linux"><img alt="Native: Linux" src="https://img.shields.io/badge/Native-Linux-9a0a00?style=for-the-badge&logo=linux&logoColor=white"></a>
-  <a href="#play-in-the-browser"><img alt="Browser: Chrome · Edge" src="https://img.shields.io/badge/Browser-Chrome%20%C2%B7%20Edge-c81e00?style=for-the-badge&logo=googlechrome&logoColor=white"></a>
-  <img alt="Renderer: WebGPU · Vulkan" src="https://img.shields.io/badge/Renderer-WebGPU%20%C2%B7%20Vulkan-e85d00?style=for-the-badge&logo=webgpu&logoColor=white">
-  <img alt="Remaster: 3x6 · 16:9 · HD textures" src="https://img.shields.io/badge/Remaster-3%C3%976%20%C2%B7%2016%3A9%20%C2%B7%20HD%20textures-0f8a55?style=for-the-badge">
-  <img alt="Co-op: local + online" src="https://img.shields.io/badge/Co--op-local%20%2B%20online-b45309?style=for-the-badge">
-  <img alt="Recomp: static → C++" src="https://img.shields.io/badge/Recomp-static%20%E2%86%92%20C%2B%2B-30353c?style=for-the-badge&logo=cplusplus&logoColor=white">
-  <a href="LICENSE"><img alt="License: MIT" src="https://img.shields.io/badge/License-MIT-5a626c?style=for-the-badge&logo=opensourceinitiative&logoColor=white"></a>
+  <a href="#install-linux"><img alt="Native: Linux" src="https://img.shields.io/badge/Native-Linux-8b0000?style=for-the-badge&logo=linux&logoColor=white"></a>
+  <a href="#play-in-the-browser"><img alt="Browser: Chrome · Edge" src="https://img.shields.io/badge/Browser-Chrome%20%C2%B7%20Edge-1c1c1c?style=for-the-badge&logo=googlechrome&logoColor=white"></a>
+  <img alt="Renderer: WebGPU · Vulkan" src="https://img.shields.io/badge/Renderer-WebGPU%20%C2%B7%20Vulkan-8b0000?style=for-the-badge&logo=webgpu&logoColor=white">
+  <img alt="Remaster: 3x6 · 16:9 · HD textures" src="https://img.shields.io/badge/Remaster-3%C3%976%20%C2%B7%2016%3A9%20%C2%B7%20HD%20textures-a07418?style=for-the-badge">
+  <img alt="Co-op: local + online" src="https://img.shields.io/badge/Co--op-local%20%2B%20online-8b0000?style=for-the-badge">
+  <img alt="Recomp: static → C++" src="https://img.shields.io/badge/Recomp-static%20%E2%86%92%20C%2B%2B-1c1c1c?style=for-the-badge&logo=cplusplus&logoColor=white">
+  <a href="LICENSE"><img alt="License: MIT" src="https://img.shields.io/badge/License-MIT-6b5520?style=for-the-badge&logo=opensourceinitiative&logoColor=white"></a>
 </p>
 
 > [!IMPORTANT]
