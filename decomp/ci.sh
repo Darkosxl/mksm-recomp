@@ -28,7 +28,7 @@ ninja -C build/tools eerecomp > /dev/null
 
 step regenerate
 tmp=$(mktemp -d); cp -r mksm/generated "$tmp/gen"
-build/tools/eerecomp games/mksm/disc/SLUS_210.87 --entries mksm/entries.txt --overrides decomp/overrides.txt \
+build/tools/eerecomp games/mksm/disc/SLUS_210.87 --entries mksm/entries.txt --overrides decomp/overrides.txt --idle mksm/idle.txt \
   --out "$tmp/gen" > "$out/regen.log" 2>&1
 diff -r -q mksm/generated "$tmp/gen" > "$out/regen.diff" && echo "regenerated units identical to mksm/generated" \
   || { echo "regenerated units differ:"; cat "$out/regen.diff"; exit 1; }

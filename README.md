@@ -1,11 +1,27 @@
-# Mortal Kombat: Shaolin Monks — native and browser
+<p align="center">
+  <img src="docs/media/logo.png" alt="Mortal Kombat: Shaolin Monks Remastered" width="900">
+</p>
+
+<p align="center">
+  <a href="#install-linux"><img alt="Native: Linux" src="https://img.shields.io/badge/Native-Linux-9a0a00?style=for-the-badge&logo=linux&logoColor=white"></a>
+  <a href="#play-in-the-browser"><img alt="Browser: Chrome · Edge" src="https://img.shields.io/badge/Browser-Chrome%20%C2%B7%20Edge-c81e00?style=for-the-badge&logo=googlechrome&logoColor=white"></a>
+  <img alt="Renderer: WebGPU · Vulkan" src="https://img.shields.io/badge/Renderer-WebGPU%20%C2%B7%20Vulkan-e85d00?style=for-the-badge&logo=webgpu&logoColor=white">
+  <img alt="Remaster: 3x6 · 16:9 · HD textures" src="https://img.shields.io/badge/Remaster-3%C3%976%20%C2%B7%2016%3A9%20%C2%B7%20HD%20textures-0f8a55?style=for-the-badge">
+  <img alt="Co-op: local + online" src="https://img.shields.io/badge/Co--op-local%20%2B%20online-b45309?style=for-the-badge">
+  <img alt="Recomp: static → C++" src="https://img.shields.io/badge/Recomp-static%20%E2%86%92%20C%2B%2B-30353c?style=for-the-badge&logo=cplusplus&logoColor=white">
+  <a href="LICENSE"><img alt="License: MIT" src="https://img.shields.io/badge/License-MIT-5a626c?style=for-the-badge&logo=opensourceinitiative&logoColor=white"></a>
+</p>
+
+> [!IMPORTANT]
+> **No game data is included.** You need your own legally obtained NTSC-U PS2 copy of *Mortal Kombat: Shaolin Monks*
+> (`SLUS_210.87`) and a disc image made from it. This repository is private and has to stay private:
+> `mksm/generated/` is the game's executable translated to C++.
+
+**Two monks, one couch or one link: the PS2 classic, recompiled and remastered.**
 
 Mortal Kombat: Shaolin Monks (PS2, NTSC-U, `SLUS_210.87`), statically recompiled to run natively on Linux and in the
 browser, with a graphics remaster (3x6 supersampling, 16:9 widescreen, HD textures) and two-player co-op, locally and
 online.
-
-**No game data is included.** You need your own NTSC-U disc image of the game. This repository is private and has to
-stay private: `mksm/generated/` is the game's executable translated to C++.
 
 ## Install (Linux)
 
@@ -44,14 +60,14 @@ and WebAssembly JSPI). On Linux, first turn on `chrome://flags/#enable-unsafe-we
 
 ## Local co-op (two players, one machine)
 
-Pick Ko-op in the game's menus.
+Pick Ko-op in the game's menus. The keyboard is always player 1. The browser works the same way with **Play offline**.
 
-- **Desktop, two controllers**: plug both in. The first is player 1, the second is player 2.
-- **Desktop, controller and keyboard**: `remaster/play.sh --pad2`. The controller is player 1. The keyboard's player 2
-  keys (I J K L and the numpad, see [Controls](#controls)) are player 2. The same flag also gives two players on one
-  keyboard.
-- **Browser, two controllers**: use **Play offline**. The first controller (with the keyboard) is player 1, the second
-  is player 2. In a game with a code, each browser has one player.
+- **Two controllers**: plug both in. The first is player 1 (with the keyboard), the second is player 2.
+- **Keyboard and a controller**: turn co-op on. On the desktop that is `remaster/play.sh --coop` (`--pad2` also
+  works). In the browser, press **Co-op off** on the game's bar so it says **Co-op on**. The browser remembers it.
+  The keyboard is player 1 and the controller is player 2. A second controller then joins the keyboard as player 1.
+- A controller keeps its player while it stays connected.
+- In a game with a code, each browser has one player: the keyboard and the first controller.
 
 ## Online co-op
 
@@ -63,23 +79,28 @@ Desktop builds have their own online modes. See [Development](#development).
 
 ## Controls
 
-<!-- KEYBOARD CONTROLS: the one place for the key table. The keys themselves are in host/window.cpp (kKeys, kKeys2,
-     and the stick keys in poll_port) and web/input.js (keyMap, stickKeys; its legend() feeds the landing page's
-     controller check). Change the code and this table together. -->
+<!-- KEYBOARD CONTROLS: the one place for the key table. The keys themselves are in host/window.cpp (kKeys, and the
+     stick keys in poll_port), web/input.js (keyMap, stickKeys; its legend() feeds the landing page's controller
+     check) and web/netplay.html (KEYS). The layout is OAleex's Shaolin Monks recomp's. Change the code and this table
+     together. -->
 
-| PS2 | Player 1 (desktop and browser) | Player 2 (desktop, `--pad2`) |
-|---|---|---|
-| D-pad | Arrow keys | I J K L |
-| Left stick | Arrow keys (desktop), I J K L (browser) | I J K L |
-| Cross | Z | Numpad 2 |
-| Circle | X | Numpad 6 |
-| Square | A | Numpad 4 |
-| Triangle | S | Numpad 8 |
-| L1 / R1 | Q / W | Numpad 7 / Numpad 9 |
-| L2 / R2 | 1 / 2 | Numpad 1 / Numpad 3 |
-| Start | Enter | Numpad Enter |
-| Select | Backspace | Numpad + |
-| Fullscreen | F11 (desktop), F (browser) | |
+The keyboard is player 1, on the desktop and in the browser.
+
+| PS2 | Keyboard |
+|---|---|
+| Left stick | W A S D |
+| D-pad | Arrow keys |
+| Cross | Space |
+| Circle | Esc (also Ctrl on desktop) |
+| Square | J |
+| Triangle | K |
+| L1 / R1 | Q / C |
+| L2 / R2 | Shift / E |
+| Start | Enter |
+| Select | Backspace |
+| Fullscreen | F11 (desktop), F (browser) |
+
+In browser fullscreen, hold Esc to leave fullscreen.
 
 <!-- END KEYBOARD CONTROLS -->
 
