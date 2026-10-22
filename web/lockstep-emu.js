@@ -128,7 +128,10 @@ export async function discIdOf(url, size) {
 }
 
 export class Session {
-  // opts: Module, room, build, disc, config, patchFiles, readPad, signal, rtc, log, test, onStatus, overlay (bool)
+  // opts: Module, room, build, disc, config, patchFiles, readPad, signal, rtc, log, test, onStatus, overlay (bool),
+  // owner + nick (personal room: owner hosts it; a guest gives room + nick), onEnd(reason) (the landing-page lobby: a
+  // guest's session ends when the host leaves or kicks it, reason 'host-left' | 'kicked' | 'replaced', instead of
+  // playing on alone on the host's unsaved card)
   constructor(opts) {
     this.opts = { log: console.log, overlay: true, ...opts };
     this.emu = new Emu(opts.Module);
@@ -144,9 +147,9 @@ export class Session {
   status(text) { this.statusText = text; this.opts.onStatus?.(text); }
 
   newLockstep() {
-    const { Module, room, build, disc, config, patchFiles, readPad, signal, test } = this.opts;
+    const { Module, room, owner, nick, build, disc, config, patchFiles, readPad, signal, test } = this.opts;
     const ls = new Lockstep({
-      buffer: Module.HEAPU8.buffer, base: this.emu.base, room, build, disc, config, patchFiles, readPad, test: test || {},
+      buffer: Module.HEAPU8.buffer, base: this.emu.base, room, owner, nick, build, disc, config, patchFiles, readPad, test: test || {},
       ...(signal ? { signal } : {}),
       log: (...a) => this.opts.log('[lockstep]', ...a), overlay: this.opts.overlay,
       sync: (l, isHost) => (isHost ? this.hostSync(l) : this.guestSync(l)),
@@ -158,6 +161,9 @@ export class Session {
     ls.onSolo = () => this.onSolo();
     ls.onStart = (d) => { this.status(`playing as P${d.slot + 1}, input delay ${d.D} frames`); this.opts.onStart?.(d); };
     ls.onRefused = ({ reason, detail }) => this.status(detail || 'the other player runs a different ' + reason);
+    ls.onPeerLeft = (m) => this.onPeerLeft(m);
+    ls.onDisconnect = () => this.hostClosed && this.end('host-left');
+    ls.onReplaced = () => (this.opts.onEnd ? this.end('replaced') : this.status('this game was opened on another page'));
     return ls;
   }
 
@@ -166,6 +172,7 @@ export class Session {
     this.ls = this.newLockstep();
     const joined = await this.ls.join();
     this.isHost = joined.host;
+    this.code = joined.room;
     if (!this.isHost) this.emu.hold(true);
     this.emu.store(OFF.LOCAL_SLOT, this.ls.slot);
     this.watchdog = setInterval(() => this.watch(), 100);
@@ -174,10 +181,12 @@ export class Session {
 
   // After callMain: connects (in the background on the host, which plays alone until a guest arrives).
   async run() {
+    const ls = this.ls;
     this.status(this.isHost ? 'waiting for the other player' : 'connecting to the host');
     try {
-      await this.ls.connect();
+      await ls.connect();
     } catch (e) {
+      if (ls !== this.ls || this.ended) return; // a restart replaced it
       this.log('session failed:', e.message);
       this.status('could not connect: ' + e.message);
       this.failed = e;
@@ -277,6 +286,8 @@ export class Session {
   async onMessage(msg) {
     const ls = this.ls;
     if (msg.t === 'state-request' && this.isHost) return this.resync('guest request');
+    if (msg.t === 'bye' && this.isHost) return ls.running && !ls.solo ? ls.goSolo() : this.restartHost(0); // the guest left
+    if ((msg.t === 'bye' || msg.t === 'kick') && !this.isHost && this.opts.onEnd) return this.end(msg.t === 'kick' ? 'kicked' : 'host-left');
     if (msg.t === 'state-begin' && !this.isHost) {
       if (this.syncing) return;
       ls.suspend();
@@ -293,11 +304,41 @@ export class Session {
 
   // The other player is gone: the host keeps playing and waits in the same room for someone to drop in again.
   onSolo() {
+    if (!this.isHost && this.opts.onEnd) return this.end('host-left');
     this.status('the other player left; playing alone');
     if (this.isHost) this.restartHost(1000);
   }
+  // A guest in a personal room: the host's page closed the room. Its game may still run on a direct connection (only
+  // its signalling dropped): play on while its inputs arrive, end once they stop.
+  onPeerLeft(m) {
+    if (this.isHost || !m.closed || !this.opts.onEnd) return;
+    const ls = this.ls;
+    if (ls.running && !ls.solo && ls.transport === 'p2p' && !ls.disconnected && now() - ls.lastRecv < 1000) this.hostClosed = true;
+    else this.end('host-left');
+  }
+  end(reason) {
+    if (this.ended) return;
+    this.ended = reason;
+    this.log('session ended:', reason);
+    try { this.ls.close(); } catch {}
+    this.opts.onEnd?.(reason);
+  }
+  // Host: sends the guest away (back to its landing page) and reopens the room for the next one.
+  kick() {
+    if (!this.isHost || !this.ls) return;
+    this.ls.sendCtl({ t: 'kick' });
+    this.restartHost(300);
+  }
+  // The page is going away: tell the peer now.
+  bye() {
+    this.ended ||= 'bye';
+    this.ls?.bye();
+  }
   restartHost(delay) {
+    const old = this.ls;
     setTimeout(async () => {
+      if (this.ls !== old || this.ended) return; // already restarted
+      this.syncing = false;
       this.past.hashesOk += this.ls.stats.hashesOk;
       this.past.desyncs += this.ls.stats.desyncs;
       this.past.sessions++;

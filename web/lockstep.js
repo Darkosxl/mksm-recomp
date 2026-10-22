@@ -2,7 +2,7 @@
 // The shared-memory interface with the emulator, the wire format and the session flow are in lockstep.md.
 //
 //   const room = await Lockstep.createRoom({ build });                 // host side, once
-//   const ls = new Lockstep({ buffer, base, room, build, disc, config, readPad });
+//   const ls = new Lockstep({ buffer, base, room, build, disc, config, readPad });   // or { owner, nick } (personal room)
 //   ls.onDesync = (d) => ...;  await ls.connect();                      // resolves once frames run
 
 export const OFF = {
@@ -25,6 +25,7 @@ const MAX_REDUNDANT = 32, HEADER = 20, CHUNK = 64 * 1024;
 const BUF_HIGH = 4 * 1024 * 1024, BUF_LOW = 1024 * 1024;
 const PKT_INPUT = 1, PKT_NEED = 1; // packet kind; packet flags bit0: the sender lacks an input it needs now or next frame
 const P2P_TIMEOUT_MS = 10000;
+const REJOIN_MS = 500, REJOIN_MAX_MS = 15000; // signalling reconnect backoff
 // No TURN in host mode (/turn 404): public STUN only; peers that still can't connect fall back to the relay below.
 const STUN = [{ urls: ['stun:stun.l.google.com:19302', 'stun:stun.cloudflare.com:3478'] }];
 
@@ -172,22 +173,58 @@ export class Lockstep {
   setStatus(text) { this.status = text; this.emit('status', text); }
 
   // ---- connection: signalling, WebRTC, handshake, RTT, start ----
-  // Joins the signalling room only: after it, isHost/slot are known (the first in the room is the host, P1).
+  // Joins the signalling room only: after it, isHost/slot are known (the first in the room is the host, P1; in a
+  // personal room, opts.owner's page).
   async join() {
     if (this.joinedMsg) return this.joinedMsg;
-    const { signal, room, build } = this.opts;
     this.setStatus('connecting');
-    this.ws = await openSocket(signal);
-    this.ws.binaryType = 'arraybuffer';
-    this.ws.onmessage = (e) => (typeof e.data === 'string' ? this.onSignal(JSON.parse(e.data)) : this.onRelay(new Uint8Array(e.data)));
+    this.tab = hex(crypto.getRandomValues(new Uint8Array(8))); // this page: a rejoin takes its old place (server README)
+    this.ws = await openSocket(this.opts.signal);
+    this.listen(this.ws);
     this.joined = deferred();
     this.channelsOpen = deferred();
-    this.ws.send(JSON.stringify({ type: 'join', room, build }));
-    const joined = (this.joinedMsg = await this.joined);
+    this.ws.send(JSON.stringify(this.joinMessage()));
+    let joined;
+    try {
+      joined = this.joinedMsg = await this.joined;
+    } catch (e) {
+      this.closed = true;
+      this.ws.close();
+      throw e;
+    }
     this.isHost = joined.host;
     this.slot = this.isHost ? 0 : 1;
-    this.log(`joined ${room} as ${this.isHost ? 'host' : 'guest'}`);
+    this.room = joined.room;
+    this.log(`joined ${joined.room} as ${this.isHost ? 'host' : 'guest'}`);
     return joined;
+  }
+  joinMessage() {
+    const { room, owner, nick, build } = this.opts;
+    return { type: 'join', ...(owner ? { owner } : { room }), nick, build, tab: this.tab };
+  }
+  listen(ws) {
+    ws.binaryType = 'arraybuffer';
+    ws.onmessage = (e) => (typeof e.data === 'string' ? this.onSignal(JSON.parse(e.data)) : this.onRelay(new Uint8Array(e.data)));
+    ws.onclose = () => ws === this.ws && this.lostSignal();
+  }
+
+  // The signalling socket dropped (server restart, network change): rejoin with backoff, so a host's room stays open
+  // for the next guest and the relay (if in use) resumes. Not after close(), `replaced`, or the owner closing the room.
+  lostSignal() {
+    if (this.closed || this.replaced || this.roomClosed) return;
+    const ms = Math.min(REJOIN_MAX_MS, REJOIN_MS * 2 ** (this.rejoins = (this.rejoins || 0) + 1));
+    this.log(`signalling socket closed; rejoining in ${(ms / 1000).toFixed(1)} s`);
+    clearTimeout(this.rejoinTimer);
+    this.rejoinTimer = setTimeout(async () => {
+      if (this.closed || this.replaced) return;
+      const ws = await openSocket(this.opts.signal).catch(() => null);
+      if (!ws) return this.lostSignal();
+      if (this.closed) return ws.close();
+      this.ws = ws;
+      this.listen(ws);
+      for (const ch of [this.inCh, this.ctl]) if (ch instanceof RelayChannel) ch.ws = ws;
+      ws.send(JSON.stringify(this.joinMessage()));
+    }, ms);
   }
 
   async connect() {
@@ -201,11 +238,29 @@ export class Lockstep {
 
   async onSignal(msg) {
     switch (msg.type) {
-      case 'joined': return this.joined.resolve(msg);
-      case 'error': this.log('signalling error', msg.error, msg.request); return this.joined?.reject(new Error(msg.error));
-      case 'peer-joined': this.log('peer joined'); return;
-      case 'peer-left': this.log('peer left the room'); this.peerLeft = true; this.emit('peerLeft', msg); return;
+      case 'joined':
+        if (msg.nick != null) this.peerNick = msg.nick;
+        if (this.joinedMsg) { this.rejoins = 0; this.log('rejoined', msg.room); }
+        return this.joined.resolve(msg);
+      case 'error':
+        this.log('signalling error', msg.error, msg.request);
+        // a failed rejoin: try again later (a guest's host may be rejoining too), unless the slot is gone for good
+        if (msg.request === 'join' && this.joinedMsg) {
+          if (['full', 'build-mismatch', 'not-found', 'bad-request'].includes(msg.error)) this.roomClosed = true;
+          return this.ws.close();
+        }
+        return this.joined?.reject(new Error(msg.error));
+      case 'peer-joined': this.log('peer joined'); this.peerNick = msg.nick; return;
+      case 'peer-left':
+        this.log(msg.closed ? 'the host closed the room' : 'peer left the room');
+        this.peerLeft = true;
+        this.peerNick = null;
+        if (msg.closed) this.roomClosed = true;
+        this.emit('peerLeft', msg);
+        return;
+      case 'replaced': this.log('replaced by a newer page of the same player'); this.replaced = true; this.emit('replaced'); return;
       case 'offer':
+        if (this.channelsOpen?.settled) return this.log('ignoring an offer: already connected');
         if (!this.pc) await this.startPeer(false);
         await this.pc.setRemoteDescription(msg.sdp);
         await this.pc.setLocalDescription(await this.pc.createAnswer());
@@ -747,7 +802,17 @@ export class Lockstep {
   }
 
   // ---- teardown ----
+  // Leaving on purpose (the page goes away): the peer hears it at once instead of timing out.
+  bye() {
+    if (this.closed) return;
+    this.sendCtl({ t: 'bye' });
+    this.close();
+  }
+
   close() {
+    this.closed = true;
+    clearTimeout(this.rejoinTimer);
+    for (const list of this.ctlWaiters.values()) for (const w of list.splice(0)) w(null, new Error('session closed'));
     this.running = false;
     clearInterval(this.ticker);
     clearInterval(this.pinger);
@@ -760,7 +825,7 @@ export class Lockstep {
 
   snapshot() {
     return {
-      status: this.status, host: this.isHost, slot: this.slot, D: this.D, solo: this.solo,
+      status: this.status, host: this.isHost, slot: this.slot, D: this.D, solo: this.solo, peerNick: this.peerNick ?? null,
       transport: this.transport, emuFrame: this.lastFrame, localHigh: this.localHigh, remoteHigh: this.remoteHigh, ackedByRemote: this.ackedByRemote,
       rttStart: this.rttAtStart, rttP50: this.rtts.length ? percentile(this.rtts.slice(-20), 0.5) : null,
       adv: this.adv, slowMs: this.slowMs || 0, paused: this.paused, remotePaused: !!this.remotePaused, disconnected: !!this.disconnected,
