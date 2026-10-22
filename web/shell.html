@@ -13,6 +13,7 @@
   #bar { display: flex; gap: 16px; align-items: center; padding: 6px 12px; background: #141418; border-top: 1px solid #222; }
   #status { flex: 1; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
   #stats { font-variant-numeric: tabular-nums; color: #9ad; }
+  #lobby { white-space: nowrap; color: #e8c37a; font-weight: 600; }
   select { background: #2a3a55; color: #fff; border: 0; padding: 5px 8px; border-radius: 4px; }
   button { background: #2a3a55; color: #fff; border: 0; padding: 6px 14px; border-radius: 4px; cursor: pointer; }
   #overlay { position: fixed; inset: 0; display: flex; align-items: center; justify-content: center; background: rgba(0,0,0,.6); padding: 16px; }
@@ -105,13 +106,14 @@
     </div>
   </div>
 </div>
-<div id="bar"><span id="status">Loading…</span><span id="stats"></span>
+<div id="bar"><span id="lobby" hidden></span><span id="status">Loading…</span><span id="stats"></span>
   <select id="scale" aria-label="Resolution" title="Internal resolution, the page reloads to apply it">
     <option value="1">640×512</option>
     <option value="2">1280×1024</option>
     <option value="3">1920×1536</option>
   </select>
   <button id="controls-toggle" type="button" hidden>Hide controls</button>
+  <button id="kick" type="button" hidden title="Send the other player back to the menu">Kick</button>
   <button id="export-card" type="button" title="Download the memory card in slot 1 as a .ps2 file">Export card</button>
   <button id="import-card" type="button" title="Put a .ps2 memory card file in slot 1">Import card</button>
   <input id="import-file" type="file" accept=".ps2" hidden>
@@ -132,8 +134,9 @@ function note(text) {
     noteTimer = 0;
   }, 5000);
 }
-let cardTimer = 0;
+let cardTimer = 0, cardOwned = true;
 function storeCard(then) {
+  if (!cardOwned) return then && then();
   clearTimeout(cardTimer);
   cardTimer = setTimeout(() => {
     try {
@@ -194,6 +197,71 @@ const params = new URLSearchParams(location.search);
 const room = params.get('room');
 const lockstepMode = room !== null;
 let session = null, lsStatus = '', lsScript = null;
+// The landing page's lobby (server/site/index.html): ?room=<personal code>&lobby=<landing page path>, plus host=1 on
+// the player's own room, joined with the owner key the landing page keeps in localStorage (mksm-owner, with the
+// nickname mksm-nick). A guest goes back to the landing page when the host leaves or kicks it.
+const lobby = (() => {
+  if (!lockstepMode || !params.get('lobby')) return null;
+  try {
+    const url = new URL(params.get('lobby'), location.origin);
+    return url.origin === location.origin ? url : null;
+  } catch (e) {
+    return null;
+  }
+})();
+let nick = '', owner = null;
+try {
+  nick = localStorage.getItem('mksm-nick') || '';
+  if (lobby && params.has('host')) owner = localStorage.getItem('mksm-owner');
+} catch (e) {}
+if (lobby && params.has('host') && !/^[0-9a-f]{32}$/.test(owner || '')) {
+  owner = Array.from(crypto.getRandomValues(new Uint8Array(16)), (b) => b.toString(16).padStart(2, '0')).join('');
+  try { localStorage.setItem('mksm-owner', owner); } catch (e) {}
+}
+const lobbyGuest = !!lobby && !owner;
+function backToLobby(reason) {
+  if (!lobby) return false;
+  const url = new URL(lobby);
+  url.searchParams.set('left', reason);
+  if (lobbyGuest) url.searchParams.set('room', room);
+  location.href = url.href;
+  return true;
+}
+
+// One game page per browser owns the memory card, so two tabs cannot overwrite each other's saves: the page takes the
+// Web Lock mksm-game before it reads the card. When it is busy the page waits for the other one to close, or takes
+// over; the page that loses it stops saving and leaves. A lobby guest never writes its card and takes no lock.
+function gameLock() {
+  if (!navigator.locks || lobbyGuest) return Promise.resolve();
+  return new Promise((resolve) => {
+    const help = document.getElementById('help'), here = document.createElement('button');
+    let held = false;
+    const hold = (lock) => {
+      if (!lock || held) return null;
+      held = true;
+      here.remove();
+      help.hidden = true;
+      resolve();
+      return new Promise(() => {}); // until the page goes away
+    };
+    const lost = (e) => {
+      if (!held || !e || e.name !== 'AbortError') return;
+      cardOwned = false;
+      if (session) session.bye();
+      if (!backToLobby('replaced')) location.reload();
+    };
+    navigator.locks.request('mksm-game', { ifAvailable: true }, (lock) => {
+      if (lock) return hold(lock);
+      help.textContent = 'The game is already open in another tab. Close that tab, or play here (the other tab stops).';
+      help.hidden = false;
+      here.textContent = 'Play here';
+      here.onclick = () => navigator.locks.request('mksm-game', { steal: true }, hold).catch(lost);
+      document.getElementById('start').before(here);
+      navigator.locks.request('mksm-game', hold).catch(lost);
+      return null;
+    }).catch(lost);
+  });
+}
 
 function missingFeatures() {
   const header = [0, 97, 115, 109, 1, 0, 0, 0, 1, 4, 1, 96, 0, 0, 3, 2, 1, 0, 10];
@@ -636,17 +704,20 @@ var Module = {
   },
   preRun: [() => {
     if (!Module.noCard) {
-      try {
-        FS.mkdir(CARD_DIR);
-        FS.mount(IDBFS, {}, CARD_DIR);
-        Module.addRunDependency('card');
+      Module.addRunDependency('card');
+      gameLock().then(() => {
+        try {
+          FS.mkdir(CARD_DIR);
+          FS.mount(IDBFS, {}, CARD_DIR);
+        } catch (e) {
+          console.warn('memory card: browser storage is not available', e);
+          return Module.removeRunDependency('card');
+        }
         FS.syncfs(true, (err) => {
           if (err) console.warn('memory card: could not read browser storage', err);
           Module.removeRunDependency('card');
         });
-      } catch (e) {
-        console.warn('memory card: browser storage is not available', e);
-      }
+      });
     }
     // in lockstep mode the handshake's config.env holds every PS2_* setting that changes what the game computes
     // (host/lockstep_id.cpp), so both peers must pass the same ones; render and logging settings are each peer's own
@@ -687,6 +758,7 @@ var Module = {
                             '%   heap ' + memory + ' MB   audio ' + Module.audioQueuedMs().toFixed(0) + ' ms' +
                             (interpreted > lastInterpreted ? '   vu1 interpreted ' + Math.round((interpreted - lastInterpreted) * 1000 / span) + '/s' : '') +
                             (session ? '   ' + lockstepStats() : '') + (Module.prefetchText ? '   ' + Module.prefetchText : '');
+      showLobby();
       lastInterpreted = interpreted;
       lastEmuIdle = emuIdle;
       lastRenderIdle = renderIdle;
@@ -706,12 +778,38 @@ function lockstepStats() {
          '  stalls ' + s.emu.stallFrames + '  hashes ' + (l.hashesOk || 0) + '  desyncs ' + (l.desyncs || 0) + '  resyncs ' + s.resyncs;
 }
 
+// The lobby line: "You (host) · ABCD-EFGH · waiting", "Alice (host) + Bob · p2p · 34 ms"; Kick for the host.
+const lobbyEl = document.getElementById('lobby'), kickButton = document.getElementById('kick');
+const showCode = (code) => (code || '').toUpperCase().replace(/^(.{4})(.{4})$/, '$1-$2');
+function showLobby() {
+  if (!lobby || !session) return;
+  const l = session.ls ? session.ls.snapshot() : {}, peer = l.peerNick;
+  const link = l.running && !l.solo ? '  ·  ' + l.transport + (l.rttP50 ? '  ·  ' + l.rttP50.toFixed(0) + ' ms' : '') : '';
+  lobbyEl.textContent = session.isHost ? (peer ? 'You (host) + ' + peer + link : 'You (host)  ·  ' + showCode(session.code) + '  ·  waiting')
+                                       : (peer || 'Host') + ' (host) + you' + link;
+  lobbyEl.hidden = false;
+  kickButton.hidden = !(session.isHost && peer);
+}
+// two clicks: a dialog would block the page, and with it both players' game
+kickButton.addEventListener('click', () => {
+  const armed = kickButton.dataset.armed;
+  delete kickButton.dataset.armed;
+  kickButton.textContent = 'Kick';
+  if (armed) return session && session.kick();
+  kickButton.dataset.armed = '1';
+  kickButton.textContent = 'Kick ' + ((session && session.ls && session.ls.peerNick) || 'player') + '?';
+  setTimeout(() => { delete kickButton.dataset.armed; kickButton.textContent = 'Kick'; }, 3000);
+});
+if (lockstepMode) document.getElementById('import-card').hidden = true; // the session's card is the host's
+window.addEventListener('pagehide', () => { if (session) session.bye(); });
+
 // The host's invite link. Host mode (server/host.mjs) answers /host-info on localhost with the public tunnel URL and
-// mints a single-use invite token per call; elsewhere (a VPS) the page's own room link is the invite.
+// mints a single-use invite token per call; elsewhere (a VPS) the page's own room link is the invite, or in the lobby
+// the landing page's /play/<code>.
 async function showInvite(id) {
-  let invite = new URL(location.href);
+  let invite = new URL(lobby ? '/play/' + id : location.href, location.origin);
   for (const k of [...invite.searchParams.keys()]) if (k !== 'room') invite.searchParams.delete(k);
-  const info = await fetch('/host-info?new=1&room=' + encodeURIComponent(id), { cache: 'no-store' }).then((r) => (r.ok ? r.json() : null)).catch(() => null);
+  const info = lobby ? null : await fetch('/host-info?new=1&room=' + encodeURIComponent(id), { cache: 'no-store' }).then((r) => (r.ok ? r.json() : null)).catch(() => null);
   if (info?.inviteUrl) invite = new URL(info.inviteUrl);
   statusEl.textContent = 'Playing alone. Invite a player (click to copy): ' + invite.href;
   statusEl.style.cursor = 'copy';
@@ -722,7 +820,7 @@ async function startSession() {
   const mod = await import('./lockstep-emu.js');
   const { build, config, patchFiles } = mod.identity(Module);
   let id = room;
-  if (!id || id === 'new') {
+  if (!owner && (!id || id === 'new')) {
     id = await mod.Lockstep.createRoom({ build });
     const url = new URL(location.href);
     url.searchParams.set('room', id);
@@ -733,16 +831,18 @@ async function startSession() {
   const test = { dropIn: Number(params.get('lsdrop')) || 0, delayMs: Number(params.get('lsdelay')) || 0,
                  blockIce: params.has('lsrelay'), p2pTimeoutMs: Number(params.get('lsrelay')) || undefined };
   const s = new mod.Session({
-    Module, room: id, build, disc, config, patchFiles, rtc: Module.rtcEpoch, readPad, test,
+    Module, room: id, owner, nick: nick || undefined, build, disc, config, patchFiles, rtc: Module.rtcEpoch, readPad, test,
     log: (...a) => console.log(...a),
+    onEnd: lobby ? backToLobby : undefined,
     onStatus: (text) => {
       lsStatus = text;
-      if (s.isHost && text === 'waiting for the other player') showInvite(id);
+      if (s.isHost && text === 'waiting for the other player') showInvite(s.code || id);
       else if (text === 'running' && statusEl.onclick) {
         statusEl.onclick = null;
         statusEl.style.cursor = '';
         statusEl.textContent = 'Running, 2 players, ' + Module.gpuInfo;
       }
+      showLobby();
     },
   });
   await s.join();
@@ -774,6 +874,7 @@ document.getElementById('start').addEventListener('click', async () => {
       window.lsSession = session;
     } catch (e) {
       console.warn('lockstep:', e);
+      if (lobbyGuest && backToLobby({ offline: 'offline', full: 'full', 'build-mismatch': 'build' }[e.message] || 'error')) return;
       statusEl.textContent = 'Could not join the session: ' + e.message;
       return;
     }
