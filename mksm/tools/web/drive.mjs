@@ -12,7 +12,9 @@
 //   --control FILE                     live commands appended to FILE: press <pad> <btn> [hold] [delay] | stick <pad> <x,y>
 //                                      [hold] [delay] | shot <label> [delay] | eval <js> | quit   (see ctl.sh)
 //   --eval-at FRAME:JS --eval-before-start JS --reload-at FRAME --probe-gpu --probe-shot --window W,H
-//   --cpu-profile FRAME:SECONDS        main-thread CPU profile from FRAME for SECONDS -> OUT/main.cpuprofile
+//   --cpu-profile FRAME:SECONDS        CPU profiles from FRAME for SECONDS: main thread -> OUT/main.cpuprofile, each
+//                                      worker (pthread) -> OUT/worker-N.cpuprofile
+//   --cpu-throttle N                   slow the page's main thread N times (CDP Emulation.setCPUThrottlingRate)
 //   buttons: cross circle square triangle l1 r1 l2 r2 select start l3 r3 up down left right
 import { spawn, execFileSync } from 'node:child_process';
 import fs from 'node:fs';
@@ -35,6 +37,7 @@ for (let i = 0; i < argv.length; ++i) {
   else if (a === '--pad-script') opt.padScript = next();
   else if (a === '--eval-at') { const s = next(); const c = s.indexOf(':'); opt.evalAt.push({ frame: Number(s.slice(0, c)), js: s.slice(c + 1), done: false }); }
   else if (a === '--reload-at') opt.reloadAt = Number(next());
+  else if (a === '--cpu-throttle') opt.cpuThrottle = Number(next());
   else if (a === '--cpu-profile') { const [f, secs] = next().split(':').map(Number); opt.cpuProfile = { frame: f, ms: secs * 1000 }; }
   else if (a === '--no-start') opt.noStart = true;
   else if (a === '--flags') opt.flags = next().split(' ').filter(Boolean);
@@ -213,6 +216,7 @@ async function main() {
   await call('Page.enable');
   await call('Network.enable').catch(() => {});
   await call('Inspector.enable').catch(() => {});
+  if (opt.cpuThrottle) await call('Emulation.setCPUThrottlingRate', { rate: opt.cpuThrottle });
   if (opt.fakePads) await call('Page.addScriptToEvaluateOnNewDocument', { source: fakePadSource(opt.fakePads) });
   const evaluate = async (expression, userGesture = false) => {
     const r = await call('Runtime.evaluate', { expression, returnByValue: true, userGesture, awaitPromise: true });
@@ -295,15 +299,24 @@ async function main() {
     }
     if (opt.cpuProfile && !opt.cpuProfile.at && s.frame >= opt.cpuProfile.frame) {
       opt.cpuProfile.at = Date.now();
-      await call('Profiler.enable');
-      await call('Profiler.setSamplingInterval', { interval: 100 });
-      await call('Profiler.start');
-      say('[driver] cpu profile started at frame ' + s.frame);
+      const workers = [];
+      listeners.push((msg) => { if (msg.method === 'Target.attachedToTarget' && msg.params.targetInfo.type === 'worker') workers.push(msg.params.sessionId); });
+      await call('Target.setAutoAttach', { autoAttach: true, waitForDebuggerOnStart: false, flatten: true });
+      await sleep(500);
+      opt.cpuProfile.sessions = [sessionId, ...workers];
+      for (const sid of opt.cpuProfile.sessions) {
+        await send('Profiler.enable', {}, sid);
+        await send('Profiler.setSamplingInterval', { interval: 100 }, sid);
+        await send('Profiler.start', {}, sid);
+      }
+      say(`[driver] cpu profile started at frame ${s.frame} (${workers.length} workers)`);
     }
     if (opt.cpuProfile && opt.cpuProfile.at && !opt.cpuProfile.done && Date.now() - opt.cpuProfile.at >= opt.cpuProfile.ms) {
       opt.cpuProfile.done = true;
-      const { profile: prof } = await call('Profiler.stop');
-      fs.writeFileSync(path.join(opt.out, 'main.cpuprofile'), JSON.stringify(prof));
+      for (const [k, sid] of opt.cpuProfile.sessions.entries()) {
+        const { profile: prof } = await send('Profiler.stop', {}, sid);
+        fs.writeFileSync(path.join(opt.out, k ? `worker-${k}.cpuprofile` : 'main.cpuprofile'), JSON.stringify(prof));
+      }
       say('[driver] cpu profile written at frame ' + s.frame);
     }
     while (pendingShots.length && s.frame >= pendingShots[0]) { const at = pendingShots.shift(); await shot((shotLabels.get(at) || 'f') + '-f' + s.frame); }
