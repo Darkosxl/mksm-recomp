@@ -106,10 +106,12 @@
   </div>
 </div>
 <div id="bar"><span id="status">Loading…</span><span id="stats"></span>
-  <select id="scale" aria-label="Resolution" title="Internal resolution, the page reloads to apply it">
-    <option value="1">640×512</option>
-    <option value="2">1280×1024</option>
-    <option value="3">1920×1536</option>
+  <select id="quality" aria-label="Quality" title="Picture quality, the page reloads to apply it">
+    <option value="auto">Auto</option>
+    <option value="3x6">Remaster 3x6</option>
+    <option value="2x">Remaster 2x</option>
+    <option value="1x">Remaster 1x</option>
+    <option value="original">Original</option>
   </select>
   <button id="controls-toggle" type="button" hidden>Hide controls</button>
   <button id="export-card" type="button" title="Download the memory card in slot 1 as a .ps2 file">Export card</button>
@@ -264,15 +266,18 @@ function onTouch(e) {
 }
 for (const type of ['touchstart', 'touchmove', 'touchend', 'touchcancel']) touchRoot.addEventListener(type, onTouch, { passive: false });
 
-const scaleSelect = document.getElementById('scale');
-let scale = params.get('PS2_SCALE');
-if (!scale) {
-  try { scale = localStorage.getItem('ps2web-scale'); } catch (e) {}
-}
-scale = ['1', '2', '3'].includes(scale) ? scale : '1';
-scaleSelect.value = scale;
-scaleSelect.addEventListener('change', () => {
-  try { localStorage.setItem('ps2web-scale', scaleSelect.value); } catch (e) {}
+// quality rungs, best first (Auto starts at the one it last settled on): internal resolution and HD texture pack scale
+const RUNGS = { '3x6': { scale: '3x6', pack: '4' }, '2x': { scale: '2x4', pack: '2' }, '1x': { scale: '1x2', pack: '2' }, original: { scale: '1', pack: 'off' } };
+const qualitySelect = document.getElementById('quality');
+let quality = 'auto', rung = null;
+try { quality = localStorage.getItem('ps2web-quality') || 'auto'; rung = localStorage.getItem('ps2web-auto-rung'); } catch (e) {}
+if (quality !== 'auto' && !(quality in RUNGS)) quality = 'auto';
+rung = quality !== 'auto' ? quality : rung in RUNGS ? rung : '3x6';
+let scale = RUNGS[rung].scale;
+if (/^[1-4](x[1-6])?$/.test(params.get('PS2_SCALE') || '')) scale = params.get('PS2_SCALE');
+qualitySelect.value = quality;
+qualitySelect.addEventListener('change', () => {
+  try { localStorage.setItem('ps2web-quality', qualitySelect.value); } catch (e) {}
   const url = new URL(location.href);
   url.searchParams.delete('PS2_SCALE');
   location.href = url.href;
@@ -601,7 +606,8 @@ async function chooseGpu() {
   return 'GPU cannot draw to the page, copying frames';
 }
 
-let frames = 0, last = performance.now(), lastGpu = 0, lastEmuIdle = 0, lastRenderIdle = 0, lastVuIdle = 0, lastInterpreted = 0;
+let frames = 0, last = performance.now(), lastGpu = 0, lastEmuIdle = 0, lastRenderIdle = 0, lastVuIdle = 0, lastInterpreted = 0, lastMainBusy = 0;
+let prevFrame = 0, worst = 0, slow = 0;  // per window: the longest frame-to-frame gap and the gaps over 18 ms
 let shown = 0, fresh = false;
 const countShown = () => {
   if (fresh) ++shown;
@@ -689,12 +695,16 @@ var Module = {
     }
     // in lockstep mode the handshake's config.env holds every PS2_* setting that changes what the game computes
     // (host/lockstep_id.cpp), so both peers must pass the same ones; render and logging settings are each peer's own
+    // the remaster look (remaster/play.sh) on every rung: the widescreen patch changes what the game computes, so co-op
+    // peers at different quality still match
+    Object.assign(Module.ENV, { PS2_GS_HW: '1', PS2_PNACH: '/game/widescreen.pnach', PS2_ASPECT: '16:9', PS2_FIELD_FLAG: '4F4D68,66189C,67B758' });
     for (const [key, value] of params) if (key.startsWith('PS2_')) Module.ENV[key] = value;
     if (lockstepMode) {
       if (params.get('lsvu') === '0') Module.ENV.PS2_NO_VU_THREAD = '1';
       try { FS.mkdir('/session'); } catch (e) {}
     }
     Module.ENV.PS2_SCALE = scale;
+    Module.packScale = RUNGS[rung].pack;
     Module.addRunDependency('disc');
     Promise.all([fetch(Module.discUrl, { method: 'HEAD' }), chooseGpu().catch((e) => 'GPU check failed: ' + e)]).then(([r, gpu]) => {
       Module.discSize = Number(r.headers.get('content-length')) || 0;
@@ -715,24 +725,29 @@ var Module = {
     ++frames;
     fresh = true;
     const now = performance.now();
+    if (now - prevFrame < 1000) worst = Math.max(worst, now - prevFrame), slow += now - prevFrame > 18;
+    prevFrame = now;
     if (now - last >= 1000) {
       const gpu = Module._ps2web_gpu_ms();
       const memory = (Module.HEAPU8.length / 1048576).toFixed(0);
-      const emuIdle = Module._ps2web_idle_ms(0), renderIdle = Module._ps2web_idle_ms(1), vuIdle = Module._ps2web_idle_ms(2), span = now - last;
+      const emuIdle = Module._ps2web_idle_ms(0), renderIdle = Module._ps2web_idle_ms(1), vuIdle = Module._ps2web_idle_ms(2), mainBusy = Module._ps2web_idle_ms(3), span = now - last;
       const interpreted = Module._ps2web_vu_interpreted();
-      statsEl.textContent = 'frame ' + Module._ps2web_frames() + '   ' + (frames * 1000 / span).toFixed(1) + ' fps (' + (shown * 1000 / span).toFixed(0) + ' on screen)   GPU ' + ((gpu - lastGpu) / span * 100).toFixed(0) +
+      statsEl.textContent = 'frame ' + Module._ps2web_frames() + '   ' + (frames * 1000 / span).toFixed(1) + ' fps (' + (shown * 1000 / span).toFixed(0) + ' on screen, worst ' + worst.toFixed(1) + ' ms, ' + slow + ' >18 ms)   GPU ' + ((gpu - lastGpu) / span * 100).toFixed(0) +
                             '%   idle emu ' + ((emuIdle - lastEmuIdle) / span * 100).toFixed(0) + '% vu ' + ((vuIdle - lastVuIdle) / span * 100).toFixed(0) +
-                            '% gs ' + ((renderIdle - lastRenderIdle) / span * 100).toFixed(0) +
+                            '% gs ' + ((renderIdle - lastRenderIdle) / span * 100).toFixed(0) + '%   main busy ' + ((mainBusy - lastMainBusy) / span * 100).toFixed(0) +
                             '%   heap ' + memory + ' MB   audio ' + Module.audioQueuedMs().toFixed(0) + ' ms' +
                             (interpreted > lastInterpreted ? '   vu1 interpreted ' + Math.round((interpreted - lastInterpreted) * 1000 / span) + '/s' : '') +
                             (session ? '   ' + lockstepStats() : '') + (Module.prefetchText ? '   ' + Module.prefetchText : '');
       lastInterpreted = interpreted;
       lastEmuIdle = emuIdle;
       lastRenderIdle = renderIdle;
+      lastMainBusy = mainBusy;
       lastVuIdle = vuIdle;
       lastGpu = gpu;
       frames = 0;
       shown = 0;
+      worst = 0;
+      slow = 0;
       last = now;
     }
   },

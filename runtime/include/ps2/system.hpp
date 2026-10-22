@@ -163,6 +163,15 @@ double gpu_busy_ms();
 // Width/height the frame is shown at: PS2_ASPECT=16:9 (with a widescreen game patch), default 4:3.
 float display_aspect();
 void browser_yield();
+#ifdef __EMSCRIPTEN__
+// Web, PS2_WEB_THREADS (default on): the GS front end runs on a pthread (render_pending there) and the browser's main
+// thread runs its GPU jobs, the only WebGPU caller.
+bool web_gs_threads();
+bool run_gpu_jobs(double budget_ms, bool &presented);  // up to the first present; whether any ran
+std::uint32_t main_work();  // bumped whenever the main thread has work (jobs, disc reads: wake_main_thread)
+void wait_main_work(std::uint32_t seen, int timeout_ms);  // main thread (JSPI): until main_work() != seen
+void wake_main_thread();
+#endif
 std::uint64_t frames_run();
 std::uint64_t primitives_drawn();
 // pad 0 is the first controller port, pad 1 the second, which starts unplugged

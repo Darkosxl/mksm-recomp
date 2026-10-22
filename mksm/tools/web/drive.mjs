@@ -12,6 +12,7 @@
 //   --control FILE                     live commands appended to FILE: press <pad> <btn> [hold] [delay] | stick <pad> <x,y>
 //                                      [hold] [delay] | shot <label> [delay] | eval <js> | quit   (see ctl.sh)
 //   --eval-at FRAME:JS --eval-before-start JS --reload-at FRAME --probe-gpu --probe-shot --window W,H
+//   --cpu-profile FRAME:SECONDS        main-thread CPU profile from FRAME for SECONDS -> OUT/main.cpuprofile
 //   buttons: cross circle square triangle l1 r1 l2 r2 select start l3 r3 up down left right
 import { spawn, execFileSync } from 'node:child_process';
 import fs from 'node:fs';
@@ -34,6 +35,7 @@ for (let i = 0; i < argv.length; ++i) {
   else if (a === '--pad-script') opt.padScript = next();
   else if (a === '--eval-at') { const s = next(); const c = s.indexOf(':'); opt.evalAt.push({ frame: Number(s.slice(0, c)), js: s.slice(c + 1), done: false }); }
   else if (a === '--reload-at') opt.reloadAt = Number(next());
+  else if (a === '--cpu-profile') { const [f, secs] = next().split(':').map(Number); opt.cpuProfile = { frame: f, ms: secs * 1000 }; }
   else if (a === '--no-start') opt.noStart = true;
   else if (a === '--flags') opt.flags = next().split(' ').filter(Boolean);
   else if (a === '--probe-gpu') opt.probe = true;
@@ -276,7 +278,7 @@ async function main() {
   };
   if (!(await boot(false))) return finish(1);
 
-  const deadline = t0 + (opt.seconds || 600) * 1000;
+  const deadline = Date.now() + (opt.seconds || 600) * 1000;  // from the start click: the heavy lock may have kept it waiting
   let nextShotFrame = opt.shotEvery || Infinity;
   const pendingShots = [...opt.shots].sort((a, b) => a - b);
   let lastStats = '', reloaded = false, firstFrameAt = null, lastFrame = 0, controlDone = 0;
@@ -290,6 +292,19 @@ async function main() {
       e.done = true;
       const v = await evaluate(e.js).catch((err) => 'ERR ' + err.message);
       say(`[driver] eval@${e.frame}: ${JSON.stringify(v)}`);
+    }
+    if (opt.cpuProfile && !opt.cpuProfile.at && s.frame >= opt.cpuProfile.frame) {
+      opt.cpuProfile.at = Date.now();
+      await call('Profiler.enable');
+      await call('Profiler.setSamplingInterval', { interval: 100 });
+      await call('Profiler.start');
+      say('[driver] cpu profile started at frame ' + s.frame);
+    }
+    if (opt.cpuProfile && opt.cpuProfile.at && !opt.cpuProfile.done && Date.now() - opt.cpuProfile.at >= opt.cpuProfile.ms) {
+      opt.cpuProfile.done = true;
+      const { profile: prof } = await call('Profiler.stop');
+      fs.writeFileSync(path.join(opt.out, 'main.cpuprofile'), JSON.stringify(prof));
+      say('[driver] cpu profile written at frame ' + s.frame);
     }
     while (pendingShots.length && s.frame >= pendingShots[0]) { const at = pendingShots.shift(); await shot((shotLabels.get(at) || 'f') + '-f' + s.frame); }
     if (s.frame >= nextShotFrame) { await shot('f' + s.frame); while (nextShotFrame <= s.frame) nextShotFrame += opt.shotEvery; }

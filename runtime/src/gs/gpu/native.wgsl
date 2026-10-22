@@ -1222,9 +1222,9 @@ fn native_xfer_fs(in: ImportOut) -> NativeFrag {
 // (prm 5..8: x0 y0 x1 y1 in samples; 0..4 the frame and Z buffer as for the import; 9 the run wrote Z). Only words
 // whose value changed are stored, so samples no native draw touched keep their VRAM word bit for bit (whatever the
 // import could not represent, e.g. the low bits of a 32-bit Z).
-@group(0) @binding(9) var nat_color: texture_2d<f32>;
-@group(0) @binding(10) var nat_depth: texture_depth_2d;
-@group(0) @binding(11) var nat_alpha: texture_2d<u32>;
+@group(0) @binding(12) var nat_color: texture_2d<f32>;
+@group(0) @binding(13) var nat_depth: texture_depth_2d;
+@group(0) @binding(14) var nat_alpha: texture_2d<u32>;
 
 @compute @workgroup_size(8, 8)
 fn native_writeback(@builtin(global_invocation_id) gid: vec3<u32>) {

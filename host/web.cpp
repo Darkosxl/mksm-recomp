@@ -16,6 +16,7 @@
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
+#include <functional>
 #include <string>
 #include <vector>
 
@@ -84,11 +85,13 @@ EM_JS(double, ps2web_url_read, (const char *url, std::uint8_t *out, double size)
     }
 });
 EM_JS(char *, ps2web_disc_url, (), { return stringToNewUTF8(new URL(Module.discUrl, location.href).href); });
-EM_JS(void, ps2web_frame_done, (), {
+EM_JS(void, ps2web_frame_done, (std::atomic<std::uint32_t> *shown), {
     if (!Module.shownChannel) {
         Module.shownChannel = new MessageChannel();
         Module.shownWaiters = [];
         Module.shownChannel.port1.onmessage = () => {
+            Atomics.add(HEAP32, shown >> 2, 1);  // after the rAF the frame was presented in: one per frame_done
+            Atomics.notify(HEAP32, shown >> 2);
             Module.shownPending = false;
             const waiters = Module.shownWaiters;
             Module.shownWaiters = [];
@@ -205,6 +208,12 @@ std::uint64_t g_disc_size = 0, g_use_clock = 0, g_last_chunk = ~0ull, g_run = 0;
 char *g_disc_url = nullptr;
 char *g_state_url = nullptr;
 
+// the main loop serves disc reads: it waits on the render ring, or on main work with the GS threads (PS2_WEB_THREADS)
+void wake_main() {
+    ps2::wake_render_thread();
+    ps2::wake_main_thread();
+}
+
 Slot *find_slot(std::uint64_t index) {
     for (Slot &s : g_slots)
         if (s.state.load(std::memory_order_acquire) != kEmpty && s.index == index) return &s;
@@ -229,7 +238,7 @@ Slot *want(std::uint64_t index) {
     victim->size = static_cast<std::uint32_t>(std::min<std::uint64_t>(kChunk, g_disc_size - index * kChunk));
     victim->used = ++g_use_clock;
     victim->state.store(kWanted, std::memory_order_release);
-    ps2::wake_render_thread();
+    wake_main();
     return victim;
 }
 
@@ -279,7 +288,7 @@ const Slot *chunk_blocking(std::uint64_t index) {
             std::fprintf(stderr, "[web] disc chunk %llu failed %d times, retrying\n", static_cast<unsigned long long>(index), failures);
             usleep(static_cast<useconds_t>(std::min(2000, 100 << std::min(failures, 5)) * 1000));
             s->state.store(kWanted, std::memory_order_release);
-            ps2::wake_render_thread();
+            wake_main();
         } else {
             emscripten_futex_wait(&s->state, state, 100);
         }
@@ -301,7 +310,7 @@ const Slot *chunk(std::uint64_t index) {
         }
         usleep(100000);
         s->state.store(kWanted, std::memory_order_release);
-        ps2::wake_render_thread();
+        wake_main();
     }
     return nullptr;
 }
@@ -314,7 +323,7 @@ bool disc_ready(std::uint64_t offset, std::size_t size) {
         Slot *s = want(index);
         if (s && s->state.load(std::memory_order_acquire) == kFailed) {
             s->state.store(kWanted, std::memory_order_release);
-            ps2::wake_render_thread();
+            wake_main();
         }
         ready = ready && s && s->state.load(std::memory_order_acquire) == kReady;
         advance(index);
@@ -361,7 +370,8 @@ void push_audio(const std::int16_t *samples, std::size_t frames) {
 double audio_queued_ms() { return static_cast<double>(g_audio.write.load() - g_audio.read.load()) / 48.0; }
 
 double g_next_frame = 0.0;
-std::atomic<double> g_emulation_idle{0.0}, g_render_idle{0.0};
+std::atomic<double> g_emulation_idle{0.0}, g_render_idle{0.0}, g_main_busy{0.0};
+std::atomic<std::uint32_t> g_shown{0};  // frames on screen: the page counts one per ps2web_frame_done
 
 void pace() {
     ps2::post_present();
@@ -653,8 +663,39 @@ extern "C" EMSCRIPTEN_KEEPALIVE double ps2web_audio_queued_ms() { return audio_q
 extern "C" EMSCRIPTEN_KEEPALIVE double ps2web_vu_interpreted() { return static_cast<double>(ps2::vu1_interpreted_calls()); }
 extern "C" EMSCRIPTEN_KEEPALIVE double ps2web_vu_jit_programs() { return static_cast<double>(ps2::vu1_jit_programs()); }
 extern "C" EMSCRIPTEN_KEEPALIVE double ps2web_idle_ms(int which) {
+    if (which == 3) return g_main_busy.load();  // not idle: the main thread's time running GPU jobs
     if (which == 2) return ps2::vu_thread_idle_ms();
     return which ? g_render_idle.load() : g_emulation_idle.load();
+}
+
+// PS2_WEB_THREADS: the GS front end's loop, on its own pthread (gsdraw and gsprim with it). Before each present it waits
+// until the frame before is on screen, unless the audio runs dry.
+void *gs_front(void *) {
+    static const std::function<void(const std::uint32_t *, std::uint32_t, std::uint32_t)> none;
+    static const std::function<void()> wait_shown = [] {
+        static std::uint32_t presents = 0;
+        static int since_skip = 0;
+        static double window_start = 0.0, window_gpu = 0.0, gpu_load = 1.0;
+        const double start = emscripten_get_now();
+        if (start - window_start > 500.0) {
+            const double gpu = ps2::gpu_busy_ms();
+            gpu_load = window_start > 0.0 ? (gpu - window_gpu) / (start - window_start) : 1.0;
+            window_start = start;
+            window_gpu = gpu;
+        }
+        if (++since_skip > 8 && gpu_load < 0.8 && g_audio.active.load() && audio_queued_ms() < 40.0) since_skip = 0;
+        else
+            for (std::uint32_t shown; (shown = g_shown.load()) < presents;) emscripten_futex_wait(&g_shown, shown, 100);
+        ++presents;
+        g_render_idle.store(g_render_idle.load() + emscripten_get_now() - start);
+    };
+    for (;;) {
+        if (ps2::render_pending(true, none, wait_shown, 6.0) == ps2::Rendered::idle) {
+            const double start = emscripten_get_now();
+            ps2::wait_render_work(50);
+            g_render_idle.store(g_render_idle.load() + emscripten_get_now() - start);
+        }
+    }
 }
 
 int main(int argc, char **argv) {
@@ -729,7 +770,10 @@ int main(int argc, char **argv) {
         surface = ps2::attach_window(target);
     }
     copy = copy || (!surface && !no_surface);
-    std::fprintf(stderr, "[web] %s\n", surface ? "presenting through WebGPU" : copy ? "presenting through a 2D canvas copy" : "not presenting");
+    if (!surface) setenv("PS2_WEB_THREADS", "0", 1);  // the copy path reads frames back in the main loop's render_pending
+    const bool threads = ps2::web_gs_threads();
+    std::fprintf(stderr, "[web] %s%s\n", surface ? "presenting through WebGPU" : copy ? "presenting through a 2D canvas copy" : "not presenting",
+                 threads ? ", the GS on its own threads" : "");
 
     ps2::start_render_thread();
     pthread_attr_t attr;
@@ -772,10 +816,31 @@ int main(int argc, char **argv) {
         ps2web_wait_shown();
         g_render_idle.store(g_render_idle.load() + emscripten_get_now() - start);
     };
+    if (threads) {
+        // the main thread: disc reads and the GS threads' GPU jobs (WebGPU is only callable here), a present per task
+        pthread_t front;
+        if (pthread_create(&front, &attr, gs_front, nullptr) != 0) {
+            std::fprintf(stderr, "[web] cannot start the GS thread\n");
+            return 1;
+        }
+        for (;;) {
+            service_disc();
+            const std::uint32_t seen = ps2::main_work();
+            const double start = emscripten_get_now();
+            bool presented = false;
+            if (ps2::run_gpu_jobs(8.0, presented)) {
+                g_main_busy.store(g_main_busy.load() + emscripten_get_now() - start);
+                if (presented) ps2web_frame_done(&g_shown);
+                ps2::browser_yield();
+            } else {
+                ps2::wait_main_work(seen, 50);
+            }
+        }
+    }
     for (;;) {
         service_disc();
         const ps2::Rendered rendered = ps2::render_pending(surface, copy ? blit : none, wait_shown, 6.0);
-        if (rendered == ps2::Rendered::presented) ps2web_frame_done();
+        if (rendered == ps2::Rendered::presented) ps2web_frame_done(&g_shown);
         if (rendered != ps2::Rendered::idle) {
             ps2::browser_yield();
         } else {

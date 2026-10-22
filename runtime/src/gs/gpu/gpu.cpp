@@ -6,7 +6,12 @@
 #include "../queue.hpp"
 
 #include <webgpu/webgpu.h>
-#ifndef __EMSCRIPTEN__
+#ifdef __EMSCRIPTEN__
+#include <emscripten.h>
+#include <emscripten/proxying.h>
+#include <emscripten/threading.h>
+#include <unistd.h>
+#else
 #include <webgpu/wgpu.h>
 #endif
 #ifdef __x86_64__
@@ -16,6 +21,8 @@
 #include <algorithm>
 #include <array>
 #include <atomic>
+#include <chrono>
+#include <climits>
 #include <cmath>
 #include <condition_variable>
 #include <cstdio>
@@ -31,6 +38,7 @@
 #endif
 #include <string>
 #include <thread>
+#include <type_traits>
 #include <unordered_map>
 
 extern const char kGsShader[];
@@ -44,6 +52,42 @@ void swizzle_tables(std::vector<std::uint32_t> &out);
 namespace ps2::gs::gpu {
 
 void configure_surface();
+
+// Web: WebGPU objects belong to the browser's main thread (emdawnwebgpu keeps them in per-thread tables). With
+// PS2_WEB_THREADS (default on) it runs the jobs (enqueue, run_jobs) and the GS front end and gsdraw run on pthreads:
+// their few direct WebGPU calls (making targets, bind groups and pipelines, readbacks) run on the main thread through
+// on_main while they wait. Never called holding g_job_mutex. Desktop: wgpu-native is thread-safe, on_main just calls.
+#ifdef __EMSCRIPTEN__
+bool web_threads() {
+    static const bool on = [] {
+        const char *e = std::getenv("PS2_WEB_THREADS");
+        return !e || std::strcmp(e, "0") != 0;
+    }();
+    return on;
+}
+bool off_main() { return !emscripten_is_main_browser_thread(); }
+template <class F> void on_main(F &&f) {
+    if (!off_main()) return f();
+    emscripten_proxy_sync(emscripten_proxy_get_system_queue(), emscripten_main_runtime_thread_id(),
+                          [](void *p) { (*static_cast<std::remove_reference_t<F> *>(p))(); }, &f);
+}
+// the first statement of a function that calls WebGPU: off the main thread, the whole call runs there
+#define MAIN_ONLY(call)                     \
+    if (off_main()) {                       \
+        decltype(call) result_{};           \
+        on_main([&] { result_ = call; });   \
+        return result_;                     \
+    }
+#define MAIN_ONLY_VOID(call) \
+    if (off_main()) return on_main([&] { call; })
+bool web_worker() { return web_threads(); }
+#else
+constexpr bool off_main() { return false; }
+constexpr bool web_worker() { return false; }
+template <class F> void on_main(F &&f) { f(); }
+#define MAIN_ONLY(call)
+#define MAIN_ONLY_VOID(call)
+#endif
 
 namespace {
 
@@ -229,7 +273,7 @@ std::vector<Write> g_writes;
 bool g_worker_on = false;  // render thread only
 
 void queue_write(WGPUBuffer buffer, std::uint64_t offset, const void *data, std::uint64_t size) {
-    if (!g_worker_on) return wgpuQueueWriteBuffer(g_queue, buffer, offset, data, size);
+    if (!g_worker_on && !off_main()) return wgpuQueueWriteBuffer(g_queue, buffer, offset, data, size);
     const auto *p = static_cast<const std::uint8_t *>(data);
     g_writes.push_back({buffer, offset, std::vector<std::uint8_t>(p, p + size)});
 }
@@ -1174,7 +1218,32 @@ void wait_until(const bool &flag) {
     while (!flag) pump();
 }
 
+// A GPU callback's flag, waited for on any thread: the main thread pumps (the callback runs from ProcessEvents); a web
+// pthread sleeps on it (the call ran on_main and its callback is spontaneous: the browser's event loop runs it).
+struct Done {
+    std::atomic<std::uint32_t> flag{0};
+    const WGPUCallbackMode mode = off_main() ? WGPUCallbackMode_AllowSpontaneous : WGPUCallbackMode_AllowProcessEvents;
+    void set() {
+        flag.store(1);
+#ifdef __EMSCRIPTEN__
+        emscripten_futex_wake(&flag, INT_MAX);
+#endif
+    }
+    void wait() {
+        while (!flag.load()) {
+#ifdef __EMSCRIPTEN__
+            if (off_main()) {
+                emscripten_futex_wait(&flag, 0, 100);
+                continue;
+            }
+#endif
+            pump();
+        }
+    }
+};
+
 WGPUBuffer make_buffer(std::uint64_t size, WGPUBufferUsage usage) {
+    MAIN_ONLY(make_buffer(size, usage));
     WGPUBufferDescriptor d = WGPU_BUFFER_DESCRIPTOR_INIT;
     d.size = size;
     d.usage = usage;
@@ -1184,6 +1253,7 @@ WGPUBuffer make_buffer(std::uint64_t size, WGPUBufferUsage usage) {
 void native_writeback_group();
 
 void rebuild_group() {
+    MAIN_ONLY_VOID(rebuild_group());
     if (g_group) wgpuBindGroupRelease(g_group);
     WGPUBindGroupEntry e[9] = {};
     WGPUBuffer buffers[9] = {g_vram, g_tables, g_params, g_data, g_clut, g_scratch, g_cache, g_decoded, g_fail};
@@ -1322,10 +1392,13 @@ void profile_submit() {
 using ParamRecords = std::vector<std::array<std::uint32_t, kParamStride / 4>>;
 
 // Copies the commands' data into the GPU buffers, encodes them and submits (render thread, or the submit worker).
-void run_commands(Arena &arena, ParamRecords &params, std::vector<Command> &commands, const std::vector<NativeDraw> &natives, WGPUTextureView present_view) {
+// staged: the arena and params are already uploaded (web, stage_uploads)
+void run_commands(Arena &arena, ParamRecords &params, std::vector<Command> &commands, const std::vector<NativeDraw> &natives, WGPUTextureView present_view, bool staged = false) {
     ensure_capacity(arena.size(), params.size());
-    wgpuQueueWriteBuffer(g_queue, g_data, 0, arena.data(), arena.size() * 4);
-    wgpuQueueWriteBuffer(g_queue, g_params, 0, params.data(), params.size() * kParamStride);
+    if (!staged) {
+        wgpuQueueWriteBuffer(g_queue, g_data, 0, arena.data(), arena.size() * 4);
+        wgpuQueueWriteBuffer(g_queue, g_params, 0, params.data(), params.size() * kParamStride);
+    }
     g_uploaded[0].fetch_add(arena.size() * 4, std::memory_order_relaxed);
     g_uploaded[1].fetch_add(params.size() * kParamStride, std::memory_order_relaxed);
     if (g_query_ready) {
@@ -1432,7 +1505,8 @@ void run_commands(Arena &arena, ParamRecords &params, std::vector<Command> &comm
 // The submit worker: copies into wgpu staging (6-10 MB of prims, uploads and tile lists a frame, at ~2.3 GB/s), command
 // encoding and submits took a fifth of the render thread. Jobs run in order, two at most in flight. Anything that reads
 // GPU results or submits by itself drains it first (drain()). Off with PS2_SUBMIT_THREAD=0, when single-threaded
-// (captures; PS2_SUBMIT_THREAD=2 turns it on there to test it) and while profiling.
+// (captures; PS2_SUBMIT_THREAD=2 turns it on there to test it) and while profiling. Web: the browser's main thread is the
+// worker (run_jobs, PS2_WEB_THREADS).
 // A display readback (display_async, display_stream).
 struct Copy {
     WGPUBuffer buffer = nullptr;
@@ -1461,10 +1535,100 @@ std::deque<Job> g_jobs;
 std::vector<Job> g_spare_jobs;
 bool g_job_running = false, g_worker_started = false;
 
+#ifdef __EMSCRIPTEN__
+// Web: a job's uploads (writes, arena, params) go through a mapped staging buffer and copies, not wgpuQueueWriteBuffer:
+// Chrome sends writeBuffer's bytes through its command stream (~1.4 GB/s, 5.5 ms a frame of foundry's 7.6 MB), a mapped
+// range is one memcpy into shared memory. False (the caller writes) while every staging buffer is still in flight.
+struct Staging {
+    WGPUBuffer buffer = nullptr;
+    std::uint64_t size = 0;
+    bool ready = false;  // mapped for writing
+};
+std::array<Staging, 8> g_staging;  // main thread only
+std::uint32_t g_staged[4];  // staged, fell back, map failures, made (stats)
+std::uint64_t g_staged_bytes = 0;
+
+bool stage_uploads(Job &j) {
+    const auto align8 = [](std::uint64_t n) { return (n + 7) & ~7ull; };  // getMappedRange offsets
+    std::uint64_t end = 0;
+    for (const Write &w : j.writes) end = align8(end + w.bytes.size());
+    const std::uint64_t arena_at = end, params_at = align8(arena_at + j.arena.size() * 4);
+    end = params_at + j.params.size() * kParamStride;
+    if (!end) return true;
+    Staging *s = nullptr;
+    for (Staging &c : g_staging)
+        if (c.ready && c.size >= end) {
+            s = &c;
+            break;
+        }
+    for (Staging &c : g_staging) {  // none big enough: make one (replacing a mapped one too small), mapped at creation
+        if (s) break;
+        if (c.buffer && !c.ready) continue;
+        if (c.buffer) wgpuBufferRelease(c.buffer);
+        c.size = std::max<std::uint64_t>(16u << 20, align8(end + end / 2));
+        WGPUBufferDescriptor d = WGPU_BUFFER_DESCRIPTOR_INIT;
+        d.size = c.size;
+        d.usage = WGPUBufferUsage_MapWrite | WGPUBufferUsage_CopySrc;
+        d.mappedAtCreation = true;
+        c.buffer = wgpuDeviceCreateBuffer(g_device, &d);
+        c.ready = true;
+        ++g_staged[3];
+        s = &c;
+    }
+    if (++g_staged[s ? 0 : 1] + g_staged[s ? 1 : 0] >= 600) {
+        std::fprintf(stderr, "[web] staging: %u staged (%.2f MB a job), %u fell back, %u map failures, %u buffers made\n", g_staged[0],
+                     static_cast<double>(g_staged_bytes) / std::max(g_staged[0], 1u) / 1048576.0, g_staged[1], g_staged[2], g_staged[3]);
+        g_staged[0] = g_staged[1] = 0;
+        g_staged_bytes = 0;
+    }
+    if (!s) return false;
+    g_staged_bytes += end;
+    std::uint64_t at = 0;
+    for (const Write &w : j.writes) {
+        if (!w.bytes.empty()) wgpuBufferWriteMappedRange(s->buffer, at, w.bytes.data(), w.bytes.size());
+        at = align8(at + w.bytes.size());
+    }
+    if (!j.arena.empty()) wgpuBufferWriteMappedRange(s->buffer, arena_at, j.arena.data(), j.arena.size() * 4);
+    if (!j.params.empty()) wgpuBufferWriteMappedRange(s->buffer, params_at, j.params.data(), j.params.size() * kParamStride);
+    wgpuBufferUnmap(s->buffer);
+    s->ready = false;
+    ensure_capacity(j.arena.size(), j.params.size());
+    WGPUCommandEncoder enc = wgpuDeviceCreateCommandEncoder(g_device, nullptr);
+    at = 0;
+    for (const Write &w : j.writes) {
+        if (!w.bytes.empty()) wgpuCommandEncoderCopyBufferToBuffer(enc, s->buffer, at, w.buffer, w.offset, w.bytes.size());
+        at = align8(at + w.bytes.size());
+    }
+    if (!j.arena.empty()) wgpuCommandEncoderCopyBufferToBuffer(enc, s->buffer, arena_at, g_data, 0, j.arena.size() * 4);
+    if (!j.params.empty()) wgpuCommandEncoderCopyBufferToBuffer(enc, s->buffer, params_at, g_params, 0, j.params.size() * kParamStride);
+    WGPUCommandBuffer cmd = wgpuCommandEncoderFinish(enc, nullptr);
+    wgpuQueueSubmit(g_queue, 1, &cmd);
+    wgpuCommandBufferRelease(cmd);
+    wgpuCommandEncoderRelease(enc);
+    WGPUBufferMapCallbackInfo cb = WGPU_BUFFER_MAP_CALLBACK_INFO_INIT;
+    cb.mode = WGPUCallbackMode_AllowSpontaneous;
+    cb.callback = [](WGPUMapAsyncStatus status, WGPUStringView, void *staging, void *) { 
+        static_cast<Staging *>(staging)->ready = status == WGPUMapAsyncStatus_Success;
+        g_staged[2] += status != WGPUMapAsyncStatus_Success;
+    };
+    cb.userdata1 = s;
+    wgpuBufferMapAsync(s->buffer, WGPUMapMode_Write, 0, s->size, cb);
+    return true;
+}
+#endif
+
 void run_job(Job &j) {
-    for (const Write &w : j.writes) wgpuQueueWriteBuffer(g_queue, w.buffer, w.offset, w.bytes.data(), w.bytes.size()), g_uploaded[2].fetch_add(w.bytes.size(), std::memory_order_relaxed);
+#ifdef __EMSCRIPTEN__
+    const bool staged = stage_uploads(j);
+#else
+    constexpr bool staged = false;
+#endif
+    for (const Write &w : j.writes) {
+        if (!staged) wgpuQueueWriteBuffer(g_queue, w.buffer, w.offset, w.bytes.data(), w.bytes.size());
+        g_uploaded[2].fetch_add(w.bytes.size(), std::memory_order_relaxed);
+    }
     if (!j.present) {
-        if (!j.commands.empty()) run_commands(j.arena, j.params, j.commands, j.natives, nullptr);
+        if (!j.commands.empty()) run_commands(j.arena, j.params, j.commands, j.natives, nullptr, staged);
         if (j.copy) copy_out(*j.copy);
         return;
     }
@@ -1472,12 +1636,12 @@ void run_job(Job &j) {
     wgpuSurfaceGetCurrentTexture(g_surface, &st);
     if (st.status != WGPUSurfaceGetCurrentTextureStatus_SuccessOptimal && st.status != WGPUSurfaceGetCurrentTextureStatus_SuccessSuboptimal) {
         if (st.texture) wgpuTextureRelease(st.texture);
-        run_commands(j.arena, j.params, j.commands, j.natives, nullptr);
+        run_commands(j.arena, j.params, j.commands, j.natives, nullptr, staged);
         configure_surface();
         return;
     }
     WGPUTextureView target = wgpuTextureCreateView(st.texture, nullptr);
-    run_commands(j.arena, j.params, j.commands, j.natives, target);
+    run_commands(j.arena, j.params, j.commands, j.natives, target, staged);
 #ifndef __EMSCRIPTEN__
     wgpuSurfacePresent(g_surface);
 #endif
@@ -1512,7 +1676,7 @@ void submit_worker() {
 
 bool worker_wanted() {
 #ifdef __EMSCRIPTEN__
-    return false;
+    return web_threads() && queue::active() && !g_profile_out;  // the main thread is the worker (run_jobs)
 #else
     static const char *e = std::getenv("PS2_SUBMIT_THREAD");  // 0: off, 2: also single-threaded (to test it)
     if (e && std::strcmp(e, "0") == 0) return false;
@@ -1529,10 +1693,20 @@ void after_submit() {
     g_clut_loads = 0;
 }
 
+#ifdef __EMSCRIPTEN__
+std::atomic<std::uint32_t> g_main_work{0};  // web: bumped for the main thread's loop (jobs, disc reads)
+void wake_main() {
+    g_main_work.fetch_add(1);
+    emscripten_futex_wake(&g_main_work, INT_MAX);
+}
+#endif
+
 // Hands the pending commands and writes to the worker (render thread).
 void enqueue(bool present) {
     if (!g_worker_started) {
+#ifndef __EMSCRIPTEN__
         std::thread(submit_worker).detach();
+#endif
         g_worker_started = true;
     }
     std::unique_lock lock(g_job_mutex);
@@ -1553,11 +1727,49 @@ void enqueue(bool present) {
     j.copy = std::exchange(g_copy_out, nullptr);
     g_jobs.push_back(std::move(j));
     g_job_cv.notify_all();
+#ifdef __EMSCRIPTEN__
+    lock.unlock();
+    wake_main();
+#endif
 }
 
-// Waits until the worker has submitted everything handed to it, including pending writes (render thread).
+// Runs the jobs queued, up to the first present or budget_ms (web: the main thread is the worker). presented: whether
+// one was a present.
+bool run_jobs(double budget_ms, bool &presented) {
+    const auto start = std::chrono::steady_clock::now();
+    bool ran = false;
+    presented = false;
+    std::unique_lock lock(g_job_mutex);
+    while (!g_jobs.empty() && !presented && std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - start).count() < budget_ms) {
+        Job j = std::move(g_jobs.front());
+        g_jobs.pop_front();
+        g_job_running = true;
+        lock.unlock();
+        run_job(j);
+        presented = j.present;
+        ran = true;
+        j.arena.clear();
+        j.params.clear();
+        j.commands.clear();
+        j.natives.clear();
+        j.writes.clear();
+        j.copy = nullptr;
+        lock.lock();
+        g_spare_jobs.push_back(std::move(j));
+        g_job_running = false;
+        g_job_cv.notify_all();
+    }
+    return ran;
+}
+
+// Waits until the worker has submitted everything handed to it, including pending writes (render thread; on the web's
+// main thread it runs them itself).
 void drain() {
     if (!g_worker_started) return;
+    if (!off_main() && web_worker()) {  // the GS threads' pending writes are theirs
+        for (bool presented = false; run_jobs(1e9, presented);) {}
+        return;
+    }
     if (!g_writes.empty()) enqueue(false);
     std::unique_lock lock(g_job_mutex);
     g_job_cv.wait(lock, [] { return g_jobs.empty() && !g_job_running; });
@@ -1645,25 +1857,29 @@ void drain();
 
 void read_back(WGPUBuffer source, std::uint64_t bytes, void *out, std::uint64_t offset = 0) {
     drain();
-    WGPUCommandEncoder enc = wgpuDeviceCreateCommandEncoder(g_device, nullptr);
-    wgpuCommandEncoderCopyBufferToBuffer(enc, source, offset, g_readback, 0, bytes);
-    WGPUCommandBuffer cmd = wgpuCommandEncoderFinish(enc, nullptr);
-    wgpuQueueSubmit(g_queue, 1, &cmd);
-    wgpuCommandBufferRelease(cmd);
-    wgpuCommandEncoderRelease(enc);
-    bool done = false;
-    WGPUBufferMapCallbackInfo cb = WGPU_BUFFER_MAP_CALLBACK_INFO_INIT;
-    cb.mode = WGPUCallbackMode_AllowProcessEvents;
-    cb.callback = [](WGPUMapAsyncStatus status, WGPUStringView, void *flag, void *) {
-        if (status != WGPUMapAsyncStatus_Success) std::fprintf(stderr, "[gpu] map failed %d\n", static_cast<int>(status));
-        *static_cast<bool *>(flag) = true;
-    };
-    cb.userdata1 = &done;
-    wgpuBufferMapAsync(g_readback, WGPUMapMode_Read, 0, bytes, cb);
-    wait_until(done);
-    const void *mapped = wgpuBufferGetConstMappedRange(g_readback, 0, bytes);
-    if (mapped) std::memcpy(out, mapped, bytes);
-    wgpuBufferUnmap(g_readback);
+    Done done;
+    on_main([&] {
+        WGPUCommandEncoder enc = wgpuDeviceCreateCommandEncoder(g_device, nullptr);
+        wgpuCommandEncoderCopyBufferToBuffer(enc, source, offset, g_readback, 0, bytes);
+        WGPUCommandBuffer cmd = wgpuCommandEncoderFinish(enc, nullptr);
+        wgpuQueueSubmit(g_queue, 1, &cmd);
+        wgpuCommandBufferRelease(cmd);
+        wgpuCommandEncoderRelease(enc);
+        WGPUBufferMapCallbackInfo cb = WGPU_BUFFER_MAP_CALLBACK_INFO_INIT;
+        cb.mode = done.mode;
+        cb.callback = [](WGPUMapAsyncStatus status, WGPUStringView, void *flag, void *) {
+            if (status != WGPUMapAsyncStatus_Success) std::fprintf(stderr, "[gpu] map failed %d\n", static_cast<int>(status));
+            static_cast<Done *>(flag)->set();
+        };
+        cb.userdata1 = &done;
+        wgpuBufferMapAsync(g_readback, WGPUMapMode_Read, 0, bytes, cb);
+    });
+    done.wait();
+    on_main([&] {
+        const void *mapped = wgpuBufferGetConstMappedRange(g_readback, 0, bytes);
+        if (mapped) std::memcpy(out, mapped, bytes);
+        wgpuBufferUnmap(g_readback);
+    });
 }
 
 // clut: the CLUT slot the draw reads (g_clut_slot, or ahead of it on the render thread when split)
@@ -1977,6 +2193,7 @@ void native_warm() {
 }
 
 WGPURenderPipeline make_native_pipeline(std::uint32_t key) {
+    MAIN_ONLY(make_native_pipeline(key));
     if (key == kNativeBlit) {  // a target's colour and alpha to its shadow (native_blit_fs), the scissor rect of it
         WGPUColorTargetState targets[2] = {WGPU_COLOR_TARGET_STATE_INIT, WGPU_COLOR_TARGET_STATE_INIT};
         targets[0].format = WGPUTextureFormat_RGBA8Unorm;
@@ -2090,6 +2307,7 @@ constexpr std::uint32_t kNativeXfer = 1u << 16;  // above the render pipelines' 
 WGPURenderPipeline xfer_pipeline(XferInto into) {
     const std::uint32_t key = kNativeXfer | into;
     if (const auto it = g_nat.pipelines.find(key); it != g_nat.pipelines.end()) return it->second;
+    MAIN_ONLY(xfer_pipeline(into));
     WGPUColorTargetState targets[2] = {WGPU_COLOR_TARGET_STATE_INIT, WGPU_COLOR_TARGET_STATE_INIT};
     targets[0].format = WGPUTextureFormat_RGBA8Unorm;
     targets[1].format = WGPUTextureFormat_R8Uint;
@@ -2126,6 +2344,7 @@ WGPURenderPipeline xfer_pipeline(XferInto into) {
 
 // replace: the write-back's bindings (native.wgsl native_writeback): VRAM, the swizzle tables, params, the target
 WGPUBindGroup writeback_group(const NativeTarget &t) {
+    MAIN_ONLY(writeback_group(t));
     WGPUBindGroupEntry e[7];
     for (WGPUBindGroupEntry &x : e) x = WGPU_BIND_GROUP_ENTRY_INIT;
     const WGPUBuffer buffers[4] = {g_vram, g_tables, g_params, g_data};  // data: the tile lists
@@ -2134,11 +2353,11 @@ WGPUBindGroup writeback_group(const NativeTarget &t) {
         e[i].buffer = buffers[i];
         e[i].size = i == 2 ? kParamStride : WGPU_WHOLE_SIZE;
     }
-    e[4].binding = 9;
+    e[4].binding = 12;
     e[4].textureView = t.color_view;
-    e[5].binding = 10;
+    e[5].binding = 13;
     e[5].textureView = t.depth_view;
-    e[6].binding = 11;
+    e[6].binding = 14;
     e[6].textureView = t.alpha_view;
     WGPUBindGroupDescriptor d = WGPU_BIND_GROUP_DESCRIPTOR_INIT;
     d.layout = g_nat.writeback_layout;
@@ -2150,6 +2369,7 @@ WGPUBindGroup writeback_group(const NativeTarget &t) {
 std::uint64_t g_group_gen = 1;  // rebuild_group: the buffers the write-back groups bind changed
 
 void native_writeback_group() {
+    MAIN_ONLY_VOID(native_writeback_group());
     ++g_group_gen;
     if (!g_nat.writeback_layout || !g_nat.target.color || !g_vram) return;
     if (g_nat.writeback_group) wgpuBindGroupRelease(g_nat.writeback_group);
@@ -2178,6 +2398,7 @@ WGPUBindGroup source_group(const NativeTarget *const (&slots)[kSources], const N
     if (!key[0] && !key[1] && !key[2]) return g_nat.none_group;
     WGPUBindGroup &g = g_nat.source_groups[key];
     if (g) return g;
+    MAIN_ONLY(source_group(slots, z));
     WGPUBindGroupEntry e[kSources * 2 + 1];
     for (std::uint32_t i = 0; i < kSources; ++i) {
         const NativeTarget &t = slots[i] ? *slots[i] : g_nat.source;
@@ -2200,6 +2421,7 @@ WGPUBindGroup source_group(const NativeTarget *const (&slots)[kSources], const N
 // Drops the source groups that bind texture view v (its target is about to be freed; everything queued is submitted).
 void forget_source(WGPUTextureView v) {
     if (!v) return;
+    MAIN_ONLY_VOID(forget_source(v));
     std::erase_if(g_nat.source_groups, [v](const auto &e) {
         if (std::find(e.first.begin(), e.first.end(), v) == e.first.end()) return false;
         if (e.second) wgpuBindGroupRelease(e.second);
@@ -2216,6 +2438,7 @@ void forget_source(WGPUTextureView v) {
 WGPUBindGroup xfer_group(const NativeTarget &t) {
     WGPUBindGroup &g = g_nat.xfer_groups[t.color_view];
     if (g) return g;
+    MAIN_ONLY(xfer_group(t));
     WGPUBindGroupEntry e[3];
     const WGPUTextureView views[3] = {t.color_view, t.depth_view, t.alpha_view};
     for (std::uint32_t i = 0; i < 3; ++i) {
@@ -2231,6 +2454,7 @@ WGPUBindGroup xfer_group(const NativeTarget &t) {
 }
 
 void free_target(NativeTarget &t) {
+    MAIN_ONLY_VOID(free_target(t));
     for (WGPUTextureView v : {t.color_view, t.depth_view, t.alpha_view})
         if (v) wgpuTextureViewRelease(v);
     for (WGPUTexture x : {t.color, t.depth, t.alpha})
@@ -2239,6 +2463,7 @@ void free_target(NativeTarget &t) {
 }
 
 void make_target(NativeTarget &t, std::uint32_t width, std::uint32_t height) {
+    MAIN_ONLY_VOID(make_target(t, width, height));
     WGPUTextureDescriptor td = WGPU_TEXTURE_DESCRIPTOR_INIT;
     td.usage = WGPUTextureUsage_RenderAttachment | WGPUTextureUsage_CopySrc | WGPUTextureUsage_TextureBinding;
     td.dimension = WGPUTextureDimension_2D;
@@ -2343,6 +2568,7 @@ void encode_native(WGPUCommandEncoder enc, const Command &c, const std::vector<N
             depth.view = d[i].depth;
             depth.depthLoadOp = WGPULoadOp_Load;
             depth.depthStoreOp = WGPUStoreOp_Store;
+            depth.depthClearValue = 0.0f;  // unused with Load, but browsers reject the INIT's NaN
             WGPURenderPassDescriptor rd = WGPU_RENDER_PASS_DESCRIPTOR_INIT;
             rd.colorAttachmentCount = 2;
             rd.colorAttachments = colors;
@@ -2798,8 +3024,10 @@ void tiles_retire(Binding &b) {
     for (WGPUTextureView v : {b.target.color_view, b.shadow.color_view, b.target.depth_view}) forget_source(v);
     free_target(b.target);
     free_target(b.shadow);
-    for (WGPUBindGroup g : b.group)
-        if (g) wgpuBindGroupRelease(g);
+    on_main([&] {
+        for (WGPUBindGroup g : b.group)
+            if (g) wgpuBindGroupRelease(g);
+    });
     if (g_nat.cur == &b) g_nat.cur = nullptr;
     std::erase_if(g_nat.bindings, [&](const std::unique_ptr<Binding> &p) { return p.get() == &b; });
     ++g_nat.retired;
@@ -3369,6 +3597,7 @@ bool overwritten(const std::uint32_t *rec, const std::uint32_t *w, const Binding
 
 // Binding b's shadow (colour and alpha, as its target), the whole of it dirty.
 void make_shadow(Binding &b) {
+    MAIN_ONLY_VOID(make_shadow(b));
     WGPUTextureDescriptor td = WGPU_TEXTURE_DESCRIPTOR_INIT;
     td.usage = WGPUTextureUsage_RenderAttachment | WGPUTextureUsage_CopySrc | WGPUTextureUsage_TextureBinding;
     td.size = WGPUExtent3D{b.target.width, b.target.height, 1};
@@ -4161,7 +4390,7 @@ bool native_init() {
     }
     const WGPUTextureSampleType samples[3] = {WGPUTextureSampleType_UnfilterableFloat, WGPUTextureSampleType_Depth, WGPUTextureSampleType_Uint};
     for (int i = 0; i < 3; ++i) {
-        we[4 + i].binding = 9u + static_cast<std::uint32_t>(i);
+        we[4 + i].binding = 12u + static_cast<std::uint32_t>(i);
         we[4 + i].texture.sampleType = samples[i];
         we[4 + i].texture.viewDimension = WGPUTextureViewDimension_2D;
     }
@@ -5017,7 +5246,7 @@ void split_worker() {
     g_split.checked = true;
     const char *e = std::getenv("PS2_GS_SPLIT");
 #ifdef __EMSCRIPTEN__
-    const bool want = e && std::strcmp(e, "1") == 0;
+    const bool want = e ? std::strcmp(e, "0") != 0 : web_threads();  // needs the threads' on_main
 #else
     const bool want = !e || std::strcmp(e, "0") != 0;  // on by default on the desktop
 #endif
@@ -5175,13 +5404,15 @@ void wait_idle() {
     flush_all();
     submit();
     drain();
-    bool done = false;
-    WGPUQueueWorkDoneCallbackInfo cb = WGPU_QUEUE_WORK_DONE_CALLBACK_INFO_INIT;
-    cb.mode = WGPUCallbackMode_AllowProcessEvents;
-    cb.callback = [](WGPUQueueWorkDoneStatus, WGPUStringView, void *flag, void *) { *static_cast<bool *>(flag) = true; };
-    cb.userdata1 = &done;
-    wgpuQueueOnSubmittedWorkDone(g_queue, cb);
-    wait_until(done);
+    Done done;
+    on_main([&] {
+        WGPUQueueWorkDoneCallbackInfo cb = WGPU_QUEUE_WORK_DONE_CALLBACK_INFO_INIT;
+        cb.mode = done.mode;
+        cb.callback = [](WGPUQueueWorkDoneStatus, WGPUStringView, void *flag, void *) { static_cast<Done *>(flag)->set(); };
+        cb.userdata1 = &done;
+        wgpuQueueOnSubmittedWorkDone(g_queue, cb);
+    });
+    done.wait();
 }
 
 struct PendingDownload {
@@ -5194,10 +5425,12 @@ struct PendingDownload {
 
 void collect_download() {
     if (!g_pending.busy || !g_pending.ready) return;
-    const void *mapped = wgpuBufferGetConstMappedRange(g_pending.buffer, 0, g_pending.bytes);
-    if (mapped) std::memcpy(g_pending.memory + g_pending.offset, mapped, g_pending.bytes);
+    on_main([] {
+        const void *mapped = wgpuBufferGetConstMappedRange(g_pending.buffer, 0, g_pending.bytes);
+        if (mapped) std::memcpy(g_pending.memory + g_pending.offset, mapped, g_pending.bytes);
+        wgpuBufferUnmap(g_pending.buffer);
+    });
     texpack::downloaded();
-    wgpuBufferUnmap(g_pending.buffer);
     g_pending.busy = g_pending.ready = false;
 }
 
@@ -5209,7 +5442,7 @@ bool download_async(std::uint8_t *memory, std::uint32_t offset, std::uint32_t by
     collect_download();
     if (g_pending.busy) return false;
     if (g_pending.capacity < bytes) {
-        if (g_pending.buffer) wgpuBufferRelease(g_pending.buffer);
+        if (g_pending.buffer) on_main([] { wgpuBufferRelease(g_pending.buffer); });
         g_pending.capacity = bytes;
         g_pending.buffer = make_buffer(bytes, WGPUBufferUsage_MapRead | WGPUBufferUsage_CopyDst);
     }
@@ -5217,31 +5450,42 @@ bool download_async(std::uint8_t *memory, std::uint32_t offset, std::uint32_t by
     if (g_samples != 1) dispatch_linear(kResolve, bytes / 4, push_params({offset / 4}));
     submit();
     drain();
-    WGPUCommandEncoder enc = wgpuDeviceCreateCommandEncoder(g_device, nullptr);
-    wgpuCommandEncoderCopyBufferToBuffer(enc, g_samples == 1 ? g_vram : g_scratch, offset, g_pending.buffer, 0, bytes);
-    WGPUCommandBuffer cmd = wgpuCommandEncoderFinish(enc, nullptr);
-    wgpuQueueSubmit(g_queue, 1, &cmd);
-    wgpuCommandBufferRelease(cmd);
-    wgpuCommandEncoderRelease(enc);
     g_pending.memory = memory;
     g_pending.offset = offset;
     g_pending.bytes = bytes;
     g_pending.serial = serial;
     g_pending.busy = true;
-    WGPUBufferMapCallbackInfo cb = WGPU_BUFFER_MAP_CALLBACK_INFO_INIT;
-    cb.mode = WGPUCallbackMode_AllowProcessEvents;
-    cb.callback = [](WGPUMapAsyncStatus status, WGPUStringView, void *, void *) {
-        if (status == WGPUMapAsyncStatus_Success) g_pending.ready = true;
-        else g_pending.busy = false;
-    };
-    wgpuBufferMapAsync(g_pending.buffer, WGPUMapMode_Read, 0, bytes, cb);
+    const WGPUCallbackMode mode = off_main() ? WGPUCallbackMode_AllowSpontaneous : WGPUCallbackMode_AllowProcessEvents;
+    on_main([&] {
+        WGPUCommandEncoder enc = wgpuDeviceCreateCommandEncoder(g_device, nullptr);
+        wgpuCommandEncoderCopyBufferToBuffer(enc, g_samples == 1 ? g_vram : g_scratch, offset, g_pending.buffer, 0, bytes);
+        WGPUCommandBuffer cmd = wgpuCommandEncoderFinish(enc, nullptr);
+        wgpuQueueSubmit(g_queue, 1, &cmd);
+        wgpuCommandBufferRelease(cmd);
+        wgpuCommandEncoderRelease(enc);
+        WGPUBufferMapCallbackInfo cb = WGPU_BUFFER_MAP_CALLBACK_INFO_INIT;
+        cb.mode = mode;
+        cb.callback = [](WGPUMapAsyncStatus status, WGPUStringView, void *, void *) {
+            if (status == WGPUMapAsyncStatus_Success) g_pending.ready = true;
+            else g_pending.busy = false;
+        };
+        wgpuBufferMapAsync(g_pending.buffer, WGPUMapMode_Read, 0, bytes, cb);
+    });
     return true;
 }
 
 bool finish_download(std::uint32_t serial) {
     split_sync();
     if (!g_pending.busy || g_pending.serial != serial) return false;
-    while (g_pending.busy && !g_pending.ready) pump();
+    while (g_pending.busy && !g_pending.ready) {
+#ifdef __EMSCRIPTEN__
+        if (off_main()) {  // the map callback runs on the main thread (spontaneous)
+            usleep(100);
+            continue;
+        }
+#endif
+        pump();
+    }
     const bool done = g_pending.ready;
     collect_download();
     return done;
@@ -5290,15 +5534,17 @@ void write_state(const std::vector<std::uint32_t> &vram, std::uint32_t scale, co
     const bool same = from_x == g_sx && from_y == g_sy;
     std::fill(std::begin(g_drawn), std::end(g_drawn), same && to > 1 ? ~0u : 0u);
     std::fill(std::begin(g_rt_pages), std::end(g_rt_pages), same && to > 1);
-    if (same && vram.size() == words * to) {
-        wgpuQueueWriteBuffer(g_queue, g_vram, 0, vram.data(), vram.size() * 4);
-    } else {
-        std::vector<std::uint32_t> layers(words * to);
+    std::vector<std::uint32_t> layers;
+    if (!same || vram.size() != words * to) {
+        layers.resize(words * to);
         for (std::size_t w = 0; w < words; ++w)
             for (std::uint32_t k = 0; k < to; ++k) layers[w * to + k] = vram[w * from];
-        wgpuQueueWriteBuffer(g_queue, g_vram, 0, layers.data(), layers.size() * 4);
     }
-    if (clut.size() >= kClutEntries) wgpuQueueWriteBuffer(g_queue, g_clut, static_cast<std::uint64_t>(g_clut_slot) * kClutEntries * 4, clut.data(), kClutEntries * 4);
+    on_main([&] {
+        const std::vector<std::uint32_t> &v = layers.empty() ? vram : layers;
+        wgpuQueueWriteBuffer(g_queue, g_vram, 0, v.data(), v.size() * 4);
+        if (clut.size() >= kClutEntries) wgpuQueueWriteBuffer(g_queue, g_clut, static_cast<std::uint64_t>(g_clut_slot) * kClutEntries * 4, clut.data(), kClutEntries * 4);
+    });
     wait_idle();
 }
 
@@ -5443,6 +5689,12 @@ bool attach_surface(const SurfaceTarget &target) {
 }
 
 void resize_surface(std::uint32_t width, std::uint32_t height) {
+    if (web_worker()) {  // the main thread runs every job: between two of them nothing is in flight
+        if (!g_surface || (width == g_surface_width && height == g_surface_height)) return;
+        g_surface_width = width;
+        g_surface_height = height;
+        return configure_surface();
+    }
     split_sync();
     if (!g_surface || (width == g_surface_width && height == g_surface_height)) return;
     drain();
@@ -5696,3 +5948,18 @@ bool display(const DisplaySource &src, std::vector<std::uint32_t> &rgba, std::ui
 }
 
 }
+
+#ifdef __EMSCRIPTEN__
+EM_ASYNC_JS(void, ps2_main_wait, (std::atomic<std::uint32_t> *word, std::uint32_t seen, int timeout_ms), {
+    const result = Atomics.waitAsync(HEAP32, word >> 2, seen, timeout_ms);
+    if (result.async) await result.value;
+});
+
+namespace ps2 {
+bool web_gs_threads() { return gs::gpu::web_threads(); }
+bool run_gpu_jobs(double budget_ms, bool &presented) { return gs::gpu::run_jobs(budget_ms, presented); }
+std::uint32_t main_work() { return gs::gpu::g_main_work.load(); }
+void wait_main_work(std::uint32_t seen, int timeout_ms) { ps2_main_wait(&gs::gpu::g_main_work, seen, timeout_ms); }
+void wake_main_thread() { gs::gpu::wake_main(); }
+}
+#endif

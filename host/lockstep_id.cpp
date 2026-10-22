@@ -42,11 +42,13 @@ std::string basename(const std::string &path) {
 bool local_only(const std::string &name) {
     // PS2_NO_VU_THREAD/PS2_THREADS: threaded and single-threaded peers compute the same state (native-lockstep.md);
     // PS2_VU_JIT: the browser's lockstep mode pins it, the desktop has no VU JIT
+    // renderer and threading choices (PS2_GS_HW ... PS2_WEB_THREADS): render only, so peers may play at different quality
     static const char *kNames[] = {"PS2_ASPECT", "PS2_FIELD_FLAG", "PS2_SCALE", "PS2_TEX_PACK", "PS2_TEX_PACK_MB", "PS2_TEX_DUMP", "PS2_GS", "PS2_NO_DEINTERLACE",
                                    "PS2_DECODE", "PS2_GPU_FALLBACK", "PS2_GPU_LOW_POWER", "PS2_GPU_PROFILE", "PS2_SDL_RENDERER", "PS2_FPS", "PS2_FPS_CAP",
                                    "PS2_HASH_LOG", "PS2_HASH_LOG_EVERY", "PS2_HASH_SPLIT", "PS2_NO_VU_THREAD", "PS2_THREADS", "PS2_ONE_THREAD",
                                    "PS2_VU_JIT", "PS2_PNACH", "PS2_RTC", "PS2_PROFILE", "PS2_PROFILE_FROM", "PS2_CENSUS", "PS2_DRAW_DUMP",
-                                   "PS2_DUMP_AUDIO", "PS2_DUMP_STEMS", "PS2_DUMP_VRAM", "PS2_NETPLAY_ASYNC", "PS2_RASTER_DIAG"};
+                                   "PS2_DUMP_AUDIO", "PS2_DUMP_STEMS", "PS2_DUMP_VRAM", "PS2_NETPLAY_ASYNC", "PS2_RASTER_DIAG",
+                                   "PS2_GS_HW", "PS2_GS_SPLIT", "PS2_GS_PRIMS", "PS2_SUBMIT_THREAD", "PS2_PIPELINES", "PS2_WEB_THREADS", "PS2_FRAME_LOG"};
     for (const char *n : kNames)
         if (name == n) return true;
     return name.rfind("PS2_TRACE_", 0) == 0 || name.rfind("PS2_LOCKSTEP_", 0) == 0;
