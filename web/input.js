@@ -28,7 +28,8 @@
       if (prevent) e.preventDefault();
     });
     window.addEventListener('keyup', (e) => { keys.delete(e.code); });
-    window.addEventListener('blur', () => { if (!prevent) keys.clear(); });
+    // a key released while another window has focus never sends keyup here (alt-tab, a screenshot hotkey): it stayed held
+    window.addEventListener('blur', () => keys.clear());
   }
 
   // own: this player also gets the keyboard and the touch controls (touch: { buttons, x, y, stick }).

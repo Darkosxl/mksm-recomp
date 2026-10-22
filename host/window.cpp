@@ -7,7 +7,7 @@
 #include <sys/resource.h>
 #include <unistd.h>
 #ifdef PS2_SOUNDTOUCH
-#include <SoundTouch.h>
+#include "audio_stretch.hpp"
 #endif
 
 #include <algorithm>
@@ -73,7 +73,6 @@ std::function<std::string()> g_status;
 // lockstep co-op: the frame gate replaces pace() (it waits for both inputs and keeps 59.94 Hz), and the first
 // controller goes to the pad sink instead of straight to the guest
 std::function<void()> g_frame_gate;
-std::atomic<double> g_stretch_tempo{0.0};  // sound tempo while time-stretched (title bar), 0 when not
 WindowPadSink g_pad_sink;
 std::uint32_t g_tex_w = 0, g_tex_h = 0;
 double g_deadline = 0.0;  // pace(): when the next frame goes out (performance counter)
@@ -317,7 +316,7 @@ void show_speed() {
     std::snprintf(title, sizeof title, "ps2-web-recomp  %.1f fps  CPU %.0f%%  GPU %.0f%%  RAM %.0f MB  audio %.0f ms", static_cast<double>(frames) / seconds,
                   (cpu - cpu_start) / seconds * 100.0, (gpu - gpu_start) / (seconds * 10.0), resident_mb(), queued);
 #ifdef PS2_SOUNDTOUCH
-    if (const double tempo = g_stretch_tempo; tempo > 0.0) std::snprintf(title + std::strlen(title), sizeof title - std::strlen(title), "  stretch %.0f%%", tempo * 100.0);
+    if (const double tempo = audio_stretch::tempo(); tempo > 0.0) std::snprintf(title + std::strlen(title), sizeof title - std::strlen(title), "  stretch %.0f%%", tempo * 100.0);
 #endif
     if (g_status) {
         const std::string extra = g_status();
@@ -338,72 +337,15 @@ void on_vblank() {
     else pace();
 }
 
-#ifdef PS2_SOUNDTOUCH
-// Below full speed (high PS2_SCALE: the GPU sets the pace) the game makes less than 48 kHz of sound per real second,
-// and queued as it comes that is a burst and then silence every device period ("AH-gap-AH"). Then the sound goes
-// through SoundTouch, slowed to the emulation speed with its pitch kept, and the queue is held near 40 ms; at full
-// speed it bypasses SoundTouch untouched. PS2_AUDIO_STRETCH=0 turns it off; lockstep (frame gate) never uses it.
-struct Stretch {
-    soundtouch::SoundTouch st;
-    bool on = false;
-    double speed = 1.0;  // emulation speed, smoothed: sound frames made per real second / 48000
-    std::uint64_t since = 0, made = 0;
-    std::vector<float> in, out;
-    Stretch() {
-        st.setSampleRate(48000);
-        st.setChannels(2);
-    }
-    void drain() {
-        out.resize(4096 * 2);
-        std::vector<std::int16_t> pcm;
-        while (const unsigned n = st.receiveSamples(out.data(), 4096)) {
-            pcm.resize(n * 2);
-            for (unsigned i = 0; i < n * 2; ++i) pcm[i] = static_cast<std::int16_t>(std::clamp(out[i], -32768.0f, 32767.0f));
-            SDL_QueueAudio(g_audio, pcm.data(), static_cast<Uint32>(n * 4));
-        }
-    }
-};
-
-bool stretch(const std::int16_t *samples, std::size_t frames) {
-    static const bool enabled = [] {
-        const char *e = std::getenv("PS2_AUDIO_STRETCH");
-        return !e || std::strcmp(e, "0") != 0;
-    }();
-    if (!enabled || g_frame_gate) return false;
-    static Stretch s;
-    const std::uint64_t now = SDL_GetPerformanceCounter(), hz = SDL_GetPerformanceFrequency();
-    if (!s.since) s.since = now;
-    s.made += frames;
-    if (now - s.since > hz / 4) {
-        const double measured = static_cast<double>(s.made) / (48000.0 * static_cast<double>(now - s.since) / static_cast<double>(hz));
-        s.speed += (std::min(measured, 1.2) - s.speed) * 0.5;
-        s.since = now, s.made = 0;
-        if (!s.on && s.speed < 0.95) s.on = true;
-        else if (s.on && s.speed > 0.99) {  // back to full speed: play out what SoundTouch holds, then bypass
-            s.st.flush();
-            s.drain();
-            s.st.clear();
-            s.on = false;
-            g_stretch_tempo = 0.0;
-        }
-    }
-    if (!s.on) return false;
-    // tempo = speed holds the queue; the queue's distance from 40 ms nudges it so the queue settles there
-    const double queued = SDL_GetQueuedAudioSize(g_audio) / static_cast<double>(kAudioBytesPerMs);
-    const double tempo = std::clamp(s.speed * (1.0 + 0.5 * (queued - 40.0) / 40.0), 0.3, 1.05);
-    g_stretch_tempo = tempo;
-    s.st.setTempo(tempo);
-    s.in.assign(samples, samples + frames * 2);
-    s.st.putSamples(s.in.data(), static_cast<unsigned>(frames));
-    s.drain();
-    return true;
-}
-#endif
-
 void queue_audio(const std::int16_t *samples, std::size_t frames) {
-    if (SDL_GetQueuedAudioSize(g_audio) > 500 * kAudioBytesPerMs) return;
+    const Uint32 queued = SDL_GetQueuedAudioSize(g_audio);
+    if (queued > 500 * kAudioBytesPerMs) return;
 #ifdef PS2_SOUNDTOUCH
-    if (stretch(samples, frames)) return;
+    // below full speed: time-stretched (host/audio_stretch.cpp); lockstep (frame gate) never uses it
+    const double now = static_cast<double>(SDL_GetPerformanceCounter()) * 1000.0 / static_cast<double>(SDL_GetPerformanceFrequency());
+    if (!g_frame_gate && audio_stretch::push(samples, frames, queued / static_cast<double>(kAudioBytesPerMs), now,
+                                             [](const std::int16_t *out, std::size_t n) { SDL_QueueAudio(g_audio, out, static_cast<Uint32>(n * 4)); }))
+        return;
 #endif
     SDL_QueueAudio(g_audio, samples, static_cast<Uint32>(frames * 4));
 }

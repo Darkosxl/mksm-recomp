@@ -3,6 +3,9 @@
 #include "ps2/disc.hpp"
 #include "ps2/memory.hpp"
 #include "ps2/system.hpp"
+#ifdef PS2_SOUNDTOUCH
+#include "audio_stretch.hpp"
+#endif
 
 #include <emscripten.h>
 #include <emscripten/threading.h>
@@ -372,7 +375,7 @@ void service_disc() {
     }
 }
 
-void push_audio(const std::int16_t *samples, std::size_t frames) {
+void queue_audio(const std::int16_t *samples, std::size_t frames) {
     std::uint32_t write = g_audio.write.load(std::memory_order_relaxed);
     const std::uint32_t read = g_audio.read.load(std::memory_order_acquire);
     for (std::size_t i = 0; i < frames && write - read < kAudioFrames; ++i, ++write) {
@@ -385,6 +388,17 @@ void push_audio(const std::int16_t *samples, std::size_t frames) {
 
 double audio_queued_ms() { return static_cast<double>(g_audio.write.load() - g_audio.read.load()) / 48.0; }
 
+bool unpaced();
+
+// below full speed the sound is time-stretched as in the window host (host/audio_stretch.cpp); lockstep and
+// PS2_WEB_UNPACED queue it as it comes
+void push_audio(const std::int16_t *samples, std::size_t frames) {
+#ifdef PS2_SOUNDTOUCH
+    if (!ps2::g_options.lockstep && !unpaced() && audio_stretch::push(samples, frames, audio_queued_ms(), emscripten_get_now(), queue_audio)) return;
+#endif
+    queue_audio(samples, frames);
+}
+
 double g_next_frame = 0.0;
 std::atomic<double> g_emulation_idle{0.0}, g_render_idle{0.0}, g_main_busy{0.0};
 std::atomic<std::uint32_t> g_shown{0};  // frames on screen: the page counts one per ps2web_frame_done
@@ -396,18 +410,27 @@ bool unpaced() {
     return on;
 }
 
+// Frames go out on an even clock at the emulated vblank rate, as on desktop (host/window.cpp pace). Waiting for the
+// sound ring to drop released them in bursts, as the worklet drains it a device period at a time (picture and sound
+// twitched). The ring only steers the clock (up to 2% around 80 ms queued); far off (>160 ms, <20 ms) it waits or runs.
+// Behind (below full speed) nothing waits and there is no catch-up burst.
 void pace() {
     ps2::post_present();
     if (unpaced()) return;
+    double period = ps2::g_options.pal ? 20.0 : 1000.0 / 59.94;
     if (g_audio.active.load()) {
-        while (audio_queued_ms() > 80.0) usleep(1000);
-        g_next_frame = 0.0;
-        return;
+        const double queued = audio_queued_ms();
+        if (queued > 160.0 || queued < 20.0) {
+            while (audio_queued_ms() > 160.0) usleep(1000);
+            g_next_frame = emscripten_get_now();
+            return;
+        }
+        period *= 1.0 + 0.02 * (queued - 80.0) / 80.0;
     }
-    const double period = ps2::g_options.pal ? 20.0 : 1000.0 / 59.94;
     const double now = emscripten_get_now();
-    if (g_next_frame == 0.0 || now - g_next_frame > 200.0) g_next_frame = now;
+    if (g_next_frame == 0.0) g_next_frame = now;
     g_next_frame += period;
+    if (g_next_frame < now - period) g_next_frame = now;  // behind: no burst to catch up
     if (g_next_frame > now) usleep(static_cast<useconds_t>((g_next_frame - now) * 1000.0));
 }
 
@@ -669,6 +692,12 @@ extern "C" EMSCRIPTEN_KEEPALIVE void ps2web_resize(int width, int height) {
 
 extern "C" EMSCRIPTEN_KEEPALIVE double ps2web_gpu_ms() { return ps2::gpu_busy_ms(); }
 extern "C" EMSCRIPTEN_KEEPALIVE double ps2web_frames() { return static_cast<double>(ps2::frames_run()); }
+// F8 on the page (bug reports): the run loop saves a state two vblanks on to /user.state, which the page downloads.
+// ponytail: plain writes the EE thread reads at a vblank; the frame goes last, so it sees the path first
+extern "C" EMSCRIPTEN_KEEPALIVE void ps2web_save_state() {
+    ps2::g_options.save_state_path = "/user.state";
+    ps2::g_options.save_state_frame = ps2::frames_run() + 2;
+}
 extern "C" EMSCRIPTEN_KEEPALIVE double ps2web_primitives() { return static_cast<double>(ps2::primitives_drawn()); }
 extern "C" EMSCRIPTEN_KEEPALIVE void *ps2web_audio_ring() { return &g_audio; }
 extern "C" EMSCRIPTEN_KEEPALIVE void *ps2web_lockstep() { return &g_ls; }
@@ -684,6 +713,11 @@ extern "C" EMSCRIPTEN_KEEPALIVE const char *ps2web_lockstep_identity() {
 // test hook for the forced-desync test: flips one byte of EE RAM on this peer only
 extern "C" EMSCRIPTEN_KEEPALIVE void ps2web_debug_corrupt(int offset) { ps2::g_ram[static_cast<std::uint32_t>(offset) & (ps2::kRamSize - 1)] ^= 0x5A; }
 extern "C" EMSCRIPTEN_KEEPALIVE double ps2web_audio_queued_ms() { return audio_queued_ms(); }
+#ifdef PS2_SOUNDTOUCH
+extern "C" EMSCRIPTEN_KEEPALIVE double ps2web_stretch_tempo() { return audio_stretch::tempo(); }  // 0 when not stretching
+#else
+extern "C" EMSCRIPTEN_KEEPALIVE double ps2web_stretch_tempo() { return 0.0; }
+#endif
 extern "C" EMSCRIPTEN_KEEPALIVE double ps2web_vu_interpreted() { return static_cast<double>(ps2::vu1_interpreted_calls()); }
 extern "C" EMSCRIPTEN_KEEPALIVE double ps2web_vu_jit_programs() { return static_cast<double>(ps2::vu1_jit_programs()); }
 extern "C" EMSCRIPTEN_KEEPALIVE double ps2web_idle_ms(int which) {

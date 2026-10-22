@@ -12,7 +12,9 @@
   canvas { width: 100%; height: 100%; display: block; background: #000; }
   #bar { display: flex; gap: 16px; align-items: center; padding: 6px 12px; background: #141418; border-top: 1px solid #222; }
   #status { flex: 1; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-  #stats { font-variant-numeric: tabular-nums; color: #9ad; }
+  /* the bar keeps one height whatever the stats say or which buttons show, or the picture above it jumps */
+  #stats { flex: 1 1 0; min-width: 0; height: 2lh; overflow: hidden; font-variant-numeric: tabular-nums; color: #9ad; }
+  #bar > select, #bar > button { flex: none; white-space: nowrap; }
   #lobby { white-space: nowrap; color: #e8c37a; font-weight: 600; }
   select { background: #2a3a55; color: #fff; border: 0; padding: 5px 8px; border-radius: 4px; }
   button { background: #2a3a55; color: #fff; border: 0; padding: 6px 14px; border-radius: 4px; cursor: pointer; }
@@ -442,6 +444,32 @@ document.addEventListener('webkitfullscreenchange', onFullscreenChange);
 fullscreenButton.addEventListener('click', toggleFullscreen);
 document.getElementById('exit-fullscreen').addEventListener('click', toggleFullscreen);
 canvas.addEventListener('dblclick', toggleFullscreen);
+// F8: download a savestate of this moment (bug reports; load it with ?state=)
+window.addEventListener('keydown', (e) => {
+  if (e.code !== 'F8' || e.repeat || !Module._ps2web_save_state) return;
+  e.preventDefault();
+  try { FS.unlink('/user.state'); } catch (err) {}
+  const frame = Module._ps2web_frames() + 2;
+  Module._ps2web_save_state();
+  let size = -1, tries = 0;
+  const poll = setInterval(() => {
+    let now = -1;
+    try { now = FS.stat('/user.state').size; } catch (err) {}
+    if (now > 0 && now === size) {
+      clearInterval(poll);
+      const link = document.createElement('a');
+      link.href = URL.createObjectURL(new Blob([FS.readFile('/user.state')], { type: 'application/octet-stream' }));
+      link.download = 'mksm-f' + frame + '.state';
+      link.click();
+      setTimeout(() => URL.revokeObjectURL(link.href), 10000);
+      note('Saved state of frame ' + frame);
+    } else if (++tries > 50) {
+      clearInterval(poll);
+      note('Could not save a state');
+    }
+    size = now;
+  }, 200);
+});
 window.addEventListener('keydown', (e) => {
   if (e.code !== 'KeyF' || e.repeat || e.target.tagName === 'SELECT') return;
   e.preventDefault();
@@ -826,11 +854,11 @@ var Module = {
       const gpu = Module._ps2web_gpu_ms();
       const memory = (Module.HEAPU8.length / 1048576).toFixed(0);
       const emuIdle = Module._ps2web_idle_ms(0), renderIdle = Module._ps2web_idle_ms(1), vuIdle = Module._ps2web_idle_ms(2), mainBusy = Module._ps2web_idle_ms(3), span = now - last;
-      const interpreted = Module._ps2web_vu_interpreted();
+      const interpreted = Module._ps2web_vu_interpreted(), stretch = Module._ps2web_stretch_tempo();
       statsEl.textContent = 'frame ' + Module._ps2web_frames() + '   ' + (frames * 1000 / span).toFixed(1) + ' fps (' + (shown * 1000 / span).toFixed(0) + ' on screen, worst ' + worst.toFixed(1) + ' ms, ' + slow + ' >18 ms)   GPU ' + ((gpu - lastGpu) / span * 100).toFixed(0) +
                             '%   idle emu ' + ((emuIdle - lastEmuIdle) / span * 100).toFixed(0) + '% vu ' + ((vuIdle - lastVuIdle) / span * 100).toFixed(0) +
                             '% gs ' + ((renderIdle - lastRenderIdle) / span * 100).toFixed(0) + '%   main busy ' + ((mainBusy - lastMainBusy) / span * 100).toFixed(0) +
-                            '%   heap ' + memory + ' MB   audio ' + Module.audioQueuedMs().toFixed(0) + ' ms' +
+                            '%   heap ' + memory + ' MB   audio ' + Module.audioQueuedMs().toFixed(0) + ' ms' + (stretch > 0 ? ' stretch ' + (stretch * 100).toFixed(0) + '%' : '') +
                             (interpreted > lastInterpreted ? '   vu1 interpreted ' + Math.round((interpreted - lastInterpreted) * 1000 / span) + '/s' : '') +
                             (session ? '   ' + lockstepStats() : '') + (Module.prefetchText ? '   ' + Module.prefetchText : '') + (Module.packText ? '   ' + Module.packText : '');
       showLobby();

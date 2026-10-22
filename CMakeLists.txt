@@ -115,6 +115,8 @@ if(EMSCRIPTEN OR EXISTS "${PS2_WGPU_DIR}/lib/libwgpu_native.a")
             target_link_libraries(ps2runtime PUBLIC "-framework Metal" "-framework QuartzCore" "-framework Foundation" "-framework CoreFoundation" "-framework IOKit" "-framework IOSurface" objc)
         endif()
     endif()
+else()
+    message(WARNING "No ${PS2_WGPU_DIR}/lib/libwgpu_native.a: building without the GPU renderers (software GS only)")
 endif()
 
 if(PS2_GENERATED)
@@ -164,8 +166,27 @@ if(PS2_GENERATED)
             target_link_options(ps2web PRIVATE "SHELL:--preload-file \"${preload}\"")
         endforeach()
         target_link_libraries(ps2web PRIVATE ps2decomp ps2game ps2runtime)
+        # time-stretched sound below full speed (host/audio_stretch.cpp): SoundTouch built from its release source (its
+        # own CMakeLists is not used), float samples, no x86 SIMD or OpenMP, only what the SoundTouch class needs
+        include(FetchContent)
+        FetchContent_Declare(soundtouch
+            URL https://codeberg.org/soundtouch/soundtouch/archive/2.4.1.tar.gz
+            URL_HASH SHA256=35d404e6e8c2ebd12fb4000da6fadd75c99e37eed2126a04721828c11c0377ec
+            DOWNLOAD_EXTRACT_TIMESTAMP TRUE
+            SOURCE_SUBDIR no-cmake)
+        FetchContent_MakeAvailable(soundtouch)
+        set(PS2_ST "${soundtouch_SOURCE_DIR}/source/SoundTouch")
+        add_library(ps2soundtouch STATIC ${PS2_ST}/AAFilter.cpp ${PS2_ST}/cpu_detect_x86.cpp ${PS2_ST}/FIFOSampleBuffer.cpp
+            ${PS2_ST}/FIRFilter.cpp ${PS2_ST}/InterpolateCubic.cpp ${PS2_ST}/InterpolateLinear.cpp ${PS2_ST}/InterpolateShannon.cpp
+            ${PS2_ST}/RateTransposer.cpp ${PS2_ST}/SoundTouch.cpp ${PS2_ST}/TDStretch.cpp)
+        target_include_directories(ps2soundtouch PUBLIC "${soundtouch_SOURCE_DIR}/include")
+        target_compile_definitions(ps2soundtouch PUBLIC SOUNDTOUCH_FLOAT_SAMPLES SOUNDTOUCH_DISABLE_X86_OPTIMIZATIONS)
+        target_compile_options(ps2soundtouch PRIVATE -Wno-unknown-pragmas)
+        target_sources(ps2web PRIVATE host/audio_stretch.cpp)
+        target_compile_definitions(ps2web PRIVATE PS2_SOUNDTOUCH)
+        target_link_libraries(ps2web PRIVATE ps2soundtouch)
         target_link_options(ps2web PRIVATE --profiling-funcs -sJSPI -sALLOW_MEMORY_GROWTH=1 -sINITIAL_MEMORY=1073741824 -sMAXIMUM_MEMORY=2147483648 -sPTHREAD_POOL_SIZE=6 -sALLOW_TABLE_GROWTH=1 -lidbfs.js -sSTACK_SIZE=16777216 -sENVIRONMENT=web
-            -sEXPORTED_FUNCTIONS=_main,_ps2web_pad,_ps2web_pad_connected,_ps2web_resize,_ps2web_gpu_ms,_ps2web_frames,_ps2web_primitives,_ps2web_audio_ring,_ps2web_audio_queued_ms,_ps2web_idle_ms,_ps2web_vu_interpreted
+            -sEXPORTED_FUNCTIONS=_main,_ps2web_pad,_ps2web_pad_connected,_ps2web_resize,_ps2web_gpu_ms,_ps2web_frames,_ps2web_save_state,_ps2web_primitives,_ps2web_audio_ring,_ps2web_audio_queued_ms,_ps2web_stretch_tempo,_ps2web_idle_ms,_ps2web_vu_interpreted
             -sEXPORTED_RUNTIME_METHODS=callMain,addRunDependency,removeRunDependency,HEAPU8,ENV
             --shell-file ${CMAKE_SOURCE_DIR}/web/shell.html --preload-file ${PS2_WEB_ELF}@/game/core.elf)
         set_target_properties(ps2web PROPERTIES SUFFIX ".html" LINK_DEPENDS ${CMAKE_SOURCE_DIR}/web/shell.html)
@@ -207,12 +228,13 @@ if(PS2_GENERATED)
         target_sources(ps2run PRIVATE host/window.cpp)
         target_compile_definitions(ps2run PRIVATE PS2_WINDOW)
         target_link_libraries(ps2run PRIVATE SDL2::SDL2)
-        # time-stretched sound below full speed (host/window.cpp)
+        # time-stretched sound below full speed (host/audio_stretch.cpp)
         find_package(PkgConfig QUIET)
         if(PkgConfig_FOUND)
             pkg_check_modules(PS2_SOUNDTOUCH QUIET IMPORTED_TARGET soundtouch)
         endif()
         if(PS2_SOUNDTOUCH_FOUND)
+            target_sources(ps2run PRIVATE host/audio_stretch.cpp)
             target_compile_definitions(ps2run PRIVATE PS2_SOUNDTOUCH)
             target_link_libraries(ps2run PRIVATE PkgConfig::PS2_SOUNDTOUCH)
         endif()
