@@ -5103,11 +5103,14 @@ void draw_back(SetupCache &cache, const PrimOp &op) {
                     emit_all();
                 } else {
                     // Within a texcache run the texture reads the run's starting state: only primitives batched before
-                    // the run began must have landed first.
+                    // the run began must have landed first. A texture apart from the frame is checked whole when its
+                    // run begins, as the run's later primitives (cached, unchecked) may read other texels than the
+                    // first (MK:SM's glow downsample: rows 224-255 of a 224-line frame are the Z buffer just cleared
+                    // in this batch; read before the clear they lit a yellow strip at the bottom of every other frame).
                     const Range used = region(setup[12], setup[13], setup[14], rect[0], rect[1], rect[2], rect[3]);
                     const bool cached = op.run == texcache::Run::same;
                     const bool frame = shares_frame(setup, b) ? drawn_under(b, rect, cached ? b.run_start : ~std::size_t{0})
-                                                              : !cached && used.overlaps(b.fb_range.lo, b.fb_range.hi);
+                                                              : !cached && tex.overlaps(b.fb_range.lo, b.fb_range.hi);
                     if (frame || (b.zwrite && used.overlaps(b.z_range.lo, b.z_range.hi))) {
                         if (chainable()) chain_defer();
                         else emit_all();
