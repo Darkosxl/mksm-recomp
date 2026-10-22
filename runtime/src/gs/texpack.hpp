@@ -2,6 +2,7 @@
 
 #include "gs.hpp"
 
+#include <cstddef>
 #include <cstdint>
 #include <vector>
 
@@ -27,8 +28,8 @@ void drawn(std::uint32_t bp, std::uint32_t bw, std::uint32_t psm, std::uint32_t 
 // Key of the texture the current context samples (0 when it is too large or a render target); dumps it when dumping.
 std::uint64_t key(const State &st);
 // The pack's pixels for a key, 2^scale times the given size, read from disk (the caller keeps what it needs); empty
-// when the pack has none.
-std::vector<std::uint32_t> replacement(std::uint64_t key, std::uint32_t tw, std::uint32_t th, std::uint32_t &scale);
+// when the pack has none, or they are more than room pixels (they stay with the pack, unread or loaded, until they fit).
+std::vector<std::uint32_t> replacement(std::uint64_t key, std::uint32_t tw, std::uint32_t th, std::uint32_t &scale, std::size_t room);
 // Texture-pack work on the render thread since the last call (PS2_FRAME_LOG).
 struct Stats {
     std::uint32_t decodes = 0, loads = 0;

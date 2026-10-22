@@ -128,9 +128,10 @@ Pack &pack() {
     return p;
 }
 
-bool read_pam(const std::string &path, std::vector<std::uint32_t> &px, std::uint32_t &w, std::uint32_t &h) {
+// 1 read, 0 unreadable, -1 more than room pixels (left unread)
+int read_pam(const std::string &path, std::vector<std::uint32_t> &px, std::uint32_t &w, std::uint32_t &h, std::size_t room = SIZE_MAX) {
     std::FILE *f = std::fopen(path.c_str(), "rb");
-    if (!f) return false;
+    if (!f) return 0;
     char line[128];
     w = h = 0;
     unsigned depth = 0;
@@ -139,6 +140,7 @@ bool read_pam(const std::string &path, std::vector<std::uint32_t> &px, std::uint
         std::sscanf(line, "HEIGHT %u", &h);
         std::sscanf(line, "DEPTH %u", &depth);
     }
+    if (static_cast<std::size_t>(w) * h > room) return std::fclose(f), -1;
     px.resize(static_cast<std::size_t>(w) * h);
     const bool ok = depth == 4 && w && h && std::fread(px.data(), 4, px.size(), f) == px.size();
     std::fclose(f);
@@ -175,7 +177,7 @@ struct Loader {
                 char name[64];
                 std::snprintf(name, sizeof name, "/%016llx.pam", static_cast<unsigned long long>(key));
                 Loaded f;
-                f.ok = read_pam(std::string(pack_dir()) + name, f.px, f.w, f.h);
+                f.ok = read_pam(std::string(pack_dir()) + name, f.px, f.w, f.h) > 0;
                 lock.lock();
                 ready[key] = std::move(f);
             }
@@ -344,7 +346,7 @@ std::uint64_t key_uncounted(const State &st) {
     return k;
 }
 
-std::vector<std::uint32_t> replacement(std::uint64_t key, std::uint32_t tw, std::uint32_t th, std::uint32_t &scale) {
+std::vector<std::uint32_t> replacement(std::uint64_t key, std::uint32_t tw, std::uint32_t th, std::uint32_t &scale, std::size_t room) {
     Pack &p = pack();
     if (!p.files.count(key)) return {};
     char name[64];
@@ -359,13 +361,16 @@ std::vector<std::uint32_t> replacement(std::uint64_t key, std::uint32_t tw, std:
             if (l.asked.insert(key).second) l.wanted.push_back(key), l.cv.notify_one();
             return {};
         }
+        if (it->second.px.size() > room) return {};  // stays loaded until it fits
         f = std::move(it->second);
         l.ready.erase(it);
         l.asked.erase(key);
     } else {
         const auto t0 = std::chrono::steady_clock::now();
-        f.ok = read_pam(std::string(pack_dir()) + name, f.px, f.w, f.h);
+        const int read = read_pam(std::string(pack_dir()) + name, f.px, f.w, f.h, room);
         g_stats.load_ms += ms_since(t0);
+        if (read < 0) return {};
+        f.ok = read > 0;
     }
     ++g_stats.loads, g_stats.load_mb += f.px.size() * 4.0 / (1 << 20);
     if (f.ok) {

@@ -4469,15 +4469,15 @@ void replace_texture(std::uint64_t key, SetupCache &cache) {
     if (!key || !texpack::packing() || ((w[7] >> 24) & 3u) == 3u || ((w[7] >> 26) & 3u) == 3u) return;
     auto it = replaced.find(key);
     if (it == replaced.end()) {
+        // Full, usually after a few maps: start the region over. At most every 600 frames, so a scene that needs more
+        // than the region keeps the textures it has instead of reloading every frame. Until then a replacement that
+        // doesn't fit stays with the pack (taken and dropped, it was read again every frame; on the web, fetched).
+        // ponytail: drops everything at once; per-texture LRU if a scene ever needs more than the region.
+        static std::uint64_t last_reset = 0;
         std::uint32_t scale = 0;
-        const std::vector<std::uint32_t> px = texpack::replacement(key, tw, th, scale);
+        const std::vector<std::uint32_t> px = texpack::replacement(key, tw, th, scale, g_nat.frame - last_reset < 600 ? kReplWords - used : kReplWords);
         if (px.empty()) return;
         if (used + px.size() > kReplWords) {
-            // Full, usually after a few maps: start the region over. At most every 600 frames, so a scene that needs
-            // more than the region keeps the textures it has instead of reloading every frame.
-            // ponytail: drops everything at once; per-texture LRU if a scene ever needs more than the region.
-            static std::uint64_t last_reset = 0;
-            if (g_nat.frame - last_reset < 600 || px.size() > kReplWords) return;
             flush_back();  // commands recorded so far read the old contents
             replaced.clear();
             used = 0;
