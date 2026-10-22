@@ -1,7 +1,7 @@
 # Caddy front for the MKSM site: TLS, the invite-cookie gate, static files and the signalling proxy.
 # Environment (from /etc/mksm/caddy.env on the VPS):
 #   DOMAIN       site address, e.g. mksm.example.com (http://127.0.0.1:8480 for a local test without TLS)
-#   MKSM_ROOT    web root holding index.html, current.json, disc.iso and v/<build hash>/
+#   MKSM_ROOT    web root holding index.html, current.json, disc.iso, v/<build hash>/ and pack/ (HD textures)
 #   SIGNAL_ADDR  signal.mjs listen address
 #   CADDY_ADMIN  admin endpoint ("off" for local tests)
 {
@@ -29,7 +29,15 @@
 	header @build Cache-Control "private, max-age=31536000, immutable" {
 		match status 2xx 304
 	}
-	@fresh path / /index.html /play/* /current.json
+	# The HD texture pack: indexes and objects are content-named, so immutable too. Objects are gzip bytes that the
+	# page decompresses itself (Cache Storage keeps them compressed), so they go out as opaque octets (handle below).
+	@packobj path /pack/obj/* /pack/*.txt
+	header @packobj {
+		Cache-Control "private, max-age=31536000, immutable"
+		Content-Type application/octet-stream
+		match status 2xx 304
+	}
+	@fresh path / /index.html /play/* /current.json /pack/current.json
 	header @fresh Cache-Control "no-cache" {
 		match status 2xx 304
 	}
@@ -48,6 +56,11 @@
 	@signal path /ws /auth /invite /turn /admin /admin/*
 	handle @signal {
 		reverse_proxy {$SIGNAL_ADDR:127.0.0.1:8787}
+	}
+
+	# Pack files as stored: no precompressed sidecar lookup, so never a Content-Encoding.
+	handle /pack/* {
+		file_server
 	}
 
 	handle {
