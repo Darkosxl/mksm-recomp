@@ -2,9 +2,10 @@
 // Local end-to-end test. Starts signal.mjs (and Caddy with ./Caddyfile in front of it when `caddy` is on
 // PATH) on loopback ports with throwaway secrets and a temp web root, then checks invite -> cookie ->
 // /auth (and /invite?room= redirects, ROOM_URL), /turn credentials, rooms (create/join/relay/full/leave/
-// expiry), the binary relay (byte-exact both ways, size cap, 20 MiB paced by the rate limit and held by a
-// stalled receiver's backlog, lossless and in order; ~8 s of the run) and, through Caddy, the auth gate,
-// headers, precompression and disc Range requests.
+// expiry; personal codes: join by owner / by code, replaced, rate limit, nicknames), the binary relay
+// (byte-exact both ways, size cap, 20 MiB paced by the rate limit and held by a stalled receiver's backlog,
+// lossless and in order; ~8 s of the run) and, through Caddy, the auth gate, headers, precompression and disc
+// Range requests.
 // usage: [CADDY=/path/to/caddy] node test.mjs [--no-caddy]   (Caddy >= 2.11: 2.10.x answers precompressed files with 206)
 import assert from 'node:assert/strict';
 import { execFileSync, spawn } from 'node:child_process';
@@ -21,7 +22,7 @@ const here = dirname(fileURLToPath(import.meta.url));
 const tmp = mkdtempSync(join(tmpdir(), 'mksm-test-'));
 const key = () => randomBytes(32).toString('hex');
 const secrets = { COOKIE_SECRET: key(), ADMIN_SECRET: key(), TURN_SECRET: key() };
-const GRACE_MS = 1500;
+const GRACE_MS = 1500, PROBE_BURST = 100;
 const children = new Set();
 const CADDY = process.env.CADDY || 'caddy';
 let caddy = !process.argv.includes('--no-caddy');
@@ -110,7 +111,7 @@ const signalPort = await freePort();
 const caddyPort = caddy ? await freePort() : 0;
 const direct = `http://127.0.0.1:${signalPort}`;
 const base = caddy ? `http://127.0.0.1:${caddyPort}` : direct;
-const signalEnv = { ...secrets, HOST: '127.0.0.1', PORT: String(signalPort), DATA_DIR: join(tmp, 'data'), PUBLIC_ORIGIN: base, TURN_HOST: 'turn.test', ROOM_GRACE_MS: String(GRACE_MS) };
+const signalEnv = { ...secrets, HOST: '127.0.0.1', PORT: String(signalPort), DATA_DIR: join(tmp, 'data'), PUBLIC_ORIGIN: base, TURN_HOST: 'turn.test', ROOM_GRACE_MS: String(GRACE_MS), PROBE_BURST: String(PROBE_BURST) };
 const startSignal = () => start('signal.mjs', process.execPath, ['signal.mjs'], signalEnv, /listening on/);
 let signal = await startSignal();
 
@@ -360,6 +361,170 @@ await check('an empty room survives the grace period, then is dropped', async ()
   assert.deepEqual(await c.ask({ type: 'info', room }), { type: 'error', error: 'not-found', request: 'info' });
   c.close();
 });
+// ---- personal codes: the owner hosts room codeOf(owner), friends join by code ----
+const ROOM_CHARS = 'abcdefghijkmnpqrstuvwxyz23456789';
+const codeOf = (owner) => { // 40 bits of HMAC(COOKIE_SECRET, 'code:' + owner), 5 bits per char, most significant first
+  const v = BigInt('0x' + createHmac('sha256', secrets.COOKIE_SECRET).update('code:' + owner).digest().subarray(0, 5).toString('hex'));
+  return Array.from({ length: 8 }, (_, i) => ROOM_CHARS[Number((v >> BigInt(35 - 5 * i)) & 31n)]).join('');
+};
+const owner = () => randomBytes(16).toString('hex'), tab = () => randomBytes(8).toString('hex');
+const host = async (who, nick = 'Alice', t = tab()) => {
+  const ws = await client(base, cookie);
+  const joined = await ws.ask({ type: 'join', owner: who, nick, build, tab: t });
+  assert.equal(joined.type, 'joined', JSON.stringify(joined));
+  ws.id = joined.id;
+  return [ws, joined];
+};
+const guest = async (code, nick = 'Bob', t = tab()) => {
+  const ws = await client(base, cookie);
+  const joined = await ws.ask({ type: 'join', room: code, nick, build, tab: t });
+  ws.id = joined.id;
+  return [ws, joined];
+};
+let alice, code;
+await check('code: 8 room chars, HMAC of the owner key; stable per owner; a malformed owner is refused', async () => {
+  const c = await client(base, cookie);
+  alice = owner();
+  const reply = await c.ask({ type: 'code', owner: alice });
+  assert.deepEqual(reply, { type: 'code', code: codeOf(alice) });
+  assert.match(reply.code, /^[a-z2-9]{8}$/);
+  code = reply.code;
+  assert.equal((await c.ask({ type: 'code', owner: alice })).code, code);
+  assert.notEqual((await c.ask({ type: 'code', owner: owner() })).code, code);
+  for (const bad of [undefined, 'abc', alice.toUpperCase(), alice + '0', 42])
+    assert.deepEqual(await c.ask({ type: 'code', owner: bad }), { type: 'error', error: 'bad-request', request: 'code' }, String(bad));
+  c.close();
+});
+await check('a code nobody hosts is offline (info and join)', async () => {
+  const c = await client(base, cookie);
+  assert.deepEqual(await c.ask({ type: 'info', room: code }), { type: 'error', error: 'offline', request: 'info' });
+  assert.deepEqual(await c.ask({ type: 'join', room: code, nick: 'Bob' }), { type: 'error', error: 'offline', request: 'join' });
+  c.close();
+});
+let h, g;
+await check('join by owner creates the room on demand; the owner is host; info gives the host nick', async () => {
+  let joined;
+  [h, joined] = await host(alice, 'Alice');
+  assert.deepEqual(joined, { type: 'joined', room: code, id: h.id, host: true, peer: null, build, nick: null });
+  const c = await client(base, cookie);
+  assert.deepEqual(await c.ask({ type: 'info', room: code }), { type: 'info', room: code, build, peers: 1, nick: 'Alice' });
+  c.close();
+});
+await check('join by code: guest is P2, both sides get the other nick, signalling flows', async () => {
+  let joined;
+  [g, joined] = await guest(code, 'Bob');
+  assert.deepEqual(joined, { type: 'joined', room: code, id: g.id, host: false, peer: h.id, build, nick: 'Alice' });
+  assert.deepEqual(await h.next(), { type: 'peer-joined', peer: g.id, nick: 'Bob' });
+  g.send(JSON.stringify({ type: 'offer', sdp: 'x' }));
+  assert.deepEqual(await h.next(), { type: 'offer', sdp: 'x', from: g.id });
+  const c = await client(base, cookie);
+  assert.deepEqual(await c.ask({ type: 'join', room: code, nick: 'Eve' }), { type: 'error', error: 'full', request: 'join' });
+  assert.deepEqual((await c.ask({ type: 'info', room: code })).peers, 2);
+  c.close();
+});
+await check('a guest on another build is refused (build-mismatch)', async () => {
+  const c = await client(base, cookie);
+  g.close();
+  assert.deepEqual(await h.next(), { type: 'peer-left', peer: g.id, host: true });
+  assert.deepEqual(await c.ask({ type: 'join', room: code, build: 'ab'.repeat(32) }), { type: 'error', error: 'build-mismatch', request: 'join' });
+  c.close();
+  [g] = await guest(code, 'Bob');
+  assert.equal((await h.next()).type, 'peer-joined');
+});
+await check('the same page rejoining (same tab) takes its old place: same id, the peer is not told', async () => {
+  const carol = owner(), t = tab();
+  const [h2, j2] = await host(carol, 'Carol', t);
+  const [g2] = await guest(j2.room, 'Dave');
+  assert.equal((await h2.next()).type, 'peer-joined');
+  // h2's connection died without the server noticing yet; the page reconnects with the same tab
+  const [h3, j3] = await host(carol, 'Carol', t);
+  assert.deepEqual(j3, { type: 'joined', room: j2.room, id: h2.id, host: true, peer: g2.id, build, nick: 'Dave' });
+  await closed(h2);
+  await g2.quiet();
+  h3.send(JSON.stringify({ type: 'ctl', data: 1 }));
+  assert.deepEqual(await g2.next(), { type: 'ctl', data: 1, from: h2.id });
+  // the guest too
+  const [g3, j4] = await guest(j2.room, 'Dave', 'ff'.repeat(8));
+  assert.deepEqual(j4, { type: 'error', error: 'full', request: 'join' });
+  g3.close();
+  h3.close();
+  assert.deepEqual(await g2.next(), { type: 'peer-left', peer: h2.id, closed: true });
+  g2.close();
+});
+await check('a second page of the same owner replaces the first: it gets replaced, its guest peer-left closed', async () => {
+  const [h2, joined] = await host(alice, 'Alice 2');
+  assert.deepEqual(joined, { type: 'joined', room: code, id: h2.id, host: true, peer: null, build, nick: null });
+  assert.deepEqual(await h.next(), { type: 'replaced' });
+  assert.deepEqual(await g.next(), { type: 'peer-left', peer: h.id, closed: true });
+  assert.deepEqual(await h.ask({ type: 'ctl', data: 1 }), { type: 'error', error: 'not-joined', request: 'ctl' });
+  assert.deepEqual(await g.ask({ type: 'ctl', data: 1 }), { type: 'error', error: 'not-joined', request: 'ctl' });
+  h.close();
+  await h2.quiet();
+  const c = await client(base, cookie);
+  assert.deepEqual(await c.ask({ type: 'info', room: code }), { type: 'info', room: code, build, peers: 1, nick: 'Alice 2' });
+  c.close();
+  g.close();
+  h = h2;
+});
+await check('a guest leaving keeps the room; the owner leaving closes it (guest gets peer-left closed, no promotion)', async () => {
+  [g] = await guest(code, 'Bob');
+  assert.equal((await h.next()).type, 'peer-joined');
+  assert.deepEqual(await g.ask({ type: 'leave' }), { type: 'left' });
+  assert.deepEqual(await h.next(), { type: 'peer-left', peer: g.id, host: true });
+  [g] = await guest(code, 'Bob');
+  assert.equal((await h.next()).type, 'peer-joined');
+  h.close();
+  assert.deepEqual(await g.next(), { type: 'peer-left', peer: h.id, closed: true });
+  assert.deepEqual(await g.ask({ type: 'info', room: code }), { type: 'error', error: 'offline', request: 'info' });
+  assert.deepEqual(await g.ask({ type: 'ctl', data: 1 }), { type: 'error', error: 'not-joined', request: 'ctl' });
+  g.close();
+});
+await check('nicknames: NFKC, control/bidi/zero-width chars stripped, spaces collapsed, 20 chars max, else Player', async () => {
+  const cases = [
+    ['Ａｌｉｃｅ', 'Alice'],
+    ['\u202eecilA\u202c', 'ecilA'],
+    ['Al\u200bi\u0000c\u0007e\u2066', 'Alice'],
+    ['  two \n\t  words\u2028 ', 'two words'],
+    ['x'.repeat(30), 'x'.repeat(20)],
+    ['😀'.repeat(25), '😀'.repeat(20)],
+    ['\u200f\u200e ', 'Player'],
+    ['', 'Player'],
+    [42, 'Player'],
+  ];
+  for (const [nick, want] of cases) {
+    const key = owner();
+    const [o] = await host(key, nick);
+    const c = await client(base, cookie);
+    assert.equal((await c.ask({ type: 'info', room: codeOf(key) })).nick, want, JSON.stringify(nick));
+    const [p, joined] = await guest(codeOf(key), nick);
+    assert.equal(joined.nick, want);
+    assert.equal((await o.next()).nick, want, JSON.stringify(nick));
+    for (const ws of [o, c, p]) ws.close();
+  }
+});
+await check('code probes (info / join by code) are rate-limited per invite; code and owner joins are not', async () => {
+  const one = await mint(1);
+  const res = await get(new URL(one.link).pathname + new URL(one.link).search);
+  const other = res.headers.getSetCookie()[0].split(';')[0];
+  const c = await client(base, other);
+  const nobody = codeOf(owner());
+  for (let i = 0; i < PROBE_BURST; i++) assert.equal((await c.ask({ type: i % 2 ? 'info' : 'join', room: nobody })).error, 'offline', 'probe ' + i);
+  assert.deepEqual(await c.ask({ type: 'info', room: nobody }), { type: 'error', error: 'rate-limited', request: 'info' });
+  assert.deepEqual(await c.ask({ type: 'join', room: nobody }), { type: 'error', error: 'rate-limited', request: 'join' });
+  assert.equal((await c.ask({ type: 'code', owner: owner() })).type, 'code');
+  const d = await client(base, other); // per invite, not per socket
+  assert.equal((await d.ask({ type: 'info', room: nobody })).error, 'rate-limited');
+  assert.equal((await d.ask({ type: 'join', owner: owner(), nick: 'x' })).type, 'joined');
+  const e = await client(base, cookie); // another invite is not affected
+  assert.equal((await e.ask({ type: 'info', room: nobody })).error, 'offline');
+  for (const ws of [c, d, e]) ws.close();
+});
+await check('/invite?room= also takes an 8-char personal code', async () => {
+  const one = await mint(1);
+  const res = await get(`${new URL(one.link).pathname}${new URL(one.link).search}&room=${code}`);
+  assert.equal(res.status, 302);
+  assert.equal(res.headers.get('location'), '/play/' + code);
+});
 await check('oversized messages close only that socket (1009); the server keeps serving', async () => {
   const c = await client(base, cookie);
   const code = new Promise((resolve) => c.once('close', resolve));
@@ -510,7 +675,7 @@ if (caddy) {
       assert.equal(res.status, 200, path);
       isolation(res);
       assert.equal(res.headers.get('cache-control'), 'no-cache');
-      assert.match(await res.text(), /Create room/);
+      assert.match(await res.text(), /Your code/);
     }
   });
   await check('caddy: current.json is no-cache', async () => {

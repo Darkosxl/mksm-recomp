@@ -4,84 +4,369 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <meta name="robots" content="noindex, nofollow">
+<meta name="theme-color" content="#0c0a09">
+<link rel="icon" href="data:,">
 <title>Shaolin Monks</title>
 <style>
-  :root { color-scheme: light dark; --bg: #f5f3ee; --fg: #1c1b18; --muted: #6a665d; --line: #d8d3c6; --field: #fff; --accent: #a8231b; --accent-fg: #fff; }
-  @media (prefers-color-scheme: dark) {
-    :root { --bg: #131210; --fg: #ebe7de; --muted: #9b968b; --line: #36322b; --field: #1d1b17; --accent: #d9463d; --accent-fg: #fff; }
+  :root {
+    color-scheme: dark;
+    --ink: #0a0807; --fg: #efe6d6; --muted: #a8998a; --line: #3d3028; --line-hi: #4b3b2f;
+    --blood: #b4161d; --blood-hi: #e0333a; --blood-dk: #6d0a0e; --gold: #d9ad4c; --gold-hi: #f5d888; --gold-dk: #7d5c22;
+    --ok: #9fcf86; --err: #ff8a7a; --warn: #f0c060;
+    /* Impact has one weight: font-synthesis: none keeps it from faux bold while the narrow fallbacks use their bold */
+    --display: Impact, Haettenschweiler, 'Arial Narrow Bold', 'Arial Narrow', 'Roboto Condensed', sans-serif-condensed, 'Nimbus Sans Narrow', 'Liberation Sans Narrow', sans-serif;
+    --body: system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif;
+    --mono: ui-monospace, 'Cascadia Mono', 'SF Mono', Menlo, Consolas, 'DejaVu Sans Mono', monospace;
   }
   * { box-sizing: border-box; }
-  body { margin: 0; background: var(--bg); color: var(--fg); font: 16px/1.5 system-ui, -apple-system, "Segoe UI", sans-serif; }
-  main { max-width: 34rem; margin: 0 auto; padding: 3rem 1rem; }
-  h1 { margin: 0 0 .25rem; font-size: 1.75rem; letter-spacing: -.01em; }
-  .muted { color: var(--muted); margin-top: 0; }
-  section { margin-top: 2rem; }
-  .row { display: flex; gap: .5rem; margin: .75rem 0; }
-  input { flex: 1; min-width: 0; padding: .6rem .75rem; font: inherit; color: var(--fg); background: var(--field); border: 1px solid var(--line); border-radius: 6px; }
-  button { padding: .6rem 1rem; font: inherit; font-weight: 600; color: var(--fg); background: var(--field); border: 1px solid var(--line); border-radius: 6px; cursor: pointer; }
-  button.primary { color: var(--accent-fg); background: var(--accent); border-color: var(--accent); }
-  button:disabled { opacity: .5; cursor: default; }
-  a { color: var(--accent); }
-  code { font-size: 1.05em; }
-  .note { padding: .6rem .75rem; border: 1px solid var(--accent); border-radius: 6px; }
-  #status:empty { display: none; }
+  html { background: var(--ink); }
+  body {
+    margin: 0; min-height: 100vh; color: var(--fg); font: 16px/1.5 var(--body);
+    background:
+      radial-gradient(120% 55% at 50% -10%, rgba(165, 20, 18, .40), transparent 62%),
+      radial-gradient(90% 45% at 50% 112%, rgba(125, 85, 25, .16), transparent 70%),
+      repeating-linear-gradient(112deg, rgba(255, 255, 255, .014) 0 1px, transparent 1px 7px),
+      repeating-linear-gradient(-28deg, rgba(0, 0, 0, .2) 0 2px, transparent 2px 11px),
+      linear-gradient(180deg, #15110f, var(--ink) 70%);
+  }
+  main { max-width: 36rem; margin: 0 auto; padding: 1.5rem 16px 3rem; }
+  [hidden] { display: none !important; }
+
+  .hero { text-align: center; padding: 1rem 0 .25rem; }
+  .hero h1 {
+    margin: 0; font: 700 clamp(2.9rem, 14vw, 4.6rem)/.95 var(--display); text-transform: uppercase; letter-spacing: .03em;
+    background: linear-gradient(180deg, #fbe7a6 0%, #e0b453 42%, #9a6520 78%, #c8913b 100%);
+    -webkit-background-clip: text; background-clip: text; color: transparent;
+    filter: drop-shadow(0 3px 0 #2a0605) drop-shadow(0 0 22px rgba(190, 25, 25, .35));
+  }
+  .tag {
+    display: flex; align-items: center; justify-content: center; gap: .8rem; margin: .55rem 0 0;
+    font: 700 1rem/1 var(--display); letter-spacing: .3em; text-indent: .3em; text-transform: uppercase; color: var(--blood-hi); white-space: nowrap;
+  }
+  .tag::before, .tag::after { content: ''; flex: 0 1 4rem; min-width: .75rem; height: 1px; background: linear-gradient(90deg, transparent, var(--gold-dk)); }
+  .tag::after { transform: scaleX(-1); }
+  .sub { margin: .8rem auto 0; max-width: 25rem; color: var(--muted); font-size: .95rem; }
+
+  .card {
+    position: relative; margin-top: 1rem; padding: 1.1rem 1rem 1.2rem; border: 1px solid var(--line); border-radius: 6px;
+    background: linear-gradient(180deg, rgba(42, 33, 28, .93), rgba(21, 17, 15, .95));
+    box-shadow: inset 0 1px 0 rgba(255, 214, 140, .07), 0 12px 32px rgba(0, 0, 0, .5);
+  }
+  .card::before {
+    content: ''; position: absolute; left: 14px; right: 14px; top: -1px; height: 2px;
+    background: linear-gradient(90deg, transparent, var(--gold-dk), transparent);
+  }
+  h2, summary { font: 700 1.2rem/1.1 var(--display); letter-spacing: .1em; text-transform: uppercase; color: var(--gold); }
+  h2 { margin: 0 0 .7rem; }
+  h3 { margin: 1.4rem 0 .5rem; font: 700 .75rem/1 var(--body); letter-spacing: .14em; text-transform: uppercase; color: var(--muted); }
+  p { margin: .5rem 0 0; }
+  .muted { color: var(--muted); }
+  .small { font-size: .875rem; }
+  .lead { font-weight: 600; color: var(--gold-hi); }
+
+  .row { display: flex; flex-wrap: wrap; gap: .5rem; margin-top: .75rem; }
+  .row > button { flex: 1 1 auto; }
+  .row > input + button { flex: 0 0 auto; min-width: 6.5rem; }
+  input[type=text] {
+    flex: 1 1 9rem; min-width: 0; padding: .7rem .8rem; font: 1rem var(--body); color: var(--fg);
+    background: #0e0b0a; border: 1px solid var(--line-hi); border-radius: 4px;
+  }
+  input[type=text]:focus { outline: 2px solid var(--gold-dk); outline-offset: 0; border-color: var(--gold); }
+  input::placeholder { color: #6f6255; }
+  button, .btn {
+    display: inline-flex; align-items: center; justify-content: center; min-height: 44px; padding: .65rem 1rem;
+    font: 600 .95rem/1.2 var(--body); color: var(--fg); text-decoration: none; cursor: pointer;
+    background: linear-gradient(180deg, #2e241f, #1c1613); border: 1px solid var(--line-hi); border-radius: 4px;
+  }
+  button:hover:not(:disabled), .btn:hover { border-color: var(--gold-dk); color: #fff; }
+  button:focus-visible, .btn:focus-visible, summary:focus-visible, select:focus-visible { outline: 2px solid var(--gold); outline-offset: 2px; }
+  button:disabled { opacity: .45; cursor: default; }
+  .primary { color: #fff4dc; background: linear-gradient(180deg, #c92229, var(--blood-dk)); border-color: #b8873a; }
+  .wide { width: 100%; margin-top: .6rem; }
+  .play {
+    width: 100%; margin-top: 1.1rem; padding: .75rem 1rem .65rem; font: 700 2.2rem/1 var(--display); letter-spacing: .16em; text-indent: .16em;
+    text-transform: uppercase; color: #fff4dc; border: 1px solid #e3b65a; text-shadow: 0 2px 0 #3d0507;
+    background: linear-gradient(180deg, #e0333a 0%, #a8131a 48%, var(--blood-dk) 100%);
+    box-shadow: inset 0 1px 0 rgba(255, 220, 180, .35), inset 0 -3px 0 rgba(0, 0, 0, .35), 0 8px 24px rgba(180, 22, 29, .35);
+  }
+  .play:hover:not(:disabled) { filter: brightness(1.1); border-color: var(--gold-hi); box-shadow: inset 0 1px 0 rgba(255, 220, 180, .35), 0 0 30px rgba(224, 51, 58, .5); }
+  .link { min-height: 0; padding: .15rem .35rem; background: none; border: 0; color: var(--gold); font-size: .85rem; text-decoration: underline; text-underline-offset: 3px; }
+
+  .hello { display: flex; align-items: baseline; flex-wrap: wrap; gap: .35rem; margin: 1.25rem 0 0; color: var(--muted); }
+  .hello strong { font: 700 1.35rem/1.1 var(--display); letter-spacing: .05em; color: var(--fg); overflow-wrap: anywhere; }
+  .code {
+    margin: .1rem 0 0; padding: .5rem; text-align: center; font: 700 clamp(2rem, 11vw, 2.8rem)/1.15 var(--mono);
+    letter-spacing: .12em; text-indent: .12em; color: var(--gold-hi); text-shadow: 0 0 18px rgba(217, 173, 76, .25);
+    background: rgba(0, 0, 0, .45); border: 1px dashed var(--gold-dk); border-radius: 4px; user-select: all;
+  }
+  .code.dim { color: #5d5146; text-shadow: none; user-select: none; }
+  .msg { margin: .65rem 0 0; font-size: .95rem; overflow-wrap: anywhere; }
+  .msg:empty { display: none; }
+  .msg[data-kind=err] { color: var(--err); }
+  .msg[data-kind=ok] { color: var(--ok); }
+  .msg[data-kind=warn] { color: var(--warn); }
+
+  .banner {
+    display: flex; align-items: flex-start; gap: .75rem; margin: 1rem 0 0; padding: .7rem .85rem;
+    background: rgba(95, 10, 12, .4); border: 1px solid var(--blood); border-left-width: 4px; border-radius: 4px;
+  }
+  .banner.warn { background: rgba(90, 65, 15, .35); border-color: var(--gold-dk); }
+  .banner > span { flex: 1; }
+  .x { min-height: 0; padding: 0 .4rem; background: none; border: 0; color: var(--muted); font-size: 1.1rem; line-height: 1.4; }
+
+  details.card { padding: 0; }
+  summary { display: flex; align-items: center; justify-content: space-between; padding: 1rem; cursor: pointer; list-style: none; }
+  summary::-webkit-details-marker { display: none; }
+  summary::after {
+    content: ''; width: .5rem; height: .5rem; margin: 0 .3rem .2rem 0; border: solid currentColor; border-width: 0 2px 2px 0;
+    transform: rotate(45deg); transition: transform .2s;
+  }
+  details[open] > summary::after { transform: rotate(-135deg); margin-bottom: -.2rem; }
+  .inner { padding: 0 1rem 1.2rem; }
+  .inner > h3:first-child { margin-top: .2rem; }
+
+  .seg { display: flex; flex-wrap: wrap; border: 1px solid var(--line-hi); border-radius: 4px; overflow: hidden; }
+  .seg label { flex: 1 1 auto; position: relative; }
+  .seg input { position: absolute; inset: 0; opacity: 0; margin: 0; }
+  .seg span { display: block; padding: .6rem .45rem; text-align: center; font-weight: 600; font-size: .9rem; background: #171210; border-left: 1px solid var(--line); cursor: pointer; }
+  .seg label:first-child span { border-left: 0; }
+  .seg input:checked + span { color: #fff; background: linear-gradient(180deg, var(--blood), var(--blood-dk)); }
+  .seg input:focus-visible + span { outline: 2px solid var(--gold); outline-offset: -2px; }
+
+  /* Controller check: the game page's touch-pad layout, as a static diagram */
+  .pad-head { display: flex; flex-wrap: wrap; align-items: center; gap: .5rem; }
+  .pad-name { flex: 1 1 12rem; margin: 0; font-weight: 600; overflow-wrap: anywhere; }
+  select { max-width: 100%; padding: .45rem .5rem; font: .9rem var(--body); color: var(--fg); background: #0e0b0a; border: 1px solid var(--line-hi); border-radius: 4px; }
+  .pad {
+    --ctl: #211a16; --ctl-on: #c4161f; --ctl-line: #4a3a2e; --ctl-text: #d9c9ad;
+    display: grid; grid-template-columns: 1fr auto 1fr; grid-template-areas: "lsh . rsh" "dpad mid face" "lst . rst";
+    gap: 16px 12px; align-items: center; justify-items: center; margin: 1rem 0; padding: 18px 12px 22px;
+    background: radial-gradient(ellipse at 50% 0%, #2a211c, #110d0b 75%); border: 1px solid var(--line); border-radius: 28px 28px 64px 64px;
+  }
+  .ctl, .dpad span {
+    display: flex; align-items: center; justify-content: center; color: var(--ctl-text); font-weight: 700;
+    background: var(--ctl); border: 1px solid var(--ctl-line); transition: background .05s, box-shadow .05s;
+  }
+  .pad .on { color: #fff; background: var(--ctl-on); border-color: #f0b44c; box-shadow: 0 0 14px rgba(230, 40, 40, .65); }
+  .shoulders { display: flex; gap: 8px; width: 100%; max-width: 150px; }
+  .lsh { grid-area: lsh; } .rsh { grid-area: rsh; } .lst { grid-area: lst; } .rst { grid-area: rst; }
+  .shoulder { flex: 1; height: 34px; border-radius: 12px 12px 5px 5px; font-size: .85rem; }
+  .mid { grid-area: mid; display: flex; gap: 8px; }
+  .pill { height: 28px; padding: 0 12px; border-radius: 14px; font-size: .7rem; letter-spacing: .06em; text-transform: uppercase; }
+  .face { grid-area: face; display: grid; grid-template-columns: repeat(3, 40px); grid-template-rows: repeat(3, 40px); }
+  .face .ctl { border-radius: 50%; font-size: 18px; }
+  .face .tri { grid-area: 1 / 2; } .face .sq { grid-area: 2 / 1; } .face .ci { grid-area: 2 / 3; } .face .cr { grid-area: 3 / 2; }
+  .dpad { grid-area: dpad; display: grid; grid-template-columns: repeat(3, 38px); grid-template-rows: repeat(3, 38px); }
+  .dpad span { font-size: 12px; }
+  .dpad .up { grid-area: 1 / 2; border-radius: 8px 8px 0 0; } .dpad .down { grid-area: 3 / 2; border-radius: 0 0 8px 8px; }
+  .dpad .left { grid-area: 2 / 1; border-radius: 8px 0 0 8px; } .dpad .right { grid-area: 2 / 3; border-radius: 0 8px 8px 0; }
+  .dpad .hub { grid-area: 2 / 2; }
+  .stickbox { display: flex; flex-direction: column; align-items: center; gap: 4px; font-size: .75rem; color: var(--muted); }
+  .stick { position: relative; width: 92px; height: 92px; border-radius: 50%; border: 2px solid var(--ctl-line); background: radial-gradient(circle, #0d0a09 0 58%, #1c1613 60%); }
+  .stick i {
+    position: absolute; left: calc(50% + var(--x, 0) * 30px); top: calc(50% + var(--y, 0) * 30px); width: 32px; height: 32px; margin: -16px 0 0 -16px;
+    border-radius: 50%; background: radial-gradient(circle at 38% 35%, var(--gold-hi), #b8862f 60%, #6b4a17); box-shadow: 0 2px 6px rgba(0, 0, 0, .6);
+  }
+  .pad .stick.on { background: radial-gradient(circle, #4a0b0e 0 58%, #1c1613 60%); }
+  .meters { display: grid; grid-template-columns: auto 1fr 3ch; gap: 6px 10px; align-items: center; font-size: .85rem; }
+  .bar { height: 10px; background: #0d0a09; border: 1px solid var(--line); border-radius: 5px; overflow: hidden; }
+  .bar i { display: block; width: 0; height: 100%; background: linear-gradient(90deg, #8e0f14, var(--blood-hi), var(--gold-hi)); }
+  output { font-variant-numeric: tabular-nums; text-align: right; }
+  .mono { font-family: var(--mono); font-size: .8rem; }
+  .legend { display: grid; grid-template-columns: repeat(auto-fill, minmax(9.5rem, 1fr)); gap: 6px 12px; font-size: .9rem; }
+  .legend div { display: flex; align-items: center; gap: .5rem; }
+  kbd {
+    min-width: 2rem; padding: .05rem .4rem; text-align: center; font: 600 .8rem/1.5 var(--mono); color: var(--gold-hi);
+    background: #0d0a09; border: 1px solid var(--line-hi); border-bottom-width: 2px; border-radius: 4px;
+  }
+  /* after the font shorthands, which reset it */
+  .hero h1, .tag, h2, summary, .play, .hello strong { font-synthesis: none; }
+  @media (max-width: 480px) {
+    .pad { grid-template-columns: 1fr 1fr; grid-template-areas: "lsh rsh" "dpad face" "mid mid" "lst rst"; padding: 16px 8px 20px; border-radius: 22px 22px 48px 48px; }
+    .play { font-size: 2rem; }
+    .tag { gap: .5rem; font-size: .9rem; letter-spacing: .2em; text-indent: .2em; }
+  }
 </style>
 </head>
 <body>
 <main>
-  <h1>Shaolin Monks</h1>
-  <p class="muted">Two players per room. Desktop Chrome or Edge.</p>
-  <p id="warn" class="note" hidden></p>
+  <header class="hero">
+    <h1>Shaolin Monks</h1>
+    <p class="tag">Remastered · on the web</p>
+    <p class="sub">Co-op for two. Desktop Chrome or Edge with a gamepad or keyboard.</p>
+  </header>
+  <p id="warn" class="banner warn" hidden></p>
+  <div id="notice" class="banner" role="status" hidden><span id="notice-text"></span><button id="notice-x" class="x" type="button" aria-label="Dismiss">✕</button></div>
 
-  <section id="home">
-    <button id="create" class="primary">Create room</button>
-    <form id="join" class="row">
-      <input id="link" placeholder="Paste a room link" aria-label="Room link" autocomplete="off">
-      <button>Join</button>
+  <section id="first" class="card" hidden>
+    <h2>Pick a nickname</h2>
+    <p id="invite" class="lead" hidden></p>
+    <p class="muted">Your friend sees it when you play together.</p>
+    <form id="first-form" class="row">
+      <input id="first-nick" type="text" maxlength="20" placeholder="Nickname" aria-label="Nickname" autocomplete="nickname" spellcheck="false">
+      <button class="primary">Continue</button>
     </form>
-    <p><a id="solo" href="#">Play alone</a></p>
+    <p id="first-msg" class="msg"></p>
   </section>
 
-  <section id="room" hidden>
-    <p>Room <code id="room-id"></code> <span id="room-state" class="muted"></span></p>
-    <div class="row">
-      <input id="room-link" readonly aria-label="Room link to share">
-      <button id="copy">Copy</button>
-    </div>
-    <p class="muted">Send this link to the other player. Either of you can start first; the second one drops in.</p>
-    <button id="play" class="primary" disabled>Start game</button>
-    <p><a href="/">Back</a></p>
-  </section>
+  <div id="home" hidden>
+    <p id="hello" class="hello">Welcome, <strong id="hello-nick"></strong><button id="edit-nick" class="link" type="button">Edit</button></p>
 
-  <p id="status" class="note" role="status"></p>
+    <section class="card">
+      <h2>Your code</h2>
+      <div id="code" class="code dim">····-····</div>
+      <div class="row">
+        <button id="copy-code" type="button" disabled>Copy code</button>
+        <button id="copy-link" type="button" disabled>Copy link</button>
+      </div>
+      <input id="copy-field" class="wide" type="text" readonly hidden aria-label="Text to copy">
+      <p class="muted small">Friends join your game with this code. It stays the same.</p>
+      <p id="code-msg" class="msg" role="status"></p>
+      <button id="retry" class="link" type="button" hidden>Try again</button>
+      <button id="play" class="play" type="button">Play</button>
+      <button id="offline" class="wide" type="button">Play offline</button>
+    </section>
+
+    <section id="join-card" class="card">
+      <h2>Join a friend</h2>
+      <form id="join" class="row">
+        <input id="join-input" type="text" placeholder="ABCD-EFGH or a link" aria-label="Your friend's code or link" autocomplete="off" autocapitalize="off" spellcheck="false">
+        <button>Find</button>
+      </form>
+      <p id="join-msg" class="msg" role="status"></p>
+      <button id="join-go" class="primary wide" type="button" hidden></button>
+    </section>
+
+    <a id="discord" class="btn wide" target="_blank" rel="noopener" hidden>Join the Discord</a>
+
+    <details id="pad-check" class="card">
+      <summary>Controller check</summary>
+      <div class="inner">
+        <p id="pad-off" class="msg" data-kind="err" hidden>Controller check unavailable (no game build deployed)</p>
+        <div id="pad-on">
+          <div class="pad-head">
+            <p id="pad-name" class="pad-name">Press any button on your controller</p>
+            <select id="pad-pick" aria-label="Controller" hidden></select>
+          </div>
+          <p id="pad-map" class="msg" data-kind="warn" hidden>This controller has a non-standard mapping; buttons may be mixed up. Try another browser or a USB cable / Steam Input off.</p>
+          <div class="pad" aria-hidden="true">
+            <div class="shoulders lsh"><div class="ctl shoulder" data-btn="256">L2</div><div class="ctl shoulder" data-btn="1024">L1</div></div>
+            <div class="shoulders rsh"><div class="ctl shoulder" data-btn="2048">R1</div><div class="ctl shoulder" data-btn="512">R2</div></div>
+            <div class="dpad">
+              <span class="up" data-btn="16">▲</span><span class="left" data-btn="128">◀</span><span class="hub"></span>
+              <span class="right" data-btn="32">▶</span><span class="down" data-btn="64">▼</span>
+            </div>
+            <div class="mid"><div class="ctl pill" data-btn="1">Select</div><div class="ctl pill" data-btn="8">Start</div></div>
+            <div class="face">
+              <div class="ctl tri" data-btn="4096">△</div><div class="ctl sq" data-btn="32768">□</div>
+              <div class="ctl ci" data-btn="8192">○</div><div class="ctl cr" data-btn="16384">✕</div>
+            </div>
+            <div class="stickbox lst"><div id="stick-l" class="stick" data-btn="2"><i></i></div>L3</div>
+            <div class="stickbox rst"><div id="stick-r" class="stick" data-btn="4"><i></i></div>R3</div>
+          </div>
+          <div class="meters">
+            <b>L2</b><span class="bar"><i id="l2-bar"></i></span><output id="l2-val">0</output>
+            <b>R2</b><span class="bar"><i id="r2-bar"></i></span><output id="r2-val">0</output>
+          </div>
+          <p id="sticks" class="muted mono"></p>
+          <div class="row"><button id="rumble" type="button" disabled>Test rumble</button></div>
+          <p id="rumble-note" class="muted small"></p>
+          <h3>Keyboard</h3>
+          <div id="legend" class="legend"></div>
+        </div>
+      </div>
+    </details>
+
+    <details id="settings" class="card">
+      <summary>Settings</summary>
+      <div class="inner">
+        <h3>Nickname</h3>
+        <form id="nick-form" class="row">
+          <input id="nick" type="text" maxlength="20" aria-label="Nickname" autocomplete="nickname" spellcheck="false">
+          <button>Save</button>
+        </form>
+        <p id="nick-msg" class="msg"></p>
+        <h3>Quality</h3>
+        <div class="seg" role="radiogroup" aria-label="Quality">
+          <label><input type="radio" name="quality" value="auto"><span>Auto</span></label>
+          <label><input type="radio" name="quality" value="3x6"><span>3x6</span></label>
+          <label><input type="radio" name="quality" value="2x"><span>2x</span></label>
+          <label><input type="radio" name="quality" value="1x"><span>1x</span></label>
+          <label><input type="radio" name="quality" value="original"><span>Original</span></label>
+        </div>
+        <p class="muted small">Auto picks the best that runs at 60 fps. 3x6 is the remaster and needs a strong GPU. Original is the PS2 look.</p>
+        <h3>Code</h3>
+        <p class="muted small">A new code replaces yours; the old one stops working.</p>
+        <div class="row"><button id="new-code" type="button">New code</button></div>
+        <h3>Saves</h3>
+        <p id="store-kept" class="msg"></p>
+        <p id="store-use" class="muted small"></p>
+        <button id="keep" class="wide" type="button" hidden>Keep my data</button>
+        <p id="keep-msg" class="msg"></p>
+        <p class="muted small">Saves live in this browser only. To back them up or move them, use Export card in the game.</p>
+      </div>
+    </details>
+  </div>
 </main>
 <script>
 'use strict';
-const $ = (id) => document.getElementById(id);
-const say = (text) => { $('status').textContent = text; };
-const ROOM = /^[a-z2-9]{12}$/;
-const ERRORS = {
-  'not-found': 'This room has expired. Create a new one.',
-  full: 'This room already has two players.',
-  busy: 'The server has too many rooms open. Try again later.',
-};
+// Invite link of the Discord server; the Discord button stays hidden while this is empty.
+const DISCORD_URL = '';
 
-// One request/response over a short-lived signalling socket (protocol: server/README.md).
+const $ = (id) => document.getElementById(id);
+const CODE = /^[abcdefghijkmnpqrstuvwxyz23456789]{8}$/;   // a player's code
+const ROOM = /^[abcdefghijkmnpqrstuvwxyz23456789]{12}$/;  // legacy room id (old /play/<room> links)
+const QUALITY = ['auto', '3x6', '2x', '1x', 'original'];
+const pretty = (code) => code.toUpperCase().replace(/^(.{4})/, '$1-');
+const say = (el, text, kind = '') => { el.textContent = text; el.dataset.kind = kind; };
+
+// localStorage throws in some private modes and with blocked site data; then values live for this visit only.
+const mem = {};
+function load(key) {
+  try { const v = localStorage.getItem(key); if (v !== null) return v; } catch {}
+  return mem[key] ?? null;
+}
+function store(key, value) {
+  mem[key] = value;
+  try { localStorage.setItem(key, value); } catch {}
+}
+
+// The server sanitises again; this keeps what the player sees equal to what the server will keep.
+function cleanNick(text) {
+  const s = String(text).normalize('NFKC').replace(/[\p{Cc}\p{Cf}\p{Zl}\p{Zp}]/gu, '').replace(/\s+/g, ' ').trim();
+  return Array.from(s).slice(0, 20).join('').trim();
+}
+const nick = () => cleanNick(load('mksm-nick') || '');
+
+// The player's secret: the server maps it to their code. Never shown, never put in a URL.
+function owner(fresh = false) {
+  let o = fresh ? '' : load('mksm-owner') || '';
+  if (!/^[0-9a-f]{32}$/.test(o)) {
+    o = Array.from(crypto.getRandomValues(new Uint8Array(16)), (b) => b.toString(16).padStart(2, '0')).join('');
+    store('mksm-owner', o);
+  }
+  return o;
+}
+
+// One request/response over a short-lived signalling socket (protocol: server/README.md). A server error
+// rejects with .code = its error name.
 function signal(msg) {
   return new Promise((resolve, reject) => {
     const ws = new WebSocket((location.protocol === 'https:' ? 'wss://' : 'ws://') + location.host + '/ws');
-    const timer = setTimeout(() => { ws.close(); reject(new Error('The signalling server did not answer.')); }, 5000);
+    const timer = setTimeout(() => { ws.close(); reject(new Error('The server did not answer. Try again.')); }, 5000);
     ws.onopen = () => ws.send(JSON.stringify(msg));
     ws.onmessage = (e) => {
       clearTimeout(timer);
       ws.close();
-      const reply = JSON.parse(e.data);
-      if (reply.type === 'error') reject(new Error(ERRORS[reply.error] || 'Server error: ' + reply.error));
+      let reply;
+      try { reply = JSON.parse(e.data); } catch { return reject(new Error('The server sent a bad reply.')); }
+      if (reply.type === 'error') reject(Object.assign(new Error('Server error: ' + reply.error), { code: reply.error }));
       else resolve(reply);
     };
-    ws.onerror = () => { clearTimeout(timer); reject(new Error('Cannot reach the signalling server.')); };
+    ws.onerror = () => { clearTimeout(timer); reject(new Error('Cannot reach the server.')); };
   });
 }
+const problem = (e) => (e.code === 'rate-limited' ? 'Too many tries, wait a minute.' : e.code ? `Something went wrong (${e.code}). Try again.` : e.message);
 
 async function currentBuild() {
   const res = await fetch('/current.json', { cache: 'no-store' });
@@ -90,71 +375,339 @@ async function currentBuild() {
 }
 
 // The game page lives in its immutable build directory, so the disc path is absolute.
-function gameUrl(build, room) {
-  const query = new URLSearchParams({ disc: '/disc.iso' });
-  if (room) query.set('room', room);
-  return '/v/' + encodeURIComponent(build) + '/ps2web.html?' + query;
+function gameUrl(build, params = {}) {
+  const query = new URLSearchParams({ disc: '/disc.iso', ...params });
+  return '/v/' + encodeURIComponent(build) + '/ps2web.html?' + String(query).replace(/%2F/g, '/');
 }
 
-async function showRoom(room) {
-  $('home').hidden = true;
-  $('room').hidden = false;
-  $('room-id').textContent = room;
-  $('room-link').value = location.origin + '/play/' + room;
-  try {
-    // A room is pinned to the build it was created with, so both players load identical wasm.
-    const info = await signal({ type: 'info', room });
-    const build = info.build || await currentBuild();
-    $('room-state').textContent = ['(empty)', '(1 player in)', '(full)'][info.peers];
-    $('play').disabled = info.peers >= 2;
-    $('play').onclick = () => { location.href = gameUrl(build, room); };
-  } catch (e) {
-    say(e.message);
-  }
+// Ask the browser to keep saves and the cached disc; it may take long to answer, so do not wait for it.
+async function persist() {
+  try { return await Promise.race([navigator.storage.persist(), new Promise((r) => setTimeout(() => r(false), 1500))]); } catch { return false; }
 }
 
-$('create').onclick = async () => {
-  $('create').disabled = true;
+// Leave for the game. url() may fail (no build, no server); then the button comes back.
+async function go(button, out, url) {
+  button.disabled = true;
+  button.dataset.busy = '';
   try {
-    const { room } = await signal({ type: 'create', build: await currentBuild() });
-    location.href = '/play/' + room;
+    const href = await url();
+    await persist();
+    location.href = href;
   } catch (e) {
-    say(e.message);
-    $('create').disabled = false;
+    say(out, problem(e), 'err');
+    button.disabled = false;
+    delete button.dataset.busy;
   }
-};
+}
+addEventListener('pageshow', (e) => {
+  if (e.persisted) for (const b of document.querySelectorAll('[data-busy]')) { b.disabled = false; delete b.dataset.busy; }
+});
+
+// ---- your code ----
+
+let myCode = null, codeReq = Promise.resolve(null), codeSeq = 0;
+function requestCode() {
+  const seq = ++codeSeq;
+  myCode = null;
+  $('code').textContent = '····-····';
+  $('code').classList.add('dim');
+  $('copy-code').disabled = $('copy-link').disabled = true;
+  $('retry').hidden = true;
+  say($('code-msg'), '');
+  codeReq = signal({ type: 'code', owner: owner() }).then((reply) => {
+    if (seq !== codeSeq) return null;
+    if (!CODE.test(reply.code)) throw new Error('The server sent a bad code.');
+    myCode = reply.code;
+    $('code').textContent = pretty(myCode);
+    $('code').classList.remove('dim');
+    $('copy-code').disabled = $('copy-link').disabled = false;
+    return myCode;
+  }).catch((e) => {
+    if (seq !== codeSeq) return null;
+    say($('code-msg'), problem(e) + ' You can still play offline.', 'err');
+    $('retry').hidden = false;
+    return null;
+  });
+  return codeReq;
+}
+$('retry').onclick = requestCode;
+
+async function copy(button, text) {
+  const field = $('copy-field');
+  try {
+    await navigator.clipboard.writeText(text);
+    field.hidden = true;
+  } catch {
+    // No clipboard access: select the text in a field instead.
+    field.hidden = false;
+    field.value = text;
+    field.focus();
+    field.select();
+    let done = false;
+    try { done = document.execCommand('copy'); } catch {}
+    if (!done) return say($('code-msg'), 'Press Ctrl+C (or long-press) to copy.');
+  }
+  button.dataset.label ||= button.textContent;
+  button.textContent = 'Copied';
+  clearTimeout(button.timer);
+  button.timer = setTimeout(() => { button.textContent = button.dataset.label; }, 1500);
+}
+$('copy-code').onclick = () => myCode && copy($('copy-code'), pretty(myCode));
+$('copy-link').onclick = () => myCode && copy($('copy-link'), location.origin + '/play/' + myCode);
+
+$('play').onclick = () => go($('play'), $('code-msg'), async () => {
+  const code = myCode || await requestCode();
+  if (!code) throw new Error('No code yet: the server cannot be reached. Try again, or play offline.');
+  return gameUrl(await currentBuild(), { room: code, host: '1', lobby: '/' });
+});
+$('offline').onclick = () => go($('offline'), $('code-msg'), async () => gameUrl(await currentBuild()));
+
+// ---- join a friend ----
+
+// Accepts ABCD-EFGH, abcdefgh, "abcd efgh", any case, or a link ending in /play/<code>.
+function parseId(text) {
+  let s = String(text).trim().split(/[?#]/)[0].replace(/\/+$/, '');
+  s = s.slice(s.lastIndexOf('/') + 1).replace(/[^0-9a-z]/gi, '').toLowerCase();
+  return CODE.test(s) || ROOM.test(s) ? s : null;
+}
+
+let lookSeq = 0;
+async function lookup(id) {
+  const seq = ++lookSeq, out = $('join-msg'), btn = $('join-go'), legacy = ROOM.test(id);
+  btn.hidden = true;
+  say(out, 'Looking…');
+  if (!legacy && id === (myCode || await codeReq)) {
+    if (seq === lookSeq) say(out, "That's your own code — press Play to host.");
+    return;
+  }
+  let info;
+  try {
+    info = await signal({ type: 'info', room: id });
+  } catch (e) {
+    if (seq !== lookSeq) return;
+    if (legacy) return say(out, e.code === 'not-found' ? 'This room has expired.' : problem(e), 'err');
+    return say(out, e.code === 'offline' || e.code === 'not-found' ? `${pretty(id)} is not online right now. Ask your friend to press Play.` : problem(e), 'err');
+  }
+  if (seq !== lookSeq) return;
+  const full = info.peers >= 2, host = cleanNick(info.nick || '');
+  say(out, full ? 'That game already has two players.' : legacy ? 'The room is open.' : `${pretty(id)} is online.`, full ? 'err' : 'ok');
+  btn.textContent = legacy ? 'Join room' : host ? `Join ${host}'s game` : 'Join game';
+  btn.disabled = full;
+  btn.hidden = false;
+  // info.build is the host's lockstep build id, not a /v/ directory: open the current build, and the game page
+  // refuses a host on another one (build-mismatch -> back here with ?left=build).
+  btn.onclick = () => go(btn, out, async () => gameUrl(await currentBuild(), legacy ? { room: id } : { room: id, lobby: '/' }));
+}
 
 $('join').onsubmit = (e) => {
   e.preventDefault();
-  const text = $('link').value.trim().replace(/\/+$/, '');
-  const room = text.slice(text.lastIndexOf('/') + 1).split(/[?#]/)[0].toLowerCase();
-  if (!ROOM.test(room)) return say('That does not look like a room link.');
-  location.href = '/play/' + room;
-};
-
-$('solo').onclick = async (e) => {
-  e.preventDefault();
-  try { location.href = gameUrl(await currentBuild()); } catch (err) { say(err.message); }
-};
-
-$('copy').onclick = async () => {
-  try {
-    await navigator.clipboard.writeText($('room-link').value);
-    $('copy').textContent = 'Copied';
-  } catch {
-    $('room-link').select();
+  const id = parseId($('join-input').value);
+  if (!id) {
+    $('join-go').hidden = true;
+    return say($('join-msg'), "That doesn't look like a code.", 'err');
   }
+  if (CODE.test(id)) $('join-input').value = pretty(id);
+  lookup(id);
 };
+$('join-input').oninput = () => { lookSeq++; $('join-go').hidden = true; say($('join-msg'), ''); };
+
+// ---- first run, nickname ----
+
+// /play/<code> (Caddy serves this page there): join that code once the player has a nickname.
+let pending = null;
+const playPath = location.pathname.match(/^\/play\/([^/]*)\/?$/);
+if (playPath && playPath[1]) {
+  let raw = playPath[1];
+  try { raw = decodeURIComponent(raw); } catch {}
+  pending = { raw, id: parseId(raw) };
+}
+
+function showNick() {
+  $('hello-nick').textContent = nick();
+  $('nick').value = nick();
+}
+
+function home() {
+  $('first').hidden = true;
+  $('home').hidden = false;
+  showNick();
+  if (!pending) return;
+  const { raw, id } = pending;
+  pending = null;
+  $('hello').after($('join-card'));
+  $('join-input').value = id ? (CODE.test(id) ? pretty(id) : id) : raw;
+  if (id) lookup(id);
+  else say($('join-msg'), "That doesn't look like a code.", 'err');
+}
+
+$('first-form').onsubmit = (e) => {
+  e.preventDefault();
+  const n = cleanNick($('first-nick').value);
+  if (!n) return say($('first-msg'), 'Type a nickname first.', 'err');
+  store('mksm-nick', n);
+  home();
+};
+
+$('nick-form').onsubmit = (e) => {
+  e.preventDefault();
+  const n = cleanNick($('nick').value);
+  if (!n) return say($('nick-msg'), 'Type a nickname first.', 'err');
+  store('mksm-nick', n);
+  showNick();
+  say($('nick-msg'), 'Saved.', 'ok');
+};
+$('nick').oninput = () => say($('nick-msg'), '');
+$('edit-nick').onclick = () => {
+  $('settings').open = true;
+  $('nick').focus();
+  $('nick').select();
+};
+
+// ---- settings ----
+
+const quality = QUALITY.includes(load('ps2web-quality')) ? load('ps2web-quality') : 'auto';
+for (const radio of document.querySelectorAll('input[name=quality]')) {
+  radio.checked = radio.value === quality;
+  radio.onchange = () => store('ps2web-quality', radio.value);
+}
+
+$('new-code').onclick = () => {
+  if (!confirm('Get a new code? Your old code stops working; friends will need the new one.')) return;
+  owner(true);
+  requestCode();
+  say($('join-msg'), '');
+};
+
+const size = (n) => (n >= 2 ** 30 ? (n / 2 ** 30).toFixed(1) + ' GB' : Math.round(n / 2 ** 20) + ' MB');
+async function storageStatus() {
+  try {
+    const [est, kept] = await Promise.all([navigator.storage.estimate(), navigator.storage.persisted()]);
+    say($('store-kept'), kept ? 'Saves and game data are kept.' : 'The browser may clear saves and game data when space runs low.', kept ? 'ok' : 'warn');
+    $('store-use').textContent = `Using ${size(est.usage || 0)} of ${size(est.quota || 0)}.`;
+    $('keep').hidden = kept;
+  } catch {
+    say($('store-kept'), 'This browser does not report its storage.');
+  }
+}
+$('settings').addEventListener('toggle', () => { if ($('settings').open) storageStatus(); });
+$('keep').onclick = async () => {
+  const kept = await persist();
+  say($('keep-msg'), kept ? '' : 'The browser said no. It usually agrees once the site is bookmarked or used for a while.');
+  storageStatus();
+};
+
+// ---- controller check: PS2Input (web/input.js) comes from the current build ----
+
+const LABELS = { select: 'Select', start: 'Start', l3: 'L3', r3: 'R3', up: 'Up', right: 'Right', down: 'Down', left: 'Left',
+  l2: 'L2', r2: 'R2', l1: 'L1', r1: 'R1', triangle: '△ Triangle', circle: '○ Circle', cross: '✕ Cross', square: '□ Square', 'left stick': 'Left stick' };
+const inputReady = currentBuild().then((build) => new Promise((resolve, reject) => {
+  const s = document.createElement('script');
+  s.src = '/v/' + encodeURIComponent(build) + '/input.js';
+  s.onload = () => (self.PS2Input ? resolve(self.PS2Input) : reject(new Error('no PS2Input')));
+  s.onerror = () => reject(new Error('input.js did not load'));
+  document.head.append(s);
+})).then((input) => {
+  input.listen({ prevent: false });
+  $('legend').replaceChildren(...input.legend().map(([name, key]) => {
+    const row = document.createElement('div'), k = document.createElement('kbd'), n = document.createElement('span');
+    k.textContent = key;
+    n.textContent = LABELS[name] || name;
+    row.append(k, n);
+    return row;
+  }));
+  return input;
+});
+inputReady.catch(() => {});
+
+const padButtons = Array.from(document.querySelectorAll('.pad [data-btn]'), (el) => [el, Number(el.dataset.btn)]);
+const text = (el, value) => { if (el.textContent !== value) el.textContent = value; };
+let raf = 0, padSig = '', padNow = null;
+function padFrame(input) {
+  raf = requestAnimationFrame(() => padFrame(input));
+  const pads = Array.from(navigator.getGamepads ? navigator.getGamepads() : []).filter(Boolean);
+  const pick = $('pad-pick'), sig = pads.map((p) => p.index + ':' + p.id).join('\n');
+  if (sig !== padSig) {
+    padSig = sig;
+    const keep = pick.value;
+    pick.replaceChildren(...pads.map((p) => Object.assign(document.createElement('option'), { value: p.index, textContent: p.id })));
+    if (pads.some((p) => String(p.index) === keep)) pick.value = keep;
+    pick.hidden = pads.length < 2;
+  }
+  const pad = padNow = pads.find((p) => String(p.index) === pick.value) || pads[0] || null;
+  const s = input.readLocal(pad, true, null);
+  for (const [el, bit] of padButtons) el.classList.toggle('on', (s.buttons & bit) !== 0);
+  for (const [id, x, y] of [['stick-l', s.lx, s.ly], ['stick-r', s.rx, s.ry]]) {
+    $(id).style.setProperty('--x', (x - 128) / 127.5);
+    $(id).style.setProperty('--y', (y - 128) / 127.5);
+  }
+  $('l2-bar').style.width = s.l2 / 2.55 + '%';
+  $('r2-bar').style.width = s.r2 / 2.55 + '%';
+  text($('l2-val'), String(s.l2));
+  text($('r2-val'), String(s.r2));
+  text($('sticks'), `Left stick ${s.lx}, ${s.ly} · Right stick ${s.rx}, ${s.ry}`);
+  text($('pad-name'), pad ? pad.id : 'Press any button on your controller');
+  $('pad-map').hidden = !pad || pad.mapping === 'standard';
+  const rumble = !!(pad && pad.vibrationActuator);
+  $('rumble').disabled = !rumble;
+  text($('rumble-note'), pad && !rumble ? 'No rumble on this controller in this browser.' : '');
+}
+$('pad-check').addEventListener('toggle', async () => {
+  cancelAnimationFrame(raf);
+  if (!$('pad-check').open) return;
+  let input;
+  try { input = await inputReady; } catch {
+    $('pad-on').hidden = true;
+    $('pad-off').hidden = false;
+    return;
+  }
+  cancelAnimationFrame(raf);
+  if ($('pad-check').open) padFrame(input);
+});
+$('rumble').onclick = () => {
+  try { padNow.vibrationActuator.playEffect('dual-rumble', { duration: 500, strongMagnitude: 1, weakMagnitude: 1 }).catch(() => {}); } catch {}
+};
+
+// ---- start ----
 
 if (!('gpu' in navigator)) {
   $('warn').hidden = false;
   $('warn').textContent = 'This browser has no WebGPU. Use desktop Chrome or Edge (on Linux, enable WebGPU in chrome://flags).';
 }
+if (DISCORD_URL) {
+  $('discord').href = DISCORD_URL;
+  $('discord').hidden = false;
+}
 
-const path = location.pathname.match(/^\/play\/([^/]+)\/?$/);
-if (path) {
-  if (ROOM.test(path[1])) showRoom(path[1]);
-  else say('That does not look like a room link.');
+// Guests come back from the game as /?left=<reason>[&room=<code>].
+const query = new URLSearchParams(location.search);
+if (query.has('left')) {
+  const reason = query.get('left'), room = query.get('room') || '';
+  const who = CODE.test(room) ? pretty(room) : 'Your friend';
+  const LEFT = {
+    'host-left': 'The host left the game.',
+    kicked: 'The host removed you from the game.',
+    offline: `${who} is not online right now.`,
+    full: 'That game already has two players.',
+    build: 'The host is running a different version. Ask them to reload, then try again.',
+    replaced: 'The game was opened in another tab.',
+  };
+  $('notice-text').textContent = LEFT[reason] || 'The game ended.';
+  $('notice').hidden = false;
+  if (CODE.test(room) && ['offline', 'build', 'host-left'].includes(reason) && !pending) $('join-input').value = pretty(room);
+  query.delete('left');
+  query.delete('room');
+  history.replaceState(null, '', location.pathname + (String(query) ? '?' + query : '') + location.hash);
+}
+$('notice-x').onclick = () => { $('notice').hidden = true; };
+
+requestCode();
+if (nick()) home();
+else {
+  $('first').hidden = false;
+  if (pending && pending.id) {
+    $('invite').hidden = false;
+    $('invite').textContent = CODE.test(pending.id) ? `You're invited to join ${pretty(pending.id)}.` : "You're invited to a room.";
+  }
 }
 </script>
 </body>
