@@ -96,14 +96,47 @@ Notes on the numbers:
 - The headless numbers measure the emulator, and the Xvfb ones only show what a pathological display path does. A
   real desktop with GPU compositing has not been measured, because agents may not open windows.
 
+## Remaster (3x6 + 4x pack) frame times, unpaced (2026-10-22)
+
+`PS2_SCALE=3x6&PS2_WEB_UNPACED=1` (no 59.94 Hz clock, a present whose previous one is not on screen yet is drawn but not
+shown), `sweep.sh` with `--frame-times`, 30 s per scene, p50/p95 of the frame times after the first 6 s:
+
+| Scene | mean | p50 | p95 |
+|---|---|---|---|
+| goro | 111.9 | 114.8 | 85.7 |
+| foundry | 91.2 | 92.3 | 72.4 |
+| raiden | 105.8 | 110.0 | 77.6 |
+| koop | 119.2 | 119.6 | 92.4 |
+| kahn | 115.2 | 121.1 | 74.3 |
+| menu | 142.8 | 143.7 | 65.7 |
+| forest | 94.0 | 101.0 | 58.0 |
+| fmv | 100.5 | 106.5 | 58.1 |
+| nether | 84.0 | 93.4 | 45.4 |
+| academy | 72.2 | 90.7 | 37.0 |
+
+- The tail is Chrome's GPU process main thread, which decodes every WebGPU call (a Chrome trace: `drive.mjs --trace`).
+  The renderer's main thread blocks in `DawnClientSerializer::GetCommandSpace` when it gets too far ahead.
+- What fixed most of it: staging buffers map only what the jobs use. Chrome copies a mapped range whole, in at
+  `mapAsync` and out at `unmap`, on that thread, and the buffers were mapped whole (16 MB and more for ~3 MB used). The
+  main loop's jobs also now wait for a staging buffer instead of writing through `writeBuffer`, which puts the bytes in
+  the command stream that is already behind (35-40% of jobs did). Same build, `PS2_WEB_STAGING=0` (the old way)
+  against the default: goro p95 42.9 -> 67.2, foundry 52.2 -> 71.4.
+- Tried and dropped: parameters by first instance from a storage buffer (one bind group for all hardware draws, -13%
+  fps on goro), one draw for alpha-test pass and fail pixels written alike (flat). Kept: the blend constant set only
+  for pipelines that read it, one submit per job.
+- academy and nether still wait for staging buffers ~40% of the main thread's time: the GPU process is still the limit.
+
 ## How it was tested (`mksm/tools/web/`)
 
 - **`drive.mjs`**: Node's built-in WebSocket over CDP.
   - Runs Chromium headless, or headful inside its own Xvfb.
   - Uses a temporary profile, `--mute-audio`, and keeps `~/.config/chromium-flags.conf` out via `XDG_CONFIG_HOME`.
-  - Takes `logs/heavy.lock` and runs under `systemd-run MemoryMax=8G`.
+  - Takes `logs/heavy.lock` and runs under `systemd-run MemoryMax=3G`; its Xvfb takes a free display (`-displayfd`).
+  - `--frame-times`, `--trace FRAME:SECONDS`, `--gpu-calls [+]FRAME:SECONDS` for frame-time, GPU-process and call-count work.
   - Optional fake Gamepad API pads, driven by emulated frame (`--pad-script`) or live (`--control` + `ctl.sh`).
   - Saves screenshots, logs the console and samples the overlay every second (`fps.py` summarises it).
+- **`sweep.sh <tag> <seconds> <query> <scene>...`**: per scene of `remaster/scenes.tsv`, fps and frame-time percentiles
+  (output in `logs/web/runs/sweep-<tag>-<scene>/`).
 - **`run.sh <name> "<query>" [drive options]`**: serves the build with `serve.py` and drives it. Output goes to
   `logs/web/runs/<name>/`.
 - **Gotchas:**

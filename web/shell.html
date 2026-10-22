@@ -820,6 +820,7 @@ var Module = {
     fresh = true;
     const now = performance.now();
     if (now - prevFrame < 1000) worst = Math.max(worst, now - prevFrame), slow += now - prevFrame > 18;
+    if (Module.frameMs && Module.frameMs.length < 100000) Module.frameMs.push(now - prevFrame);  // drive.mjs --frame-times
     prevFrame = now;
     if (now - last >= 1000) {
       const gpu = Module._ps2web_gpu_ms();

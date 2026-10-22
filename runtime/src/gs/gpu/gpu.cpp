@@ -66,6 +66,7 @@ bool web_threads() {
     return on;
 }
 bool off_main() { return !emscripten_is_main_browser_thread(); }
+EM_JS(bool, ps2_web_unshown, (), { return !!Module.shownPending; });  // a present not on screen yet (host/web.cpp)
 template <class F> void on_main(F &&f) {
     if (!off_main()) return f();
     emscripten_proxy_sync(emscripten_proxy_get_system_queue(), emscripten_main_runtime_thread_id(),
@@ -226,7 +227,7 @@ struct NativeDraw {
     Binding *binding = nullptr;  // a tile write-back's target (its bind group, of the views above); none: g_nat.target
     WGPUBindGroup source = nullptr;  // the render pipelines' group 1: the targets a hardware batch reads (kSource)
     std::uint32_t scissor[4] = {};
-    double constant = 0.0;  // blend constant (FIX / 128)
+    double constant = -1.0;  // blend constant (FIX / 128); < 0: the pipeline does not read it (not set, reads_constant)
     bool vram = true;  // reads VRAM (an import, a texture neither decoded nor a target's): uploads stay behind it (hoist_commands)
 };
 std::vector<NativeDraw> g_native_draws;
@@ -1397,8 +1398,9 @@ void profile_submit() {
 using ParamRecords = std::vector<std::array<std::uint32_t, kParamStride / 4>>;
 
 // Copies the commands' data into the GPU buffers, encodes them and submits (render thread, or the submit worker).
-// staged: the arena and params are already uploaded (web, stage_uploads)
-void run_commands(Arena &arena, ParamRecords &params, std::vector<Command> &commands, const std::vector<NativeDraw> &natives, WGPUTextureView present_view, bool staged = false) {
+// staged: the arena and params are already uploaded (web, stage_uploads); enc: the encoder to add to (its copies first)
+void run_commands(Arena &arena, ParamRecords &params, std::vector<Command> &commands, const std::vector<NativeDraw> &natives, WGPUTextureView present_view, bool staged = false,
+                  WGPUCommandEncoder enc = nullptr) {
     ensure_capacity(arena.size(), params.size());
     if (!staged) {
         wgpuQueueWriteBuffer(g_queue, g_data, 0, arena.data(), arena.size() * 4);
@@ -1421,7 +1423,7 @@ void run_commands(Arena &arena, ParamRecords &params, std::vector<Command> &comm
     }
     // one compute pass holds every dispatch, unless native render passes split it (then no timestamps)
     const bool measure = g_timestamps && !g_query_pending && natives.empty();
-    WGPUCommandEncoder enc = wgpuDeviceCreateCommandEncoder(g_device, nullptr);
+    if (!enc) enc = wgpuDeviceCreateCommandEncoder(g_device, nullptr);
     wgpuCommandEncoderClearBuffer(enc, g_fail, 0, (kAlphaSlots + 1) * 4);  // the decodes' least alphas start over
     WGPUPassTimestampWrites writes = WGPU_PASS_TIMESTAMP_WRITES_INIT;
     writes.querySet = g_queries;
@@ -1543,48 +1545,72 @@ bool g_job_running = false, g_worker_started = false;
 #ifdef __EMSCRIPTEN__
 // Web: a job's uploads (writes, arena, params) go through a mapped staging buffer and copies, not wgpuQueueWriteBuffer:
 // Chrome sends writeBuffer's bytes through its command stream (~1.4 GB/s, 5.5 ms a frame of foundry's 7.6 MB), a mapped
-// range is one memcpy into shared memory. False (the caller writes) while every staging buffer is still in flight.
+// range is one memcpy into shared memory. Chrome copies a mapped range whole (in at mapAsync, out at unmap, on its GPU
+// process main thread, which bounds the frame rate), so restage maps only what the jobs use (g_stage_peak), not the
+// buffer. While every staging buffer is in flight the main loop's jobs wait for one (PS2_WEB_STAGING buffers, 1-8,
+// default 8; 0: 8 mapped whole, no waiting, as before): writing the bytes instead puts them in the command stream that
+// is already behind. False (the caller writes) when it may not wait (a drain) or nothing came back in a second.
 struct Staging {
     WGPUBuffer buffer = nullptr;
-    std::uint64_t size = 0;
-    bool ready = false;  // mapped for writing
+    std::uint64_t size = 0, mapped = 0;  // mapped: the range [0, mapped) mapped for writing, when ready
+    bool ready = false, pending = false;  // pending: mapAsync not back yet
 };
 std::array<Staging, 8> g_staging;  // main thread only
 std::uint32_t g_staged[4];  // staged, fell back, map failures, made (stats)
-std::uint64_t g_staged_bytes = 0;
+std::uint64_t g_staged_bytes = 0, g_stage_peak = 0;  // g_stage_peak: the jobs' recent most, decaying
+double g_stage_wait = 0.0;  // ms waited for a staging buffer (stats)
+std::uint32_t g_stage_waits = 0;
+bool g_may_yield = false;  // run_jobs from the main loop (run_gpu_jobs), which may suspend (JSPI) mid-job
+const char *staging_env() {
+    static const char *e = std::getenv("PS2_WEB_STAGING");
+    return e;
+}
+bool staging_whole() { return staging_env() && std::strcmp(staging_env(), "0") == 0; }
 
-bool stage_uploads(Job &j) {
+// The copies go into enc, ahead of the job's commands (one submit a job); used: the staging buffer they read, to map
+// again once enc is submitted (restage)
+void restage(Staging *s);
+bool stage_uploads(Job &j, WGPUCommandEncoder enc, Staging *&used) {
     const auto align8 = [](std::uint64_t n) { return (n + 7) & ~7ull; };  // getMappedRange offsets
     std::uint64_t end = 0;
     for (const Write &w : j.writes) end = align8(end + w.bytes.size());
     const std::uint64_t arena_at = end, params_at = align8(arena_at + j.arena.size() * 4);
     end = params_at + j.params.size() * kParamStride;
     if (!end) return true;
+    g_stage_peak = std::max(end, g_stage_peak - g_stage_peak / 64);
+    static const std::size_t count = staging_env() && !staging_whole() ? std::clamp<std::size_t>(std::strtoul(staging_env(), nullptr, 10), 1, g_staging.size()) : g_staging.size();
     Staging *s = nullptr;
-    for (Staging &c : g_staging)
-        if (c.ready && c.size >= end) {
+    for (double t0 = 0.0;;) {
+        for (std::size_t i = 0; i < count; ++i)  // the smallest mapped range it fits in
+            if (Staging &c = g_staging[i]; c.ready && c.mapped >= end && (!s || c.mapped < s->mapped)) s = &c;
+        for (std::size_t i = 0; i < count && !s; ++i) {  // none: make one (replacing one mapped too small), mapped whole
+            Staging &c = g_staging[i];
+            if (c.pending) continue;
+            if (c.buffer) wgpuBufferRelease(c.buffer);
+            c.size = c.mapped = std::max<std::uint64_t>(16u << 20, align8(end + end / 2));
+            WGPUBufferDescriptor d = WGPU_BUFFER_DESCRIPTOR_INIT;
+            d.size = c.size;
+            d.usage = WGPUBufferUsage_MapWrite | WGPUBufferUsage_CopySrc;
+            d.mappedAtCreation = true;
+            c.buffer = wgpuDeviceCreateBuffer(g_device, &d);
+            c.ready = true;
+            ++g_staged[3];
             s = &c;
-            break;
         }
-    for (Staging &c : g_staging) {  // none big enough: make one (replacing a mapped one too small), mapped at creation
-        if (s) break;
-        if (c.buffer && !c.ready) continue;
-        if (c.buffer) wgpuBufferRelease(c.buffer);
-        c.size = std::max<std::uint64_t>(16u << 20, align8(end + end / 2));
-        WGPUBufferDescriptor d = WGPU_BUFFER_DESCRIPTOR_INIT;
-        d.size = c.size;
-        d.usage = WGPUBufferUsage_MapWrite | WGPUBufferUsage_CopySrc;
-        d.mappedAtCreation = true;
-        c.buffer = wgpuDeviceCreateBuffer(g_device, &d);
-        c.ready = true;
-        ++g_staged[3];
-        s = &c;
+        if (s || !g_may_yield || staging_whole()) break;
+        const double now = emscripten_get_now();
+        if (t0 == 0.0) t0 = now, ++g_stage_waits;
+        else if (now - t0 > 1000.0) break;
+        browser_yield();  // the map callbacks run
+        g_stage_wait += emscripten_get_now() - now;
     }
     if (++g_staged[s ? 0 : 1] + g_staged[s ? 1 : 0] >= 600) {
-        std::fprintf(stderr, "[web] staging: %u staged (%.2f MB a job), %u fell back, %u map failures, %u buffers made\n", g_staged[0],
-                     static_cast<double>(g_staged_bytes) / std::max(g_staged[0], 1u) / 1048576.0, g_staged[1], g_staged[2], g_staged[3]);
-        g_staged[0] = g_staged[1] = 0;
+        std::fprintf(stderr, "[web] staging: %u staged (%.2f MB a job, mapping %.2f MB), %u fell back, %u waited %.0f ms, %u map failures, %u buffers made\n", g_staged[0],
+                     static_cast<double>(g_staged_bytes) / std::max(g_staged[0], 1u) / 1048576.0, static_cast<double>(g_stage_peak) / 1048576.0, g_staged[1], g_stage_waits, g_stage_wait,
+                     g_staged[2], g_staged[3]);
+        g_staged[0] = g_staged[1] = g_stage_waits = 0;
         g_staged_bytes = 0;
+        g_stage_wait = 0.0;
     }
     if (!s) return false;
     g_staged_bytes += end;
@@ -1597,8 +1623,8 @@ bool stage_uploads(Job &j) {
     if (!j.params.empty()) wgpuBufferWriteMappedRange(s->buffer, params_at, j.params.data(), j.params.size() * kParamStride);
     wgpuBufferUnmap(s->buffer);
     s->ready = false;
+    used = s;
     ensure_capacity(j.arena.size(), j.params.size());
-    WGPUCommandEncoder enc = wgpuDeviceCreateCommandEncoder(g_device, nullptr);
     at = 0;
     for (const Write &w : j.writes) {
         if (!w.bytes.empty()) wgpuCommandEncoderCopyBufferToBuffer(enc, s->buffer, at, w.buffer, w.offset, w.bytes.size());
@@ -1606,26 +1632,35 @@ bool stage_uploads(Job &j) {
     }
     if (!j.arena.empty()) wgpuCommandEncoderCopyBufferToBuffer(enc, s->buffer, arena_at, g_data, 0, j.arena.size() * 4);
     if (!j.params.empty()) wgpuCommandEncoderCopyBufferToBuffer(enc, s->buffer, params_at, g_params, 0, j.params.size() * kParamStride);
-    WGPUCommandBuffer cmd = wgpuCommandEncoderFinish(enc, nullptr);
-    wgpuQueueSubmit(g_queue, 1, &cmd);
-    wgpuCommandBufferRelease(cmd);
-    wgpuCommandEncoderRelease(enc);
+    return true;
+}
+void restage(Staging *s) {
     WGPUBufferMapCallbackInfo cb = WGPU_BUFFER_MAP_CALLBACK_INFO_INIT;
     cb.mode = WGPUCallbackMode_AllowSpontaneous;
-    cb.callback = [](WGPUMapAsyncStatus status, WGPUStringView, void *staging, void *) { 
+    cb.callback = [](WGPUMapAsyncStatus status, WGPUStringView, void *staging, void *) {
         static_cast<Staging *>(staging)->ready = status == WGPUMapAsyncStatus_Success;
+        static_cast<Staging *>(staging)->pending = false;
         g_staged[2] += status != WGPUMapAsyncStatus_Success;
     };
     cb.userdata1 = s;
-    wgpuBufferMapAsync(s->buffer, WGPUMapMode_Write, 0, s->size, cb);
-    return true;
+    s->mapped = staging_whole() ? s->size : std::min(s->size, (g_stage_peak + g_stage_peak / 4 + (1u << 20)) & ~((1ull << 20) - 1));  // whole MB over the peak
+    s->pending = true;
+    wgpuBufferMapAsync(s->buffer, WGPUMapMode_Write, 0, s->mapped, cb);
 }
 #endif
 
 void run_job(Job &j) {
 #ifdef __EMSCRIPTEN__
-    const bool staged = stage_uploads(j);
+    WGPUCommandEncoder enc = wgpuDeviceCreateCommandEncoder(g_device, nullptr);
+    struct Restage {  // the staging buffer maps again once enc is submitted
+        Staging *s = nullptr;
+        ~Restage() {
+            if (s) restage(s);
+        }
+    } used;
+    const bool staged = stage_uploads(j, enc, used.s);
 #else
+    constexpr WGPUCommandEncoder enc = nullptr;
     constexpr bool staged = false;
 #endif
     for (const Write &w : j.writes) {
@@ -1633,20 +1668,39 @@ void run_job(Job &j) {
         g_uploaded[2].fetch_add(w.bytes.size(), std::memory_order_relaxed);
     }
     if (!j.present) {
-        if (!j.commands.empty()) run_commands(j.arena, j.params, j.commands, j.natives, nullptr, staged);
+        if (!j.commands.empty()) run_commands(j.arena, j.params, j.commands, j.natives, nullptr, staged, enc);
+#ifdef __EMSCRIPTEN__
+        else {
+            if (used.s) {
+                WGPUCommandBuffer cmd = wgpuCommandEncoderFinish(enc, nullptr);
+                wgpuQueueSubmit(g_queue, 1, &cmd);
+                wgpuCommandBufferRelease(cmd);
+            }
+            wgpuCommandEncoderRelease(enc);
+        }
+#endif
         if (j.copy) copy_out(*j.copy);
         return;
     }
+#ifdef __EMSCRIPTEN__
+    // PS2_WEB_UNPACED: like a mailbox, a frame whose previous one is not on screen yet is drawn but not shown (the
+    // canvas would make it wait for the display)
+    static const bool unpaced = std::getenv("PS2_WEB_UNPACED");
+    if (unpaced && ps2_web_unshown()) {
+        run_commands(j.arena, j.params, j.commands, j.natives, nullptr, staged, enc);
+        return;
+    }
+#endif
     WGPUSurfaceTexture st = WGPU_SURFACE_TEXTURE_INIT;
     wgpuSurfaceGetCurrentTexture(g_surface, &st);
     if (st.status != WGPUSurfaceGetCurrentTextureStatus_SuccessOptimal && st.status != WGPUSurfaceGetCurrentTextureStatus_SuccessSuboptimal) {
         if (st.texture) wgpuTextureRelease(st.texture);
-        run_commands(j.arena, j.params, j.commands, j.natives, nullptr, staged);
+        run_commands(j.arena, j.params, j.commands, j.natives, nullptr, staged, enc);
         configure_surface();
         return;
     }
     WGPUTextureView target = wgpuTextureCreateView(st.texture, nullptr);
-    run_commands(j.arena, j.params, j.commands, j.natives, target, staged);
+    run_commands(j.arena, j.params, j.commands, j.natives, target, staged, enc);
 #ifndef __EMSCRIPTEN__
     wgpuSurfacePresent(g_surface);
 #endif
@@ -2139,6 +2193,11 @@ constexpr std::uint32_t kNativeSourceZ = 524288u, kNativeRtHires = 262144u, kNat
 // kBlendDstAlpha (0211, Cs·Ad + Cd): DstAlpha under the A/128 storage of the colour target's alpha (§4.3).
 // kBlendSub (0x24 with FIX: (Cs - Cd)·FIX): Subtract with the constant as both factors, so only for FIX up to 128.
 enum NativeBlend : std::uint32_t { kBlendNone = 1, kBlendKeep, kBlendZero, kBlendLerp, kBlendAdd, kBlendSrc, kBlendDst, kBlendRevSub, kBlendDstAlpha, kBlendSub };
+// Whether a native pipeline's blend reads the blend constant (native_pipeline); the others' draws leave it as it is (a
+// third of foundry's draws set it, each a WebGPU call)
+bool reads_constant(std::uint32_t key) {
+    return (key & kNativeConstant) || (key & 15u) == kBlendSub;
+}
 
 std::uint32_t native_blend(std::uint32_t alpha, bool abe, std::uint32_t fix = 256) {
     if (!abe) return kBlendNone;
@@ -2605,7 +2664,7 @@ void encode_native(WGPUCommandEncoder enc, const Command &c, const std::vector<N
             wgpuRenderPassEncoderSetScissorRect(rp, d[i].scissor[0], d[i].scissor[1], d[i].scissor[2], d[i].scissor[3]);
             std::memcpy(scissor, d[i].scissor, sizeof scissor);
         }
-        if (d[i].constant != constant) {
+        if (d[i].constant >= 0.0 && d[i].constant != constant) {
             const WGPUColor blend{d[i].constant, d[i].constant, d[i].constant, d[i].constant};
             wgpuRenderPassEncoderSetBlendConstant(rp, &blend);
             constant = d[i].constant;
@@ -3429,7 +3488,7 @@ void native_record(const State &st, const std::uint8_t *payload, std::uint32_t b
         d.scissor[1] = sy0;
         d.scissor[2] = sx1 - sx0;
         d.scissor[3] = sy1 - sy0;
-        d.constant = static_cast<double>((c.alpha >> 32) & 0xFFu) / 128.0;
+        if (reads_constant(key)) d.constant = static_cast<double>((c.alpha >> 32) & 0xFFu) / 128.0;
         if (d.vertices || d.check) g_native_draws.push_back(d);
         ++g_nat.draws;
     }
@@ -4037,7 +4096,7 @@ void hw_draw(Binding *const *src, Binding *zsrc, bool chained) {
             d.scissor[1] = sy0;
             d.scissor[2] = sx1 - sx0;
             d.scissor[3] = sy1 - sy0;
-            d.constant = static_cast<double>(w[9]) / 128.0;
+            if (reads_constant(key)) d.constant = static_cast<double>(w[9]) / 128.0;
             d.source = source;
             if (splits[k].split == 2 && passing < 256 && decoded && slot < kAlphaSlots && g_fail_draws < kFailDraws) {
                 d.indirect = kFailArgsBase + g_fail_draws++ * 4;
@@ -5973,7 +6032,12 @@ EM_ASYNC_JS(void, ps2_main_wait, (std::atomic<std::uint32_t> *word, std::uint32_
 
 namespace ps2 {
 bool web_gs_threads() { return gs::gpu::web_threads(); }
-bool run_gpu_jobs(double budget_ms, bool &presented) { return gs::gpu::run_jobs(budget_ms, presented); }
+bool run_gpu_jobs(double budget_ms, bool &presented) {
+    gs::gpu::g_may_yield = true;
+    const bool ran = gs::gpu::run_jobs(budget_ms, presented);
+    gs::gpu::g_may_yield = false;
+    return ran;
+}
 std::uint32_t main_work() { return gs::gpu::g_main_work.load(); }
 void wait_main_work(std::uint32_t seen, int timeout_ms) { ps2_main_wait(&gs::gpu::g_main_work, seen, timeout_ms); }
 void wake_main_thread() { gs::gpu::wake_main(); }

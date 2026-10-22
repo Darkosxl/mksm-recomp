@@ -389,8 +389,16 @@ double g_next_frame = 0.0;
 std::atomic<double> g_emulation_idle{0.0}, g_render_idle{0.0}, g_main_busy{0.0};
 std::atomic<std::uint32_t> g_shown{0};  // frames on screen: the page counts one per ps2web_frame_done
 
+// PS2_WEB_UNPACED=1 (benchmarks): no 59.94 Hz clock and no waiting for the frame before to be shown, so fps reads the
+// headroom; the sound runs over
+bool unpaced() {
+    static const bool on = std::getenv("PS2_WEB_UNPACED");
+    return on;
+}
+
 void pace() {
     ps2::post_present();
+    if (unpaced()) return;
     if (g_audio.active.load()) {
         while (audio_queued_ms() > 80.0) usleep(1000);
         g_next_frame = 0.0;
@@ -699,7 +707,7 @@ void *gs_front(void *) {
             window_start = start;
             window_gpu = gpu;
         }
-        if (++since_skip > 8 && gpu_load < 0.8 && g_audio.active.load() && audio_queued_ms() < 40.0) since_skip = 0;
+        if (unpaced() || (++since_skip > 8 && gpu_load < 0.8 && g_audio.active.load() && audio_queued_ms() < 40.0)) since_skip = 0;
         else
             for (std::uint32_t shown; (shown = g_shown.load()) < presents;) emscripten_futex_wait(&g_shown, shown, 100);
         ++presents;
