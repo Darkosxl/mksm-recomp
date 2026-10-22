@@ -783,8 +783,8 @@ const lobbyEl = document.getElementById('lobby'), kickButton = document.getEleme
 const showCode = (code) => (code || '').toUpperCase().replace(/^(.{4})(.{4})$/, '$1-$2');
 function showLobby() {
   if (!lobby || !session) return;
-  const l = session.ls ? session.ls.snapshot() : {}, peer = l.peerNick;
-  const link = l.running && !l.solo ? '  ·  ' + l.transport + (l.rttP50 ? '  ·  ' + l.rttP50.toFixed(0) + ' ms' : '') : '';
+  const ls = session.ls, l = ls ? ls.snapshot() : {}, peer = l.peerNick;
+  const link = ls && ls.running && !l.solo ? '  ·  ' + l.transport + (l.rttP50 ? '  ·  ' + l.rttP50.toFixed(0) + ' ms' : '') : '';
   lobbyEl.textContent = session.isHost ? (peer ? 'You (host) + ' + peer + link : 'You (host)  ·  ' + showCode(session.code) + '  ·  waiting')
                                        : (peer || 'Host') + ' (host) + you' + link;
   lobbyEl.hidden = false;
