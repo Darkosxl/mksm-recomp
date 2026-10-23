@@ -14,6 +14,13 @@
   #status { flex: 1; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
   /* the bar keeps one height whatever the stats say or which buttons show, or the picture above it jumps */
   #stats { flex: 1 1 0; min-width: 0; height: 2lh; overflow: hidden; font-variant-numeric: tabular-nums; color: #9ad; }
+  /* controller indicator where the fps text was (still there for tools: click the pads to show it) */
+  body:not(.stats) #stats { display: none; }
+  #pads { flex: 1 1 0; display: flex; gap: 6px; align-items: center; height: 2lh; cursor: pointer; }
+  #pads svg { width: 30px; height: 19px; color: #34343c; transition: color .2s, filter .2s; }
+  #pads svg .cut { fill: #141418; }
+  #pads .ps.on { color: #4f8cff; filter: drop-shadow(0 0 4px #4f8cff); }
+  #pads .xbox.on { color: #4cc24c; filter: drop-shadow(0 0 4px #4cc24c); }
   #bar > select, #bar > button { flex: none; white-space: nowrap; }
   #lobby { white-space: nowrap; color: #e8c37a; font-weight: 600; }
   select { background: #2a3a55; color: #fff; border: 0; padding: 5px 8px; border-radius: 4px; }
@@ -108,7 +115,7 @@
     </div>
   </div>
 </div>
-<div id="bar"><span id="lobby" hidden></span><span id="status">Loading…</span><span id="stats"></span>
+<div id="bar"><span id="lobby" hidden></span><span id="status">Loading…</span><span id="pads"><svg class="ps" viewBox="0 0 32 20" aria-label="PlayStation controller"><path fill="currentColor" d="M8 2h16c3 0 5 2 6 5l2 9c0 3-3 4-5 2l-3-4H8l-3 4c-2 2-5 1-5-2l2-9c1-3 3-5 6-5z"/><g class="cut"><circle cx="12" cy="12" r="2.2"/><circle cx="20" cy="12" r="2.2"/><path d="M6 5.5h1.6v1.6h1.6v1.6H7.6v1.6H6V8.7H4.4V7.1H6z"/><circle cx="26" cy="5.6" r=".9"/><circle cx="26" cy="9.4" r=".9"/><circle cx="24.1" cy="7.5" r=".9"/><circle cx="27.9" cy="7.5" r=".9"/></g></svg><svg class="xbox" viewBox="0 0 32 20" aria-label="Xbox controller"><path fill="currentColor" d="M9 2c2 0 4 1 7 1s5-1 7-1c3 0 5 2 6 5l2 8c1 4-3 5-5 2l-2-3c-1-1-2-1-3-1h-6c-1 0-2 0-3 1l-2 3c-2 3-6 2-5-2l2-8c1-3 3-5 6-5z"/><g class="cut"><circle cx="9" cy="7.5" r="2.2"/><circle cx="19.5" cy="11.5" r="2.2"/><path d="M11.4 10.2h1.4v1.4h1.4V13h-1.4v1.4h-1.4V13H10v-1.4h1.4z"/><circle cx="16" cy="5" r="1.3"/><circle cx="24" cy="5.2" r=".9"/><circle cx="24" cy="8.8" r=".9"/><circle cx="22.2" cy="7" r=".9"/><circle cx="25.8" cy="7" r=".9"/></g></svg></span><span id="stats"></span>
   <select id="quality" aria-label="Quality" title="Picture quality, the page reloads to apply it">
     <option value="auto">Auto</option>
     <option value="3x6">Remaster 3x6</option>
@@ -194,6 +201,20 @@ importInput.addEventListener('change', async () => {
   storeCard(() => location.reload());
 });
 const statsEl = document.getElementById('stats');
+// which kind of controller the Gamepad API sees: Sony (vendor 054c) or Microsoft (045e) / XInput; anything else lights neither
+const padsEl = document.getElementById('pads');
+function showPads() {
+  const ids = [...(navigator.getGamepads ? navigator.getGamepads() : [])].filter(Boolean).map((p) => p.id);
+  // Xbox first: "Xbox Wireless Controller" also says "wireless controller", Sony's generic name
+  const kinds = ids.map((id) => /045e|xbox|xinput|microsoft/i.test(id) ? 'xbox' : /054c|playstation|dualshock|dualsense|wireless controller/i.test(id) ? 'ps' : '');
+  padsEl.querySelector('.ps').classList.toggle('on', kinds.includes('ps'));
+  padsEl.querySelector('.xbox').classList.toggle('on', kinds.includes('xbox'));
+  padsEl.title = (ids.length ? ids.join('\n') : 'No controller (keyboard). Press a button on a pad to connect it') + '\nClick: show fps';
+}
+addEventListener('gamepadconnected', showPads);
+addEventListener('gamepaddisconnected', showPads);
+padsEl.addEventListener('click', () => document.body.classList.toggle('stats'));
+showPads();
 const canvas = document.getElementById('canvas');
 const params = new URLSearchParams(location.search);
 // ?room=<id> joins a 2-player lockstep session (?room=new or an empty value creates one): the first player in the
