@@ -12,9 +12,12 @@
 //   --control FILE                     live commands appended to FILE: press <pad> <btn> [hold] [delay] | stick <pad> <x,y>
 //                                      [hold] [delay] | shot <label> [delay] | eval <js> | quit   (see ctl.sh)
 //   --eval-at FRAME:JS --eval-before-start JS --reload-at FRAME --probe-gpu --probe-shot --window W,H
+//   --viewport W,H                     exact page size (CDP device metrics), whatever the window's frame takes
 //   --cpu-profile FRAME:SECONDS        CPU profiles from FRAME for SECONDS: main thread -> OUT/main.cpuprofile, each
 //                                      worker (pthread) -> OUT/worker-N.cpuprofile
 //   --cpu-throttle N                   slow the page's main thread N times (CDP Emulation.setCPUThrottlingRate)
+//   --record FILE                      every presented frame, H.264 (Annex B) at 60 fps however fast the run went
+//   --pull MEMFS:FILE                  after the run, copy a file the game wrote (e.g. PS2_DUMP_AUDIO at --frames) out
 //   --frame-times                      ms between presented frames from the first one -> OUT/frame-ms.txt (p50/p95)
 //   --trace FRAME:SECONDS              Chrome trace with the GPU process's native slices -> OUT/trace.json
 //   --gpu-calls [+]FRAME:SECONDS       count WebGPU calls per frame (+FRAME: after the first frame) -> OUT/gpu-calls.txt
@@ -43,6 +46,8 @@ for (let i = 0; i < argv.length; ++i) {
   else if (a === '--reload-at') opt.reloadAt = Number(next());
   else if (a === '--cpu-throttle') opt.cpuThrottle = Number(next());
   else if (a === '--frame-times') opt.frameTimes = true;
+  else if (a === '--record') opt.record = next();
+  else if (a === '--pull') { const [from, to] = next().split(':'); opt.pull = { from, to }; }
   else if (a === '--trace') { const [f, secs] = next().split(':').map(Number); opt.trace = { frame: f, ms: secs * 1000 }; }
   else if (a === '--gpu-calls') { const [f, secs] = next().split(':'); opt.gpuCalls = { frame: Number(f), rel: f[0] === '+', ms: secs * 1000 }; }  // +F: F frames after the first
   else if (a === '--cpu-profile') { const [f, secs] = next().split(':').map(Number); opt.cpuProfile = { frame: f, ms: secs * 1000 }; }
@@ -54,6 +59,7 @@ for (let i = 0; i < argv.length; ++i) {
   else if (a === '--headful') opt.headful = true;
   else if (a === '--xvfb') { opt.headful = true; opt.xvfb = true; }
   else if (a === '--window') opt.window = next();
+  else if (a === '--viewport') opt.viewport = next().split(',').map(Number);
   else if (a === '--control') opt.control = next();
   else if (a === '--eval-before-start') (opt.evalBefore = opt.evalBefore || []).push(next());
   else { console.error('unknown option ' + a); process.exit(2); }
@@ -93,7 +99,7 @@ let xvfb = null;
   // theirs while waiting for heavy.lock) and Chrome got the other run's display, gone once that run ended: no adapter
   let display = null;
   for (let n = 90 + Math.floor(Math.random() * 100); !display; n = 90 + (n - 89) % 100) {
-    xvfb = spawn('Xvfb', [`:${n}`, '-displayfd', '1', '-screen', '0', '1280x1024x24', '-nolisten', 'tcp'], { stdio: ['ignore', 'pipe', 'ignore'], detached: true });
+    xvfb = spawn('Xvfb', [`:${n}`, '-displayfd', '1', '-screen', '0', opt.xvfb && opt.viewport ? `${Math.max(1280, opt.viewport[0] + 64)}x${Math.max(1024, opt.viewport[1] + 256)}x24` : '1280x1024x24', '-nolisten', 'tcp'], { stdio: ['ignore', 'pipe', 'ignore'], detached: true });
     display = await new Promise((resolve) => {
       let out = '';
       xvfb.stdout.on('data', (d) => (out += d).includes('\n') && resolve(':' + out.trim()));
@@ -184,6 +190,45 @@ const padDriverSource = (events) => `(() => {
   };
 })();`;
 
+// runs inside the page: encodes the canvas after every presented frame (host/web.cpp ps2web_frame_done). Software H.264
+// in Chrome on Linux (no VA-API on NVIDIA) is slower than the game, so while more than 4 frames wait for the encoder
+// the page holds back the "frame shown" signal the renderer paces on, and the game waits. first/last are the EE's
+// frame counter, to check presents against emulated frames. Headless canvases read back black: --xvfb
+const recorderSource = `(() => {
+  const canvas = Module.canvas, out = [], stat = { frames: 0, bytes: 0, queue: 0, maxQueue: 0, errors: 0 };
+  let enc = null, latencyMode = window.__recLatency || 'quality';
+  const held = [];
+  window.__rec = {
+    stat,
+    take() {
+      const parts = out.splice(0);
+      let s = '';
+      for (const p of parts) for (let i = 0; i < p.length; i += 0x8000) s += String.fromCharCode.apply(null, p.subarray(i, i + 0x8000));
+      return btoa(s);
+    },
+    async flush() { if (enc) await enc.flush(); for (const h of held.splice(0)) h(); return stat; },
+  };
+  const original = Module.onFrame;
+  Module.onFrame = () => {
+    original();
+    stat.last = Module._ps2web_frames();
+    if (!enc) {
+      stat.first = stat.last;
+      stat.width = canvas.width & ~1, stat.height = canvas.height & ~1;
+      enc = new VideoEncoder({ output: (c) => { const b = new Uint8Array(c.byteLength); c.copyTo(b); out.push(b); stat.bytes += b.length; },
+                               error: (e) => { stat.errors++; stat.error = String(e); } });
+      enc.configure({ codec: 'avc1.640034', width: stat.width, height: stat.height, bitrate: 40e6, framerate: 60, latencyMode, avc: { format: 'annexb' } });
+      enc.ondequeue = () => { if (enc.encodeQueueSize <= 2) for (const h of held.splice(0)) h(); };
+      const port = Module.shownChannel.port1, shown = port.onmessage;
+      port.onmessage = (e) => { if (held.length || enc.encodeQueueSize > 4) held.push(() => shown(e)); else shown(e); };
+    }
+    const frame = new VideoFrame(canvas, { timestamp: Math.round(stat.frames * 1e6 / 60), visibleRect: { x: 0, y: 0, width: stat.width, height: stat.height } });
+    enc.encode(frame, { keyFrame: stat.frames++ % 120 === 0 });
+    frame.close();
+    stat.queue = enc.encodeQueueSize, stat.maxQueue = Math.max(stat.maxQueue, stat.queue);
+  };
+})();`;
+
 let id = 0;
 const pending = new Map();
 const listeners = [];
@@ -235,6 +280,7 @@ async function main() {
   await call('Network.enable').catch(() => {});
   await call('Inspector.enable').catch(() => {});
   if (opt.cpuThrottle) await call('Emulation.setCPUThrottlingRate', { rate: opt.cpuThrottle });
+  if (opt.viewport) await call('Emulation.setDeviceMetricsOverride', { width: opt.viewport[0], height: opt.viewport[1], deviceScaleFactor: 1, mobile: false });
   if (opt.fakePads) await call('Page.addScriptToEvaluateOnNewDocument', { source: fakePadSource(opt.fakePads) });
   // --gpu-calls: count every WebGPU method call (window.__gpuCalls, on while it is an object)
   if (opt.gpuCalls) await call('Page.addScriptToEvaluateOnNewDocument', { source: `(() => {
@@ -323,6 +369,7 @@ async function main() {
       await sleep(250);
     }
     if (padEvents.length || opt.fakePads) await evaluate(padDriverSource(padEvents));
+    if (opt.record) await evaluate(recorderSource);
     for (const js of opt.evalBefore || []) say('[driver] eval-before-start: ' + JSON.stringify(await evaluate(js).catch((e) => 'ERR ' + e.message)));
     if (opt.noStart) return true;
     await evaluate(`document.getElementById('start').click()`, true);
@@ -335,6 +382,8 @@ async function main() {
   let nextShotFrame = opt.shotEvery || Infinity;
   const pendingShots = [...opt.shots].sort((a, b) => a - b);
   let lastStats = '', reloaded = false, firstFrameAt = null, lastFrame = 0, controlDone = 0;
+  const video = opt.record && fs.openSync(opt.record, 'w');
+  const takeVideo = async () => { if (video) fs.writeSync(video, Buffer.from(await evaluate('window.__rec.take()'), 'base64')); };
   const shotLabels = new Map();
   while (Date.now() < deadline && !chromeExit) {
     const s = await evaluate(`({ frame: typeof Module !== 'undefined' && Module._ps2web_frames ? Module._ps2web_frames() : -1, stats: document.getElementById('stats').textContent, status: document.getElementById('status').textContent })`).catch((e) => ({ frame: -2, stats: String(e.message), status: '' }));
@@ -345,7 +394,11 @@ async function main() {
       if (opt.frameTimes) await evaluate('Module.frameMs = []');
       if (opt.gpuCalls && opt.gpuCalls.rel) opt.gpuCalls.frame += s.frame;
     }
-    if (s.stats !== lastStats) { say(`frame=${s.frame} ${s.stats} | ${s.status}`); lastStats = s.stats; }
+    if (s.stats !== lastStats) {
+      say(`frame=${s.frame} ${s.stats} | ${s.status}` + (video ? ' | rec ' + JSON.stringify(await evaluate('window.__rec.stat')) : ''));
+      lastStats = s.stats;
+    }
+    await takeVideo();
     lastFrame = s.frame;
     if (opt.gpuCalls && !opt.gpuCalls.at && s.frame >= opt.gpuCalls.frame) {
       opt.gpuCalls.at = Date.now();
@@ -448,6 +501,19 @@ async function main() {
       if (quit) { say('[ctl] quit'); break; }
     }
     await sleep(opt.control ? 150 : 500);
+  }
+  if (video) {
+    await sleep(1000);  // the presents trail the EE's frame counter
+    say('[driver] recorded ' + JSON.stringify(await evaluate('window.__rec.flush()')));
+    await takeVideo();
+    fs.closeSync(video);
+  }
+  // the game writes its dumps when it stops (--frames): wait for the file, then copy it out
+  if (opt.pull) {
+    let data = null;
+    for (let i = 0; i < 60 && !data; ++i, await sleep(500)) data = await evaluate(`(() => { try { const d = FS.readFile(${JSON.stringify(opt.pull.from)}); let s = ''; for (let i = 0; i < d.length; i += 0x8000) s += String.fromCharCode.apply(null, d.subarray(i, i + 0x8000)); return btoa(s); } catch (e) { return null; } })()`);
+    if (data) fs.writeFileSync(opt.pull.to, Buffer.from(data, 'base64'));
+    say(`[driver] pull ${opt.pull.from}: ${data ? Buffer.from(data, 'base64').length + ' bytes' : 'not written'}`);
   }
   if (opt.frameTimes) fs.writeFileSync(path.join(opt.out, 'frame-ms.txt'), await evaluate(`(Module.frameMs || []).map((x) => x.toFixed(2)).join('\\n')`).catch(() => ''));
   await shot('final-f' + lastFrame);

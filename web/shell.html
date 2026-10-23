@@ -778,7 +778,8 @@ var Module = {
   canvas,
   lockstep: lockstepMode,
   rtcEpoch: lockstepMode ? Number(params.get('lsrtc')) || Math.floor(Date.now() / 1000) : 0,
-  arguments: ['/game/core.elf'].concat(params.has('arg') ? ['--arg', params.get('arg')] : [], params.getAll('press').flatMap((p) => p.split(',').flatMap((x) => ['--press', x]))),
+  arguments: ['/game/core.elf'].concat(params.has('arg') ? ['--arg', params.get('arg')] : [], params.getAll('press').flatMap((p) => p.split(',').flatMap((x) => ['--press', x])),
+                                                params.getAll('args').flatMap((a) => a.split(/\s+/).filter(Boolean))),  // raw ps2 args: --frames N --stick F:x,y ...
   discUrl: params.get('disc') || 'disc.iso',
   stateUrl: params.get('state'),
   noSurface: params.has('nosurface'),
@@ -944,10 +945,12 @@ async function startSession() {
     onStatus: (text) => {
       lsStatus = text;
       if (s.isHost && text === 'waiting for the other player') showInvite(s.code || id);
-      else if (text === 'running' && statusEl.onclick) {
+      else if (/^playing as P/.test(text)) {
+        // the game takes player 2 only in Ko-op (main menu), at its character select
         statusEl.onclick = null;
         statusEl.style.cursor = '';
-        statusEl.textContent = 'Running, 2 players, ' + Module.gpuInfo;
+        statusEl.textContent = s.isHost ? 'Player 2 connected. To play together: main menu, Ko-op; they press ✕ at character select'
+                                        : 'Connected as player 2. When the host picks Ko-op, press ✕ (Space) at character select';
       }
       showLobby();
     },
