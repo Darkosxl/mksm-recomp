@@ -16,7 +16,7 @@ host=$1 domain=$2
 here=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
 repo=$(dirname "$here")
 BUILD_DIR=${BUILD_DIR:-$repo/build/web-mksm}
-DISC=${DISC:-$repo/games/mksm/disc.iso}
+DISC=$(readlink -f "${DISC:-$repo/games/mksm/disc.iso}")  # rsync skips a symlink
 PACK_DIR=${PACK_DIR:-}
 EXTERNAL_IP=${EXTERNAL_IP:-}
 [[ -z $EXTERNAL_IP || $EXTERNAL_IP =~ ^[0-9.]+(/[0-9.]+)?$ ]] || die "invalid EXTERNAL_IP: $EXTERNAL_IP (want <public>/<private>)"
@@ -32,8 +32,8 @@ remote_root() { remote "if [ \"\$(id -u)\" = 0 ]; then bash -s -- $*; else sudo 
 
 say "preflight"
 command -v rsync >/dev/null || die "rsync is not installed locally"
-for f in ps2web.wasm ps2web.js ps2web.html lockstep.js lockstep-emu.js disc-sw.js; do
-    [ -f "$BUILD_DIR/$f" ] || die "missing $BUILD_DIR/$f (run scripts/build_web.sh mksm)"
+for f in ps2web.wasm ps2web.js ps2web.html lockstep.js lockstep-emu.js disc-sw.js prefetch.json; do
+    [ -f "$BUILD_DIR/$f" ] || die "missing $BUILD_DIR/$f (run mksm/build.sh <disc> --web)"
 done
 for z in "$BUILD_DIR"/ps2web.*.gz "$BUILD_DIR"/ps2web.*.br; do
     [ -e "$z" ] || continue
