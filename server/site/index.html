@@ -198,17 +198,6 @@
   <p id="warn" class="banner warn" hidden></p>
   <div id="notice" class="banner" role="status" hidden><span id="notice-text"></span><button id="notice-x" class="x" type="button" aria-label="Dismiss">✕</button></div>
 
-  <section id="first" class="card" hidden>
-    <h2>Pick a nickname</h2>
-    <p id="invite" class="lead" hidden></p>
-    <p class="muted">Your friend sees it when you play together.</p>
-    <form id="first-form" class="row">
-      <input id="first-nick" type="text" maxlength="20" placeholder="Nickname" aria-label="Nickname" autocomplete="nickname" spellcheck="false">
-      <button class="primary">Continue</button>
-    </form>
-    <p id="first-msg" class="msg"></p>
-  </section>
-
   <div id="home" hidden>
     <p id="hello" class="hello">Welcome, <strong id="hello-nick"></strong><button id="edit-nick" class="link" type="button">Edit</button></p>
 
@@ -511,7 +500,7 @@ $('join').onsubmit = (e) => {
 };
 $('join-input').oninput = () => { lookSeq++; $('join-go').hidden = true; say($('join-msg'), ''); };
 
-// ---- first run, nickname ----
+// ---- nickname ----
 
 // /play/<code> (Caddy serves this page there): join that code once the player has a nickname.
 let pending = null;
@@ -528,7 +517,6 @@ function showNick() {
 }
 
 function home() {
-  $('first').hidden = true;
   $('home').hidden = false;
   showNick();
   if (!pending) return;
@@ -536,17 +524,9 @@ function home() {
   pending = null;
   $('hello').after($('join-card'));
   $('join-input').value = id ? (CODE.test(id) ? pretty(id) : id) : raw;
-  if (id) lookup(id);
+  if (id) lookup(id).then(() => { const b = $('join-go'); if (!menu && !b.hidden && !b.disabled) b.click(); });
   else say($('join-msg'), "That doesn't look like a code.", 'err');
 }
-
-$('first-form').onsubmit = (e) => {
-  e.preventDefault();
-  const n = cleanNick($('first-nick').value);
-  if (!n) return say($('first-msg'), 'Type a nickname first.', 'err');
-  store('mksm-nick', n);
-  home();
-};
 
 $('nick-form').onsubmit = (e) => {
   e.preventDefault();
@@ -680,6 +660,8 @@ if (DISCORD_URL) {
 
 // Guests come back from the game as /?left=<reason>[&room=<code>].
 const query = new URLSearchParams(location.search);
+// This page only shows when asked for (?menu), on the way back from a game, or when the game cannot run here.
+const menu = query.has('menu') || query.has('left') || !('gpu' in navigator);
 if (query.has('left')) {
   const reason = query.get('left'), room = query.get('room') || '';
   const who = CODE.test(room) ? pretty(room) : 'Your friend';
@@ -701,14 +683,11 @@ if (query.has('left')) {
 $('notice-x').onclick = () => { $('notice').hidden = true; };
 
 requestCode();
-if (nick()) home();
-else {
-  $('first').hidden = false;
-  if (pending && pending.id) {
-    $('invite').hidden = false;
-    $('invite').textContent = CODE.test(pending.id) ? `You're invited to join ${pretty(pending.id)}.` : "You're invited to a room.";
-  }
-}
+if (!nick()) store('mksm-nick', 'Monk ' + (1000 + crypto.getRandomValues(new Uint16Array(1))[0] % 9000));
+const toFriend = !!(pending && pending.id);
+home();
+// Straight into the game: your own as host, or (home() above) the friend's game a /play/<code> link names.
+if (!menu && !toFriend) $('play').click();
 </script>
 </body>
 </html>
