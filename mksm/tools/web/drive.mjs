@@ -17,6 +17,7 @@
 //                                      worker (pthread) -> OUT/worker-N.cpuprofile
 //   --cpu-throttle N                   slow the page's main thread N times (CDP Emulation.setCPUThrottlingRate)
 //   --record FILE                      every presented frame, H.264 (Annex B) at 60 fps however fast the run went
+//   --record-from F                    ... from emulated frame F on (start mid-scene)
 //   --pull MEMFS:FILE                  after the run, copy a file the game wrote (e.g. PS2_DUMP_AUDIO at --frames) out
 //   --frame-times                      ms between presented frames from the first one -> OUT/frame-ms.txt (p50/p95)
 //   --trace FRAME:SECONDS              Chrome trace with the GPU process's native slices -> OUT/trace.json
@@ -47,6 +48,7 @@ for (let i = 0; i < argv.length; ++i) {
   else if (a === '--cpu-throttle') opt.cpuThrottle = Number(next());
   else if (a === '--frame-times') opt.frameTimes = true;
   else if (a === '--record') opt.record = next();
+  else if (a === '--record-from') opt.recordFrom = Number(next());
   else if (a === '--pull') { const [from, to] = next().split(':'); opt.pull = { from, to }; }
   else if (a === '--trace') { const [f, secs] = next().split(':').map(Number); opt.trace = { frame: f, ms: secs * 1000 }; }
   else if (a === '--gpu-calls') { const [f, secs] = next().split(':'); opt.gpuCalls = { frame: Number(f), rel: f[0] === '+', ms: secs * 1000 }; }  // +F: F frames after the first
@@ -212,6 +214,7 @@ const recorderSource = `(() => {
   Module.onFrame = () => {
     original();
     stat.last = Module._ps2web_frames();
+    if (stat.last < ${opt.recordFrom || 0}) return;
     if (!enc) {
       stat.first = stat.last;
       stat.width = canvas.width & ~1, stat.height = canvas.height & ~1;

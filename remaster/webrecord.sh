@@ -2,7 +2,8 @@
 # remaster/record.sh in the browser: the web build in headless Chromium on the laptop's NVIDIA GPU, one page per scene.
 # Headful in drive.mjs's private Xvfb (headless WebGPU canvases read back black). The page encodes every presented frame (drive.mjs --record, 60 fps however fast the run went) and the game dumps its
 # audio when it stops at --frames (PS2_DUMP_AUDIO, pulled out of the page's memory filesystem).
-# usage: remaster/webrecord.sh <out> original|remaster <scene>:<frames>...   (scenes: remaster/scenes.tsv, as record.sh)
+# usage: remaster/webrecord.sh <out> original|remaster <scene>:<frames>[+<skip>]...   (scenes: remaster/scenes.tsv, as record.sh;
+#   +skip: the clip starts that many frames after the state, e.g. menu:800+100)
 #   original: the unmodified game at 1x, 4:3 at 640x480 (scale it up later: the page's own upscale is bilinear); remaster: the page's 3x6 rung (widescreen, 4x web pack) at 1920x1080
 set -euo pipefail
 here=$(cd "$(dirname "$0")/.." && pwd)
@@ -24,21 +25,22 @@ srv=$!
 trap 'kill $srv 2> /dev/null' EXIT
 i=0
 for spec in "$@"; do
-  scene=${spec%%:*} n=${spec#*:} i=$((i + 1))
+  scene=${spec%%:*} n=${spec#*:} i=$((i + 1)) skip=0
+  [[ $n == *+* ]] && skip=${n#*+} n=${n%+*}
   IFS=$'\t' read -r _ state _ args < <(awk -F'\t' -v s="$scene" '$1 == s' "$here/remaster/scenes.tsv") || { state=$scene.state args=@$scene; }
   start=$(python3 -I -c "import json, sys; print(json.load(open(sys.argv[1]))['frame'])" "$D/states/${state%.state}.json")
   for w in $args; do [[ $w == @* ]] && args=${args//$w/$(tr '\n' ' ' < "$here/mksm/inputs/${w#@}.args")}; done
-  [ -n "$args" ] || args=$(fight $((start + 30)) $((start + n)) | tr '\n' ' ')
-  o=$out/$mode/$i-$scene end=$((start + n))
+  o=$out/$mode/$i-$scene end=$((start + skip + n))
+  [ -n "$args" ] || args=$(fight $((start + 30)) $end | tr '\n' ' ')
   rm -rf "$o"; mkdir -p "$o"
   q=$(python3 -I -c "import sys, urllib.parse; print(urllib.parse.quote(sys.argv[1]))" "--frames $end $args")
   node "$here/mksm/tools/web/drive.mjs" --url "http://127.0.0.1:$port/?$look&state=/$state&PS2_DUMP_AUDIO=/tmp/audio.wav&args=$q" --out "$o" \
-    --nvidia --xvfb --window $((${view%,*} + 64)),$((${view#*,} + 200)) --viewport $view --until-frame $end --seconds 1200 --record "$o/video.h264" --pull /tmp/audio.wav:"$o/audio.wav" \
+    --nvidia --xvfb --window $((${view%,*} + 64)),$((${view#*,} + 200)) --viewport $view --until-frame $end --seconds 1200 --record "$o/video.h264" --record-from $((start + skip)) --pull /tmp/audio.wav:"$o/audio.wav" \
     --eval-before-start "document.getElementById('bar').style.display = 'none'" ${WEBREC_ARGS:-} > "$o/drive.log" 2>&1 || echo "$scene: drive failed"
   [ -s "$o/video.h264" ] || { echo "$scene: no video, left out"; continue; }
   # raw H.264 has no timestamps: muxed straight with the audio, -shortest leaves no audio at all
   ffmpeg -loglevel error -r 60 -i "$o/video.h264" -c copy -y "$o/video.mp4"
-  if [ -s "$o/audio.wav" ]; then ffmpeg -loglevel error -i "$o/video.mp4" -i "$o/audio.wav" -c:v copy -c:a aac -b:a 192k -shortest -y "$o/seg.mp4"
+  if [ -s "$o/audio.wav" ]; then ffmpeg -loglevel error -i "$o/video.mp4" -ss "$(awk "BEGIN { print $skip / 60 }")" -i "$o/audio.wav" -c:v copy -c:a aac -b:a 192k -shortest -y "$o/seg.mp4"
   else cp "$o/video.mp4" "$o/seg.mp4"; fi
   echo "file '$o/seg.mp4'" >> "$out/$mode-segments.txt"
   echo "$scene: $(grep -o 'recorded .*' "$o/drive.log" | tail -1), $(grep -o 'pull .*' "$o/drive.log" | tail -1)"
