@@ -53,7 +53,8 @@
 		uri /auth
 	}
 
-	@signal path /ws /auth /invite /turn /admin /admin/*
+	# /report (player bug reports) is gated above like everything else; signal.mjs checks the cookie again.
+	@signal path /ws /auth /invite /turn /report /admin /admin/*
 	handle @signal {
 		reverse_proxy {$SIGNAL_ADDR:127.0.0.1:8787}
 	}

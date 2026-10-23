@@ -4,17 +4,21 @@
 // server/node_modules for signal.mjs. Usage, routes and the security model: mksm/notes/web-host.md.
 //
 //   node server/host.mjs [--port 8620] [--build build/web-mksm] [--disc games/mksm/disc.iso] [--tunnel-url https://…]
-//                        [--pack <dir> [--pack-variants 2]]
+//                        [--pack <dir> [--pack-variants 2]] [--report-dir server/data/reports]
 // --pack serves an HD texture pack (remaster/webpack.py output: current.json, <id>.txt, obj/) at /pack/; its
 // current.json is answered with only the --pack-variants (comma list, default all) and "background": false, so a
 // home uplink only sends the textures a game actually asks for.
+// POST /report (player bug reports, report.mjs) keeps a copy in --report-dir and forwards to FEMME when
+// FEMME_REPORT_URL and FEMME_REPORT_TOKEN are set, in the environment or in ~/.config/mksm/report.env (KEY=VALUE lines).
 import { randomBytes } from 'node:crypto';
 import { readFileSync, statSync } from 'node:fs';
 import { createServer } from 'node:http';
+import { homedir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { parseArgs } from 'node:util';
 import { ISOLATION, pipeUpgrade, removeDir, serveFile, startSignal, stop, tempDir } from '../scripts/lockstep_env.mjs';
+import { readEnvFile, reportRoute } from './report.mjs';
 
 const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const { values: opt } = parseArgs({
@@ -25,6 +29,7 @@ const { values: opt } = parseArgs({
     'tunnel-url': { type: 'string' },
     pack: { type: 'string' },
     'pack-variants': { type: 'string' },
+    'report-dir': { type: 'string', default: join(ROOT, 'server', 'data', 'reports') },
   },
 });
 const BUILD = resolve(opt.build), DISC = resolve(opt.disc), PACK = opt.pack === undefined ? null : resolve(opt.pack);
@@ -48,6 +53,13 @@ const httpsOrigin = (s) => {
 let tunnelUrl = null;
 if (opt['tunnel-url'] !== undefined && !(tunnelUrl = httpsOrigin(opt['tunnel-url']))) die('--tunnel-url must be an https:// origin');
 
+const REPORT_ENV = join(process.env.XDG_CONFIG_HOME || join(homedir(), '.config'), 'mksm', 'report.env');
+const reportEnv = { ...readEnvFile(REPORT_ENV), ...Object.fromEntries(Object.entries(process.env).filter(([k]) => k.startsWith('FEMME_REPORT_'))) };
+const report = reportRoute({
+  dir: resolve(opt['report-dir']), server: 'host', url: reportEnv.FEMME_REPORT_URL, token: reportEnv.FEMME_REPORT_TOKEN,
+  log: (line) => console.log(`host: ${line}`),
+});
+
 // ---- signal.mjs: per-run secrets in memory, invites in a temp dir ----
 const key = () => randomBytes(32).toString('hex');
 const ADMIN_SECRET = key();
@@ -57,6 +69,7 @@ const signalEnv = {
   HOST: '127.0.0.1', PORT: '0', DATA_DIR: join(tmp, 'data'), ROOM_URL: '/ps2web.html?room={room}',
 };
 delete signalEnv.PUBLIC_ORIGIN; // host.mjs checks the WebSocket Origin itself: localhost and the tunnel are both valid
+delete signalEnv.FEMME_REPORT_URL, delete signalEnv.FEMME_REPORT_TOKEN; // host.mjs answers /report itself
 const prefix = (text) => text.replace(/^(?=.)/gm, 'signal: ');
 let signal;
 try {
@@ -169,6 +182,10 @@ async function handle(req, res) {
   if (!isLocal && !(req.headers.cookie && (await fetch(signal.origin + '/auth', { headers: { cookie: req.headers.cookie } })).status === 200))
     return send(res, 401, DENIED, 'text/html; charset=utf-8');
   if (path === '/turn') return send(res, 404, 'no TURN server in host mode\n');
+  if (path === '/report') { // per visitor: the host, or the guest's invite id (the cookie just passed /auth; signal.mjs's regex)
+    const r = await report(req, isLocal ? { id: 'host' } : { id: req.headers.cookie.match(/(?:^|;\s*)__Host-mksm=([\w-]+)\.(\d+)\.([\w-]+)/)[1] });
+    return send(res, r.status, r.body, undefined, r.headers);
+  }
   if (path === '/disc.iso') return serveFile(req, res, DISC, { gzip: false });
   if (path.startsWith('/pack/')) {
     if (!PACK) return send(res, 404, 'no texture pack\n');

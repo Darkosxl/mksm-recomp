@@ -79,6 +79,7 @@ PACK_DIR=<out> server/deploy.sh user@host your.domain
 | `/etc/mksm/signal.env` | Secrets and settings for `signal.mjs` (root:mksm, 0640) |
 | `/etc/mksm/caddy.env` | `DOMAIN`, `MKSM_ROOT`, `SIGNAL_ADDR` for the Caddyfile (no secrets) |
 | `/var/lib/mksm/invites.json` | Invite store (`DATA_DIR`; token hashes only) |
+| `/var/lib/mksm/reports/` | Player bug reports, `<time>-<rand>.png` + `.json` (0600, dir 0700) |
 | `/etc/caddy/Caddyfile`, `/etc/systemd/system/caddy.service.d/mksm.conf` | Caddy config and the drop-in that loads `caddy.env` |
 | `/etc/turnserver.conf` | Rendered coturn config (contains the TURN secret) |
 | `/usr/local/bin/mksm-invite` | Mints an invite from the VPS shell |
@@ -119,6 +120,7 @@ Revoking an invite also signs out everyone who joined through it. Changing `COOK
 | `/pack/current.json` | `{"<variant>": "<index id>"}`, `no-cache` | cookie |
 | `/pack/<id>.txt`, `/pack/obj/<key>.<sha12>.tex` | pack indexes and objects, `immutable`, raw bytes | cookie |
 | `/ws`, `/turn` | `signal.mjs` | cookie (checked by Caddy and again by `signal.mjs`) |
+| `POST /report` | `signal.mjs`: player bug report (below) | cookie (Caddy and `signal.mjs`) |
 | `/invite?t=[&room=]` | `signal.mjs`: token → cookie → `302 /` (or `ROOM_URL` with the room) | none |
 | `/admin/*` | `signal.mjs` | `Authorization: Bearer <ADMIN_SECRET>` |
 | `/auth` | `signal.mjs`: 200 with a valid cookie, else 401 (Caddy `forward_auth`) | — |
@@ -174,6 +176,10 @@ Session flow:
 4. The W3 handshake (build hash, disc id, lockstep config, input delay) and the W4 snapshot transfer run over the `ctl` data channel, not the WebSocket. The host is the one that runs the session and sends the snapshot.
 5. On `peer-left`, the remaining page keeps the socket open and waits for a new `peer-joined` (drop-in); it then gets the next `offer`.
 
+## Bug reports
+
+`POST /report` (same origin, `Content-Type: application/json`): `{"title": ≤120 chars, "text": 1–4000 chars, "png": base64 PNG ≤ 6 MiB, "meta": object ≤ 4 KB as JSON}`, body ≤ 9 MiB (413 as soon as it passes that). 5 reports per hour per invite (429 after), 3 in flight at once (503). Each report is saved in `DATA_DIR/reports/` (`.png`, and `.json` with the meta plus invite id and note, user agent, time and the forward result) and, when both `FEMME_REPORT_URL` (e.g. `https://<board>/api/reports`) and `FEMME_REPORT_TOKEN` are set in `/etc/mksm/signal.env`, POSTed there with `Authorization: Bearer <token>` as `{title, text, png, meta}` (meta + `invite`, `server: "vps"`), 20 s timeout. Answer: `200 {"ok": true, "id": <FEMME id or null>, "forwarded": <bool>}`; a failed forward is still 200 (the copy is kept). Either variable unset: local copy only. The token is never logged or sent to the browser. Code: `report.mjs` (shared with host mode). To set the token: add both lines to `/etc/mksm/signal.env` (root:mksm 0640), then `sudo systemctl restart mksm-signal`.
+
 ## Host mode
 
 `mksm/host.sh` runs the whole site on the host player's PC, without Caddy, coturn or a VPS. Guide, security model and troubleshooting: [`mksm/notes/web-host.md`](../mksm/notes/web-host.md).
@@ -182,6 +188,7 @@ Session flow:
 - **Gate:** every path except `/invite` needs the cookie, except for the host's own browser: TCP peer 127.0.0.1/::1, no proxy header (`Cf-*`, `X-Forwarded-*`, `Forwarded`, `X-Real-IP`, `CDN-Loop`, `Via`; cloudflared always adds `Cf-Connecting-IP` and `X-Forwarded-For`), a loopback `Host`, and `Origin`/`Sec-Fetch-Site` (when present) not naming another site. host.mjs adds its own cookie to that browser's `/ws` and `/auth` requests. A remote WebSocket with an `Origin` must come from the tunnel URL.
 - **`/host-info`** (local only) → `{tunnelUrl, inviteToken, inviteUrl, inviteUsed, room}`. `?room=<id>` records the host's room and adds `&room=<id>` to `inviteUrl`; `?new=1` mints a new single-use invite (revoking the previous one if it is unused). `POST /host-info/tunnel?url=https://…` (local only) sets the tunnel URL; `host.sh` calls it once cloudflared prints its `*.trycloudflare.com` URL.
 - `--pack <dir>` serves a texture pack at `/pack/` (same routes and headers as above, strict file names). Its `current.json` is answered with only the `--pack-variants` (comma list, default all) and `"background": false`, so the page fetches a texture only when the game asks for it. `host.sh` passes `--pack <checkout>/../../remaster-data/textures/web --pack-variants 2` (the 2x variant: a home uplink) when that pack exists; `--pack DIR` / `--no-pack` change it.
+- **`POST /report`** is answered by host.mjs itself (same checks as above; rate limit per visitor: the host, or the guest's invite), saved in `--report-dir` (default `server/data/reports`, gitignored) and forwarded with `server: "host"` when `FEMME_REPORT_URL` and `FEMME_REPORT_TOKEN` are in the environment or in `${XDG_CONFIG_HOME:-~/.config}/mksm/report.env` (`KEY=VALUE` lines, chmod 600; the environment wins). `signal.mjs` does not get them.
 - `host.sh` downloads `tools/cloudflared` (pinned release, SHA-256 checked) on first use, runs `npm ci` here if `node_modules` is missing, starts host.mjs and `cloudflared tunnel --no-autoupdate --url http://127.0.0.1:<port>`, prints the host's URL and the invite, and stops all of it on Ctrl-C.
 
 Tests: `node host_test.mjs` (host.mjs on loopback: the gate with cloudflared-like headers, `/host-info`, single-use invite and room redirect, gzip, Range, the `/pack/` routes, `/ws` rules, relay through the proxy) and `node host_tunnel_test.mjs` (needs internet: `host.sh` with a real quick tunnel, then the gate, invite, Range, throughput and relay through it).
@@ -192,6 +199,6 @@ Tests: `node host_test.mjs` (host.mjs on loopback: the gate with cloudflared-lik
 cd server && npm install && node test.mjs        # or CADDY=/path/to/caddy-2.11 node test.mjs, or --no-caddy
 ```
 
-Starts `signal.mjs` on a free loopback port with throwaway secrets (and, when `caddy` is installed, Caddy with this Caddyfile and a temp web root holding a fake build and disc) and checks invites (including `&room=` and `ROOM_URL`), cookies, `/auth`, `/turn`, rooms (create, join, relay, third-peer reject, leave notifications, drop-in, expiry), personal codes (derivation, join by owner and by code, offline, info, replaced, same-page rejoin, owner leaving closes the room, nickname sanitising, probe rate limit), the binary relay (byte-exact, size cap, 20 MiB paced by the rate limit and held by a stalled receiver, lossless and in order), and through Caddy the auth gate on every path, the isolation and cache headers, precompressed wasm, disc Range reads and the texture pack (`no-cache` pointer; immutable raw objects with no `Content-Encoding`, even with a stray `.gz` beside them).
+Starts `signal.mjs` on a free loopback port with throwaway secrets (and, when `caddy` is installed, Caddy with this Caddyfile and a temp web root holding a fake build and disc) and checks invites (including `&room=` and `ROOM_URL`), cookies, `/auth`, `/turn`, rooms (create, join, relay, third-peer reject, leave notifications, drop-in, expiry), personal codes (derivation, join by owner and by code, offline, info, replaced, same-page rejoin, owner leaving closes the room, nickname sanitising, probe rate limit), `/report` (auth, validation, 413 early, rate limit, saved copy, forwarding to a stub FEMME, FEMME down or unset), the binary relay (byte-exact, size cap, 20 MiB paced by the rate limit and held by a stalled receiver, lossless and in order), and through Caddy the auth gate on every path, the isolation and cache headers, precompressed wasm, disc Range reads and the texture pack (`no-cache` pointer; immutable raw objects with no `Content-Encoding`, even with a stray `.gz` beside them).
 
-`signal.mjs` alone: `COOKIE_SECRET=… ADMIN_SECRET=… TURN_SECRET=… node signal.mjs` (each ≥ 32 characters; also `HOST`, `PORT` 8787, `DATA_DIR` ./data, `PUBLIC_ORIGIN`, `TURN_HOST`, `TURN_PORT` 3478, `TURN_TTL` 3600, `ROOM_GRACE_MS` 600000, `ROOM_URL` `/play/{room}`, `RELAY_MAX` 262144, `RELAY_RATE` 8000000 bytes/s, `RELAY_BURST` 1048576, `RELAY_BACKLOG` 4194304, `PROBE_BURST` 30, `PROBE_PER_MIN` 20).
+`signal.mjs` alone: `COOKIE_SECRET=… ADMIN_SECRET=… TURN_SECRET=… node signal.mjs` (each ≥ 32 characters; also `HOST`, `PORT` 8787, `DATA_DIR` ./data, `PUBLIC_ORIGIN`, `TURN_HOST`, `TURN_PORT` 3478, `TURN_TTL` 3600, `ROOM_GRACE_MS` 600000, `ROOM_URL` `/play/{room}`, `RELAY_MAX` 262144, `RELAY_RATE` 8000000 bytes/s, `RELAY_BURST` 1048576, `RELAY_BACKLOG` 4194304, `PROBE_BURST` 30, `PROBE_PER_MIN` 20, `FEMME_REPORT_URL`, `FEMME_REPORT_TOKEN`).

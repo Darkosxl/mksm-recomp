@@ -2,7 +2,8 @@
 // Local end-to-end test. Starts signal.mjs (and Caddy with ./Caddyfile in front of it when `caddy` is on
 // PATH) on loopback ports with throwaway secrets and a temp web root, then checks invite -> cookie ->
 // /auth (and /invite?room= redirects, ROOM_URL), /turn credentials, rooms (create/join/relay/full/leave/
-// expiry; personal codes: join by owner / by code, replaced, rate limit, nicknames), the binary relay
+// expiry; personal codes: join by owner / by code, replaced, rate limit, nicknames), POST /report (auth, checks, early
+// abort, rate limit, saved copy, forwarding to a stub FEMME board, FEMME down / unset), the binary relay
 // (byte-exact both ways, size cap, 20 MiB paced by the rate limit and held by a stalled receiver's backlog,
 // lossless and in order; ~8 s of the run) and, through Caddy, the auth gate, headers, precompression, disc
 // Range requests and the texture pack (/pack/: no-cache pointer, immutable raw objects).
@@ -10,7 +11,8 @@
 import assert from 'node:assert/strict';
 import { execFileSync, spawn } from 'node:child_process';
 import { createHmac, randomBytes } from 'node:crypto';
-import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs';
+import { createServer as httpServer } from 'node:http';
 import { createServer } from 'node:net';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
@@ -111,7 +113,22 @@ const signalPort = await freePort();
 const caddyPort = caddy ? await freePort() : 0;
 const direct = `http://127.0.0.1:${signalPort}`;
 const base = caddy ? `http://127.0.0.1:${caddyPort}` : direct;
-const signalEnv = { ...secrets, HOST: '127.0.0.1', PORT: String(signalPort), DATA_DIR: join(tmp, 'data'), PUBLIC_ORIGIN: base, TURN_HOST: 'turn.test', ROOM_GRACE_MS: String(GRACE_MS), PROBE_BURST: String(PROBE_BURST) };
+// A stub FEMME board for /report: records each request; 201 {id: 7} when the bearer token is right, else 401.
+const FEMME_TOKEN = key(), femmeGot = [];
+const femme = httpServer((req, res) => {
+  const chunks = [];
+  req.on('data', (c) => chunks.push(c)).on('end', () => {
+    const got = { auth: req.headers.authorization === `Bearer ${FEMME_TOKEN}`, method: req.method, url: req.url, type: req.headers['content-type'], body: null };
+    try {
+      got.body = JSON.parse(Buffer.concat(chunks));
+    } catch {}
+    femmeGot.push(got);
+    res.writeHead(got.auth ? 201 : 401, { 'content-type': 'application/json' }).end(JSON.stringify(got.auth ? { id: 7 } : { error: 'bad token' }));
+  });
+});
+await new Promise((r) => femme.listen(0, '127.0.0.1', r));
+const femmeEnv = { FEMME_REPORT_URL: `http://127.0.0.1:${femme.address().port}/api/reports`, FEMME_REPORT_TOKEN: FEMME_TOKEN };
+const signalEnv = { ...secrets, HOST: '127.0.0.1', PORT: String(signalPort), DATA_DIR: join(tmp, 'data'), PUBLIC_ORIGIN: base, TURN_HOST: 'turn.test', ROOM_GRACE_MS: String(GRACE_MS), PROBE_BURST: String(PROBE_BURST), ...femmeEnv };
 const startSignal = () => start('signal.mjs', process.execPath, ['signal.mjs'], signalEnv, /listening on/);
 let signal = await startSignal();
 
@@ -268,6 +285,114 @@ await check('/turn returns coturn REST credentials with a 1 h TTL', async () => 
     { urls: ['stun:turn.test:3478'] },
     { urls: ['turn:turn.test:3478?transport=udp', 'turn:turn.test:3478?transport=tcp'], username: turn.username, credential: turn.credential },
   ]);
+});
+
+// ---- /report ----
+const PNG = Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNkYPhfDwAChwGA60e6kgAAAABJRU5ErkJggg==', 'base64');
+const goodReport = { title: 'Goro  clips\nthrough the floor', text: 'Courtyard, second wave.', png: PNG.toString('base64'), meta: { build: 'abc', page: '/play/x', invite: 'spoofed' } };
+const postReport = (body, headers = {}, at = base) => fetch(at + '/report', {
+  method: 'POST', headers: { 'content-type': 'application/json', ...headers }, body: typeof body === 'string' || Buffer.isBuffer(body) ? body : JSON.stringify(body),
+});
+const reportDir = join(signalEnv.DATA_DIR, 'reports');
+const redeem = async () => {
+  const link = new URL((await mint(1)).link);
+  return (await get(link.pathname + link.search)).headers.getSetCookie()[0].split(';')[0];
+};
+await check('/report: 401 without a valid cookie (Caddy gate and signal.mjs); GET 405; other Content-Type 415', async () => {
+  for (const at of [base, direct]) {
+    assert.equal((await postReport(goodReport, {}, at)).status, 401, at);
+    assert.equal((await postReport(goodReport, { cookie: cookie.slice(0, -2) + 'xx' }, at)).status, 401, at);
+  }
+  assert.equal((await get('/report', { cookie })).status, 405);
+  assert.equal((await postReport(goodReport, { cookie, 'content-type': 'text/plain' })).status, 415);
+});
+await check('/report: 400 on bad JSON, empty or long text, long title, non-PNG or bad base64, bad or big meta', async () => {
+  const bad = [
+    '{', '[]', { ...goodReport, text: '' }, { ...goodReport, text: '  \n ' }, { ...goodReport, text: 'x'.repeat(4001) }, { ...goodReport, text: 7 },
+    { ...goodReport, title: 'x'.repeat(121) }, { ...goodReport, png: randomBytes(300).toString('base64') }, { ...goodReport, png: '!!!!' },
+    { ...goodReport, png: PNG.toString('base64').slice(0, -1) }, { ...goodReport, png: undefined }, { ...goodReport, meta: [] },
+    { ...goodReport, meta: { pad: 'x'.repeat(4096) } },
+  ];
+  for (const body of bad) {
+    const res = await postReport(body, { cookie });
+    assert.equal(res.status, 400, JSON.stringify(body).slice(0, 120));
+    assert.equal((await res.json()).ok, false);
+  }
+});
+await check('/report: 413 over 9 MiB (declared or streamed), an endless body is cut off, 413 for a PNG over 6 MiB', async () => {
+  // Streamed: chunks of 64 KiB, no Content-Length; `limit` bytes, then the stream ends.
+  const stream = (limit, sent = { bytes: 0 }) => Object.assign(sent, { body: new ReadableStream({
+    pull: (c) => (sent.bytes += 1 << 16) > limit ? c.close() : c.enqueue(new Uint8Array(1 << 16).fill(32)),
+  }) });
+  const postStream = (s) => fetch(base + '/report', { method: 'POST', duplex: 'half', headers: { 'content-type': 'application/json', cookie }, body: s.body });
+  assert.equal((await postReport(Buffer.alloc((9 << 20) + 1, 32), { cookie })).status, 413, 'declared');
+  assert.equal((await postStream(stream(12 << 20))).status, 413, 'streamed');
+  // 1 GiB that nobody should read: answered 413 (or the connection is cut) long before the end.
+  const endless = stream(2 ** 30);
+  const outcome = await postStream(endless).then((r) => r.status, (e) => e.cause?.code ?? e.message);
+  assert.ok([413, 'ECONNRESET', 'EPIPE', 'UND_ERR_SOCKET'].includes(outcome), String(outcome));
+  assert.ok(endless.bytes < 256 << 20, `${endless.bytes} bytes sent before the server stopped reading`);
+  const big = Buffer.concat([PNG.subarray(0, 8), Buffer.alloc((6 << 20) - 7)]);
+  assert.equal((await postReport({ ...goodReport, png: big.toString('base64') }, { cookie })).status, 413);
+  assert.ok(!existsSync(reportDir) || readdirSync(reportDir).length === 0, 'nothing saved for refused reports');
+});
+await check('/report: 200 forwarded to FEMME (bearer, {title, text, png, meta + invite + server}); copy saved 0600 in a 0700 dir', async () => {
+  const res = await postReport(goodReport, { cookie, 'user-agent': 'test-agent/1' });
+  assert.equal(res.status, 200);
+  assert.deepEqual(await res.json(), { ok: true, id: 7, forwarded: true });
+  assert.equal(femmeGot.length, 1);
+  const [got] = femmeGot;
+  assert.deepEqual({ ...got, body: undefined }, { auth: true, method: 'POST', url: '/api/reports', type: 'application/json', body: undefined });
+  assert.deepEqual(got.body, { title: 'Goro clips through the floor', text: goodReport.text, png: goodReport.png, meta: { build: 'abc', page: '/play/x', invite: invite.id, server: 'vps' } });
+  const files = readdirSync(reportDir).sort();
+  assert.equal(files.length, 2);
+  assert.match(files[0], /^\d{8}T\d{6}Z-[0-9a-f]{8}\.json$/);
+  assert.equal(files[1], files[0].replace(/json$/, 'png'));
+  assert.ok(readFileSync(join(reportDir, files[1])).equals(PNG));
+  const saved = JSON.parse(readFileSync(join(reportDir, files[0]), 'utf8'));
+  assert.equal(saved.invite, invite.id);
+  assert.equal(saved.note, 'test');
+  assert.equal(saved.userAgent, 'test-agent/1');
+  assert.equal(saved.server, 'vps');
+  assert.ok(Math.abs(Date.parse(saved.time) - Date.now()) < 10_000);
+  assert.deepEqual([saved.text, saved.meta, saved.forwarded, saved.femmeId], [goodReport.text, goodReport.meta, true, 7]);
+  assert.equal(statSync(reportDir).mode & 0o777, 0o700);
+  for (const f of files) assert.equal(statSync(join(reportDir, f)).mode & 0o777, 0o600, f);
+});
+await check('/report: 5 an hour per invite, the 6th is 429 (Retry-After); another invite is not affected', async () => {
+  const [one, two] = [await redeem(), await redeem()];
+  for (let i = 0; i < 5; i++) assert.equal((await postReport(goodReport, { cookie: one })).status, 200, `report ${i + 1}`);
+  const res = await postReport(goodReport, { cookie: one });
+  assert.equal(res.status, 429);
+  assert.ok(Number(res.headers.get('retry-after')) > 3500);
+  assert.equal((await postReport(goodReport, { cookie: two })).status, 200);
+});
+await check('/report: FEMME down is still 200, forwarded:false, copy saved; the token is never logged or answered', async () => {
+  await new Promise((r) => { femme.close(r); femme.closeAllConnections(); });
+  const before = readdirSync(reportDir).length;
+  const res = await postReport(goodReport, { cookie });
+  const text = await res.text();
+  assert.equal(res.status, 200);
+  assert.deepEqual(JSON.parse(text), { ok: true, id: null, forwarded: false });
+  assert.equal(readdirSync(reportDir).length, before + 2);
+  assert.match(signal.log, /report \S+ from \S+: \d+ B png, saved, not forwarded \(\w+\)/);
+  assert.ok(!signal.log.includes(FEMME_TOKEN) && !text.includes(FEMME_TOKEN), 'token leaked');
+  for (const f of readdirSync(reportDir)) assert.ok(!readFileSync(join(reportDir, f)).includes(FEMME_TOKEN), `token in ${f}`);
+});
+await check('/report: FEMME_REPORT_URL / FEMME_REPORT_TOKEN unset keeps only the local copy', async () => {
+  const port = await freePort(), at = `http://127.0.0.1:${port}`, dataDir = join(tmp, 'data-nofemme');
+  const other = await start('signal.mjs', process.execPath, ['signal.mjs'], { ...signalEnv, PORT: String(port), DATA_DIR: dataDir, FEMME_REPORT_URL: '', FEMME_REPORT_TOKEN: '' }, /listening on/);
+  try {
+    assert.match(other.log, /local copy only/);
+    const { link } = await (await fetch(at + '/admin/invite', { method: 'POST', headers: adminHeaders })).json();
+    const own = (await fetch(at + new URL(link).pathname + new URL(link).search, { redirect: 'manual' })).headers.getSetCookie()[0].split(';')[0];
+    const res = await postReport(goodReport, { cookie: own }, at);
+    assert.equal(res.status, 200);
+    assert.deepEqual(await res.json(), { ok: true, id: null, forwarded: false });
+    assert.equal(readdirSync(join(dataDir, 'reports')).length, 2);
+  } finally {
+    await stop(other);
+  }
 });
 
 // ---- rooms ----

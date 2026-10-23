@@ -6,6 +6,7 @@ import { createHash, createHmac, randomBytes, randomInt, timingSafeEqual } from 
 import { mkdirSync, readFileSync, renameSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { WebSocketServer } from 'ws';
+import { reportRoute } from './report.mjs';
 
 const env = process.env;
 const secret = (name) => {
@@ -57,6 +58,8 @@ try {
 } catch (e) {
   if (e.code !== 'ENOENT') throw e;
 }
+// Player bug reports (POST /report): copies in DATA_DIR/reports, forwarded to FEMME when both vars are set (report.mjs).
+const report = reportRoute({ dir: join(DATA_DIR, 'reports'), server: 'vps', url: env.FEMME_REPORT_URL, token: env.FEMME_REPORT_TOKEN });
 const save = () => {
   writeFileSync(FILE + '.tmp', JSON.stringify(invites, null, 1) + '\n', { mode: 0o600 });
   renameSync(FILE + '.tmp', FILE);
@@ -163,6 +166,10 @@ const server = createServer((req, res) => {
       username, credential, ttl: TURN_TTL,
       iceServers: [{ urls: [`stun:${at}`] }, { urls: [`turn:${at}?transport=udp`, `turn:${at}?transport=tcp`], username, credential }],
     });
+  }
+  if (url.pathname === '/report') {
+    const id = user(req);
+    return report(req, id && { id, note: invites[id].note }).then((r) => send(res, r.status, r.body, undefined, r.headers));
   }
   send(res, 404, 'not found\n');
 });

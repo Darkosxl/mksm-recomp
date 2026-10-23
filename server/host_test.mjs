@@ -3,13 +3,14 @@
 // build dir and a small random disc, then checks the localhost bypass and the cookie gate (requests made to look like
 // cloudflared's: loopback peer + Cf-Connecting-Ip / X-Forwarded-For + the tunnel's Host), /host-info, the single-use
 // invite and its room redirect, static files (gzip, Range), the texture pack routes (--pack, --pack-variants), /ws
-// access rules and the binary relay through the proxy.
+// access rules, POST /report (host and guest, forwarded to a stub FEMME board configured through report.env) and the
+// binary relay through the proxy.
 // usage: cd server && npm install && node host_test.mjs
 import assert from 'node:assert/strict';
 import { spawn, spawnSync } from 'node:child_process';
 import { randomBytes } from 'node:crypto';
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
-import { request } from 'node:http';
+import { mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { createServer, request } from 'node:http';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -66,9 +67,26 @@ writeFileSync(join(pack, 'obj', tex), texBody);
 writeFileSync(join(pack, 'obj', tex + '.gz'), gzipSync(texBody));
 writeFileSync(join(pack, 'notes.txt'), 'x\n');
 
+// A stub FEMME board for /report (201 {id: 7} with the right bearer token), configured the way host.sh users do it:
+// $XDG_CONFIG_HOME/mksm/report.env. FEMME_REPORT_* from this shell are not passed on.
+const FEMME_TOKEN = randomBytes(32).toString('hex'), femmeGot = [];
+const femme = createServer((req, res) => {
+  const chunks = [];
+  req.on('data', (c) => chunks.push(c)).on('end', () => {
+    const ok = req.headers.authorization === `Bearer ${FEMME_TOKEN}`;
+    femmeGot.push({ ok, body: JSON.parse(Buffer.concat(chunks)) });
+    res.writeHead(ok ? 201 : 401, { 'content-type': 'application/json' }).end(JSON.stringify(ok ? { id: 7 } : {}));
+  });
+});
+await new Promise((r) => femme.listen(0, '127.0.0.1', r));
+mkdirSync(join(tmp, 'xdg', 'mksm'), { recursive: true });
+writeFileSync(join(tmp, 'xdg', 'mksm', 'report.env'), `# test\nFEMME_REPORT_URL=http://127.0.0.1:${femme.address().port}/api/reports\nFEMME_REPORT_TOKEN="${FEMME_TOKEN}"\n`, { mode: 0o600 });
+const hostEnv = { ...Object.fromEntries(Object.entries(process.env).filter(([k]) => !k.startsWith('FEMME_REPORT_'))), XDG_CONFIG_HOME: join(tmp, 'xdg') };
+const reportDir = join(tmp, 'reports');
+
 // ---- start host.mjs ----
 function startHost(args) {
-  const h = spawn(process.execPath, [join(here, 'host.mjs'), '--port', '0', '--build', build, '--disc', join(tmp, 'disc.iso'), ...args], { stdio: ['ignore', 'pipe', 'pipe'] });
+  const h = spawn(process.execPath, [join(here, 'host.mjs'), '--port', '0', '--build', build, '--disc', join(tmp, 'disc.iso'), '--report-dir', reportDir, ...args], { env: hostEnv, stdio: ['ignore', 'pipe', 'pipe'] });
   h.log = '';
   h.started = new Promise((resolve, reject) => { // -> [port, signal.mjs pid]
     const timer = setTimeout(() => reject(new Error('host.mjs did not start:\n' + h.log)), 15_000);
@@ -93,13 +111,13 @@ const REMOTE = { host: new URL(TUNNEL).host, 'cf-connecting-ip': '203.0.113.7', 
 console.log(`testing host.mjs ${base} (signal.mjs pid ${signalPid})`);
 
 // Raw HTTP (fetch can't set Host and would decompress): -> { status, headers, body: Buffer }.
-const http = (path, { method = 'GET', headers = {}, at = port } = {}) => new Promise((resolve, reject) => {
+const http = (path, { method = 'GET', headers = {}, at = port, body } = {}) => new Promise((resolve, reject) => {
   const req = request(`http://127.0.0.1:${at}${path}`, { method, headers: { host: `127.0.0.1:${at}`, ...headers } }, (res) => {
     const chunks = [];
     res.on('data', (c) => chunks.push(c));
     res.on('end', () => resolve({ status: res.statusCode, headers: res.headers, body: Buffer.concat(chunks) }));
   });
-  req.on('error', reject).end();
+  req.on('error', reject).end(body);
 });
 const remote = (path, headers = {}, method) => http(path, { method, headers: { ...REMOTE, ...headers } });
 const isolation = (res) => {
@@ -358,6 +376,32 @@ await check('pack: no --pack is 404; no --pack-variants lists all; a dir without
   }
 });
 
+// ---- /report ----
+const PNG = Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNkYPhfDwAChwGA60e6kgAAAABJRU5ErkJggg==', 'base64');
+const report = JSON.stringify({ title: 'stuck', text: 'Goro froze.', png: PNG.toString('base64'), meta: { build: 'x' } });
+const postReport = (headers) => http('/report', { method: 'POST', body: report, headers: { 'content-type': 'application/json', ...headers } });
+await check('/report: remote needs the cookie (401); the host and a guest are forwarded to FEMME (report.env) and saved', async () => {
+  assert.equal((await postReport(REMOTE)).status, 401);
+  for (const [headers, who] of [[{ origin: `http://localhost:${port}` }, 'host'], [{ ...REMOTE, cookie }, cookie.split('=')[1].split('.')[0]]]) {
+    const res = await postReport(headers);
+    assert.equal(res.status, 200, String(res.body));
+    assert.deepEqual(JSON.parse(res.body), { ok: true, id: 7, forwarded: true });
+    const got = femmeGot.at(-1);
+    assert.ok(got.ok, 'bearer token');
+    assert.deepEqual(got.body.meta, { build: 'x', invite: who, server: 'host' });
+  }
+  assert.equal(femmeGot.length, 2);
+  const files = readdirSync(reportDir);
+  assert.equal(files.length, 4);
+  for (const f of files.filter((f) => f.endsWith('.json'))) assert.equal(JSON.parse(readFileSync(join(reportDir, f))).server, 'host');
+  assert.match(host.log, /host: reports: .*forwarded to 127\.0\.0\.1:/);
+  assert.ok(!host.log.includes(FEMME_TOKEN), 'token in the log');
+});
+await check('/report: 6th report of the host within an hour is 429', async () => {
+  for (let i = 0; i < 4; i++) assert.equal((await postReport({})).status, 200);
+  assert.equal((await postReport({})).status, 429);
+});
+
 // ---- /ws and the binary relay through the proxy ----
 let a, b;
 await check('/ws: local needs no cookie; remote needs the cookie, and a browser Origin must be the tunnel', async () => {
@@ -425,4 +469,5 @@ await check('SIGTERM stops host.mjs and its signal.mjs', async () => {
 });
 
 console.log(`\n${passed} checks passed`);
+femme.close();
 process.exit(0);

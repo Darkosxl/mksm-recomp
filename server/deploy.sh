@@ -3,6 +3,7 @@
 # usage: server/deploy.sh <user@host> <domain>
 #   env: BUILD_DIR (default build/web-mksm), DISC (default games/mksm/disc.iso),
 #        PACK_DIR (HD texture pack dir made by remaster/webpack.py, e.g. remaster-data/textures/web; unset: no pack step)
+#        EXTERNAL_IP (<public>/<private> for coturn behind 1:1 NAT, e.g. AWS/GCP; unset: the public IP is on an interface)
 # The ssh user must be root or have passwordless sudo. Safe to rerun: unchanged pieces are skipped.
 set -euo pipefail
 
@@ -17,6 +18,8 @@ repo=$(dirname "$here")
 BUILD_DIR=${BUILD_DIR:-$repo/build/web-mksm}
 DISC=${DISC:-$repo/games/mksm/disc.iso}
 PACK_DIR=${PACK_DIR:-}
+EXTERNAL_IP=${EXTERNAL_IP:-}
+[[ -z $EXTERNAL_IP || $EXTERNAL_IP =~ ^[0-9.]+(/[0-9.]+)?$ ]] || die "invalid EXTERNAL_IP: $EXTERNAL_IP (want <public>/<private>)"
 
 # One multiplexed ssh connection for every step below.
 ctl=$(mktemp -d)
@@ -47,7 +50,7 @@ if [ -n "$PACK_DIR" ]; then
     done
     [ ${#pack_index[@]} -gt 0 ] || die "$PACK_DIR/current.json names no index"
 fi
-for f in signal.mjs package.json package-lock.json mksm-signal.service mksm-invite Caddyfile turnserver.conf site/index.html; do
+for f in signal.mjs report.mjs package.json package-lock.json mksm-signal.service mksm-invite Caddyfile turnserver.conf site/index.html; do
     [ -f "$here/$f" ] || die "missing server/$f"
 done
 # The build id covers every served artifact (not only the wasm), so a page-only change still gets a new
@@ -128,7 +131,7 @@ chmod 0644 /etc/mksm/caddy.env
 BOOT
 
 say "signalling server -> /opt/mksm"
-push -rlpt --chmod=D755,F644 "$here/signal.mjs" "$here/package.json" "$here/package-lock.json" "$host:/opt/mksm/"
+push -rlpt --chmod=D755,F644 "$here/signal.mjs" "$here/report.mjs" "$here/package.json" "$here/package-lock.json" "$host:/opt/mksm/"
 push -rlpt --chmod=D755,F644 "$here/mksm-signal.service" "$here/mksm-invite" "$here/Caddyfile" "$here/turnserver.conf" "$host:/opt/mksm/etc/"
 remote 'umask 022 && cd /opt/mksm && npm ci --omit=dev --no-audit --no-fund'
 
@@ -178,7 +181,7 @@ say "current.json -> $hash"
 remote "printf '{\"build\": \"%s\"}\\n' $hash >/srv/mksm/.current.json.tmp && chmod 644 /srv/mksm/.current.json.tmp && mv -f /srv/mksm/.current.json.tmp /srv/mksm/current.json"
 
 say "install units and config (root)"
-remote_root "$domain" <<'INSTALL'
+remote_root "$domain" "${EXTERNAL_IP:--}" <<'INSTALL'
 set -euo pipefail
 domain=$1
 src=/opt/mksm/etc
@@ -195,14 +198,15 @@ if ! printf '[Service]\nEnvironmentFile=/etc/mksm/caddy.env\n' | cmp -s - "$drop
     caddy_restart=1
 fi
 
-# coturn: render the secret and realm (via the environment, not argv) into /etc/turnserver.conf.
+# coturn: render the secret, realm and EXTERNAL_IP (via the environment, not argv) into /etc/turnserver.conf.
 secret=$(sed -n 's/^TURN_SECRET=//p' /etc/mksm/signal.env)
 [ -n "$secret" ] || { echo "TURN_SECRET missing from /etc/mksm/signal.env" >&2; exit 1; }
 group=root
 getent group turnserver >/dev/null && group=turnserver
 tmp=$(mktemp /etc/.turnserver.conf.XXXXXX)
-TURN_SECRET=$secret REALM=$domain awk \
-    '{ gsub(/@TURN_SECRET@/, ENVIRON["TURN_SECRET"]); gsub(/@REALM@/, ENVIRON["REALM"]); print }' \
+TURN_SECRET=$secret REALM=$domain EXTERNAL=${2#-} awk \
+    '/^#external-ip=/ && ENVIRON["EXTERNAL"] != "" { print "external-ip=" ENVIRON["EXTERNAL"]; next }
+     { gsub(/@TURN_SECRET@/, ENVIRON["TURN_SECRET"]); gsub(/@REALM@/, ENVIRON["REALM"]); print }' \
     "$src/turnserver.conf" >"$tmp"
 chown "root:$group" "$tmp"
 chmod 0640 "$tmp"
@@ -222,7 +226,7 @@ systemctl daemon-reload
 systemctl enable --quiet mksm-signal coturn caddy
 
 # Restart only what changed, so a build-only deploy does not drop running rooms or relays.
-stamp=$(cat /opt/mksm/signal.mjs /opt/mksm/package-lock.json /etc/systemd/system/mksm-signal.service /etc/mksm/signal.env | sha256sum)
+stamp=$(cat /opt/mksm/signal.mjs /opt/mksm/report.mjs /opt/mksm/package-lock.json /etc/systemd/system/mksm-signal.service /etc/mksm/signal.env | sha256sum)
 if [ "$stamp" != "$(cat /etc/mksm/.signal.stamp 2>/dev/null)" ] || ! systemctl is-active --quiet mksm-signal; then
     systemctl restart mksm-signal
     echo "$stamp" >/etc/mksm/.signal.stamp
