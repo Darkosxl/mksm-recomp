@@ -48,8 +48,8 @@ volley and vanishes and reappears behind you. Each one has a page with every mov
 <p align="center"><img src="docs/media/chameleon.webp" alt="Chameleon switching colours and fighting" width="640"></p>
 
 Reptile's story costume hides a new fighter. At the select screen, press L3 on Reptile to turn him into
-Chameleon. In a fight, L3 cycles his colour: each colour fights with a different ninja's specials, Scorpion's or
-Sub-Zero's. His page: [docs/characters/chameleon](docs/characters/chameleon/README.md).
+Chameleon, with his rainbow colours always cycling. In a fight, L3 switches his mode: yellow fights with Scorpion's
+specials and stance, blue with Sub-Zero's. His page: [docs/characters/chameleon](docs/characters/chameleon/README.md).
 
 ## Install (Linux)
 
