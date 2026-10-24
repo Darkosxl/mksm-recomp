@@ -1,0 +1,40 @@
+# fighter	clip	frames past f3720	ps2run inputs (remaster/charclips.sh)
+reptile	special-square	200	--press 3732:r1:20 --press 3740:square:4
+reptile	special-triangle	200	--press 3732:r1:20 --press 3740:triangle:4
+reptile	special-circle	200	--press 3732:r1:20 --press 3740:circle:4
+reptile	special-r2	260	--press 3732:r1:20 --press 3740:r2:4 --press 3805:triangle:4
+reptile	boss-square	260	--press 3728:r1:30 --press 3732:l1:26 --press 3740:square:4
+reptile	boss-triangle	340	--press 3728:r1:30 --press 3732:l1:26 --press 3740:triangle:4 --press 3928:r1:30 --press 3932:l1:26 --press 3940:triangle:4
+reptile	boss-circle	240	--press 3728:r1:30 --press 3732:l1:26 --press 3740:circle:4
+reptile	boss-r2	260	--press 3728:r1:30 --press 3732:l1:26 --press 3740:r2:4
+reptile	combo-square-square-square-triangle	224	--press 3730:square:4 --press 3746:square:4 --press 3762:square:4 --press 3778:triangle:4
+reptile	combo-triangle-triangle-circle	260	--press 3740:triangle:4 --press 3760:triangle:4 --press 3820:circle:4
+baraka	special-square	220	--press 3732:r1:20 --press 3740:square:4
+baraka	special-triangle	200	--press 3732:r1:20 --press 3740:triangle:4
+baraka	special-circle	200	--press 3732:r1:20 --press 3740:circle:4
+baraka	special-r2	260	--press 3732:r1:20 --press 3740:r2:4 --press 3805:triangle:4
+baraka	combo-triangle-circle-r2	184	--press 3730:triangle:4 --press 3738:circle:4 --press 3746:r2:4
+baraka	combo-triangle-circle-circle	220	--press 3730:triangle:4 --press 3750:circle:4 --press 3770:circle:4
+baraka	combo-square-square-square-triangle	224	--press 3730:square:4 --press 3746:square:4 --press 3762:square:4 --press 3778:triangle:4
+baraka	boss-square	200	--press 3728:r1:30 --press 3732:l1:26 --press 3740:square:4
+baraka	boss-triangle	200	--press 3728:r1:30 --press 3732:l1:26 --press 3740:triangle:4
+kitana	special-square	200	--press 3732:r1:20 --press 3740:square:4
+kitana	special-triangle	200	--press 3732:r1:20 --press 3740:triangle:4
+kitana	special-circle	200	--press 3732:r1:20 --press 3740:circle:4
+kitana	special-r2	260	--press 3732:r1:20 --press 3740:r2:4
+kitana	combo-square-square-square-r2	264	--press 3730:square:4 --press 3756:square:4 --press 3782:square:4 --press 3808:r2:4
+kitana	combo-square-square-circle	196	--press 3730:square:4 --press 3742:square:4 --press 3754:circle:4
+kitana	combo-triangle-square-square	184	--press 3730:triangle:4 --press 3738:square:4 --press 3746:square:4
+cage	special-square	220	--press 3732:r1:20 --press 3740:square:4 --press 3760:square:4 --press 3780:square:4
+cage	special-triangle	200	--press 3732:r1:20 --press 3740:triangle:4
+cage	special-circle	200	--press 3732:r1:20 --press 3740:circle:4
+cage	special-r2	260	--press 3732:r1:20 --press 3740:r2:4
+cage	combo-square-square-square-r2	240	--press 3730:square:4 --press 3750:square:4 --press 3770:square:4 --press 3790:r2:4
+cage	combo-triangle-circle-r2	220	--press 3730:triangle:4 --press 3750:circle:4 --press 3770:r2:4
+cage	combo-triangle-square-square	184	--press 3730:triangle:4 --press 3738:square:4 --press 3746:square:4
+cage	counter	200	--press 3728:r1:30 --press 3732:l1:26 --press 3740:square:4
+cage	vanish	220	--press 3728:r1:30 --press 3732:l1:26 --press 3740:r2:4
+liukang	special-square	200	--press 3732:r1:20 --press 3740:square:4
+kunglao	special-circle	200	--press 3732:r1:20 --press 3740:circle:4
+scorpion	special-circle	200	--press 3732:r1:20 --press 3740:circle:4
+subzero	special-square	200	--press 3732:r1:20 --press 3740:square:4
