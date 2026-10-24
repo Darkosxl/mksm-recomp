@@ -35,7 +35,15 @@ if [ "$web" = 1 ]; then
   # preloads the patched ELF as /game/core.elf; the page streams the disc with HTTP Range requests
   "$ROOT/scripts/setup.sh" --web-only
   # the remaster's widescreen patch (web/shell.html turns it on)
-  PS2_JOBS=$jobs PS2_GENERATED="$M/generated" PS2_WEB_PRELOAD="$M/patches/widescreen.pnach@/game/widescreen.pnach;$ROOT/remaster/pipelines-hw.txt@/game/pipelines-hw.txt" "$ROOT/scripts/build_web.sh" mksm
+  preload="$M/patches/widescreen.pnach@/game/widescreen.pnach;$ROOT/remaster/pipelines-hw.txt@/game/pipelines-hw.txt"
+  # the gameplay mods' host files (ps2/mod_data.hpp kModDataFiles) from PS2_MOD_DATA, as /game/mod/<name> (the page
+  # sets PS2_MOD_DATA=/game/mod); a missing one is left out and its mod falls back to the disc
+  if [ -n "${PS2_MOD_DATA:-}" ]; then
+    for f in $(sed -n 's/.*kModDataFiles\[\] = {\(.*\)};/\1/p' "$ROOT/runtime/include/ps2/mod_data.hpp" | tr -d '" ' | tr , ' '); do
+      if [ -f "$PS2_MOD_DATA/$f" ]; then preload+=";$(realpath "$PS2_MOD_DATA/$f")@/game/mod/$f"; else echo "mod data: $f missing in $PS2_MOD_DATA" >&2; fi
+    done
+  fi
+  PS2_JOBS=$jobs PS2_GENERATED="$M/generated" PS2_WEB_PRELOAD="$preload" "$ROOT/scripts/build_web.sh" mksm
   # the game data archives (GAMEDATA.WA*, ~2.4 GB) are what a remote player prefetches into its disc cache (disc-sw.js)
   python3 -I "$ROOT/scripts/disc.py" list "$G/disc.iso" | python3 -I -c 'import json, sys
 r = sorted((int(f[1]) * 2048, int(f[2])) for f in (l.split() for l in sys.stdin) if f[3].startswith("GAMEDATA.WA"))
