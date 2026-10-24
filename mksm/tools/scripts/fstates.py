@@ -84,6 +84,8 @@ FIGHTERS = {
     'cage': (90, 2831, 2978, 6821),
     'big_snake': (50, 1338, 1345, 6421),      # story boss (Reptile fight, map 0x90): the serpent
     'reptile_npc': (59, 1564, 1595, 6511),    # story boss (Reptile fight, map 0x90): Reptile himself
+    'cage_npc': (71, 1902, 1936, 6631),       # story Johnny Cage (model 'Cage', Versus Cage's 50-bone skeleton)
+    'cage_stone': (86, 2479, 2513, 6781),     # the same moves on the 'stonecage' model
 }
 DONORS = ('subzero', 'scorpion', 'liukang', 'kunglao')
 TARGETS = ('reptile', 'baraka', 'kitana', 'cage')

@@ -5,6 +5,8 @@
 // Several ports may target one group: their clips take consecutive free slots, in table order.
 // Port 0: Reptile (group 84, any mode: the Versus and the story/NPC load paths, FUN_001CE6E8 and FUN_001D1068, both
 // register the callback hooked here) gets 6 of the story boss Reptile's states (group 59).
+// Port 1: Johnny Cage (group 90) gets the story Johnny Cage's (group 71: model 'Cage', his skeleton) counter strike and
+// vanish / reappear (mksm/tools/scripts/vsboss_cage.py); t20_sung / t10_sung are the same clips as the boss Reptile's.
 //
 // How a state plays (mksm/tools/scripts/fstates.py): global state s -> anim descriptor DAT_006C8A28[s] (u32[3010]),
 // descriptor d = 8 bytes in the state DB at 0x6B3000 (+4: table of {u8 format, u8 channels, u16 frames, u32 clip + 6});
@@ -78,10 +80,15 @@ constexpr std::uint8_t kBossMoves[] = {14, 22, 23, 24, 28, 29};
 constexpr std::int32_t kTeleportFade[] = {1593, 1592}; // t20_sung vanish, t10_sung reappear
 constexpr std::int32_t kVanish = 1593;                    // t20_sung
 constexpr std::uint32_t kEndOfState = 0x00303B00u;        // set-state's return address when a state played out
+// the states his command tree reaches (vsboss_cage.py): d10_cntr 1916, t10_sung 1934, t20_sung 1935
+constexpr std::uint8_t kCageMoves[] = {14, 32, 33};
+constexpr std::int32_t kCageFade[] = {1935, 1934};        // t20_sung vanish, t10_sung reappear
 
 constexpr Port kPorts[] = {
     {"Versus Reptile <- story boss Reptile", 84, 6512, 1564, kBossMoves, std::size(kBossMoves), 1592, 450.0f, kVanish,
      kTeleportFade, std::size(kTeleportFade), nullptr, 0, kZero},
+    {"Versus Cage <- story Cage", 90, 6632, 1902, kCageMoves, std::size(kCageMoves), 1934, 450.0f, 1935, kCageFade,
+     std::size(kCageFade), nullptr, 0, kZero},
 };
 
 constexpr std::uint32_t kAlloc = 0x0020F058u;      // (heap, size, best fit, file, line): FUN_0020F058
