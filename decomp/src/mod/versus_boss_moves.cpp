@@ -5,11 +5,12 @@
 // Several ports may target one group: their clips take consecutive free slots, in table order.
 // Port 0: Reptile (group 84, any mode: the Versus and the story/NPC load paths, FUN_001CE6E8 and FUN_001D1068, both
 // register the callback hooked here) gets 6 of the story boss Reptile's states (group 59).
-// Port 1: Johnny Cage (group 90) gets the story Johnny Cage's (group 71: model 'Cage', his skeleton) counter strike and
+// Ports 1-2: Chameleon (Reptile in Chameleon mode) gets Scorpion's and Sub-Zero's specials (chameleon_moves.cpp).
+// Port 3: Johnny Cage (group 90) gets the story Johnny Cage's (group 71: model 'Cage', his skeleton) counter strike and
 // vanish / reappear (mksm/tools/scripts/vsboss_cage.py); t20_sung / t10_sung are the same clips as the boss Reptile's.
-// Port 2: Baraka (group 83, any mode) gets 2 of the story boss Baraka's states (group 56: GAMEDATA.WAD 6482 ERG.DT2,
+// Port 4: Baraka (group 83, any mode) gets 2 of the story boss Baraka's states (group 56: GAMEDATA.WAD 6482 ERG.DT2,
 // 6483 ERG.DAT, 6484 nim.rtt; 15 KB): no teleport, no fades, no cancel windows (group 56 has none).
-// Port 3: Kitana (group 89, any mode, same paths) gets her story sister Mileena's d20_cntr (group 66), the one move of
+// Port 5: Kitana (group 89, any mode, same paths) gets her story sister Mileena's d20_cntr (group 66), the one move of
 // the story NPC groups (kitana_npc 65, mileena 66, jade 67) that hits in place and returns to stance
 // (vsboss_kitana.py).
 //
@@ -28,7 +29,8 @@
 //   Scorpion's are 2 MB), fill the descriptors with FUN_002AF908 + FUN_002B1960 (what the bank parser FUN_002AE290 does per clip),
 //   patch the records (+0x11 group = target; partner +0x2A kept only if a
 //   port of the group loads it) and cut each event list at the clip's last frame (story t10_sung lists 3079 events up to
-//   frame 670 on a 70-frame clip). Cancel windows (+0x2C first, +0x2E count) index the table at fighter +0x258 (the
+//   frame 670 on a 70-frame clip); with fx_base, effect events (114) that take the fighter's own effect bank get
+//   their index moved past his own effects (chameleon_fx.cpp loads the donors' effects there). Cancel windows (+0x2C first, +0x2E count) index the table at fighter +0x258 (the
 //   fighter's own ERG.DAT section 1 + 8, set by the DAT loader 0x003205E0), not the donor's, so per port: kZero drops
 //   them; kKeep / kRebase copy the fighter's table and the donor windows into one new table and point +0x258 at it
 //   (his own indices unchanged); kRebase also drops a window whose target state is neither common (< 194), his own
@@ -43,8 +45,13 @@
 //   (the story clip plays in place: the boss AI places him itself). Leaving the fade states for another state calls
 //   the event-530 handler (0x001ABCB0: alpha percent | frames << 15) with 100% over 1 frame, so a teleport cut short
 //   (hit, round end) never leaves him invisible: the alpha it sets lasts across rounds.
+// One port per fighter that does not fit in its heap (Chameleon's MKA model fills his PLAYER_MEMORY heap, 2.7 MB: the
+// story levels leave no room to grow it, heap 0 keeps as little as 270 KB) goes to guest RAM the game never uses: the
+// EE kernel's area, whose kernel is on the host here (every disc save state has 0x4000-0x75000 zero; the game puts its
+// kernel patch code at 0x75000, the kernel stack runs down from 0x80000). Not over another fighter's live load.
 // Anything unexpected (no room in the heap or the clip slots, a file that does not read or inflate, a guest call that
 // does not come back) loads nothing and says so on stderr. The hooks run their guest calls unpreempted (NoPreempt).
+#include "chameleon.hpp"
 #include "ps2/decomp.hpp"
 #include "ps2/disc.hpp"
 
@@ -77,6 +84,7 @@ struct Port {
     const std::int16_t *strip;  // frame event ids turned into a no-op
     std::uint32_t strip_count;
     Windows windows;            // the donor states' cancel windows
+    std::uint8_t fx_base;       // added to own-bank effect indices (event 114), 0 = none
 };
 
 // the states his command tree reaches (vsboss.py): d30_cntr 1578, s30_sp_n 1586, s40_sp_n 1587, s50_sp_n 1588,
@@ -94,15 +102,33 @@ constexpr std::uint8_t kBarakaBossMoves[] = {15, 42};
 // mileena d20_cntr 1762 (no partner state)
 constexpr std::uint8_t kMileenaMoves[] = {15};
 
+// Chameleon's specials per colour mode (chamspecials.py report: the states his grafted command nodes reach, plus
+// their partners), gated by chameleon_moves.cpp. Scorpion's spear events 155/156 show/hide mesh parts by Scorpion's
+// slot list, which on Reptile's are his hand, flaps, jaw and fingers: stripped, the spear pulls without its rope.
+// Event 303 (FUN_00169A10) sets the stance a move returns to from the donor's own stance sets, whose states are not
+// loaded: set-state gave up at the move's end and the clip looped. Stripped, he returns to Reptile's current stance.
+// a00_stnd / c00_stnd (local 0 and 18 / 19): his stance in their mode (chameleon_moves.cpp chameleon_stance); their
+// mesh-part events 155/156 are stripped as the spear's are.
+constexpr std::uint8_t kChamScorpion[] = {0, 18, 30, 31, 61, 67, 69, 70, 71, 73, 78, 79, 108, 109, 110, 131, 132, 133,
+                                          134, 135, 142, 143, 146};
+constexpr std::uint8_t kChamSubzero[] = {0, 19, 39, 41, 43, 45, 46, 81, 96, 97, 99, 100, 114, 115, 116, 128, 129, 130,
+                                         131, 132, 133, 134, 135, 136, 137, 138, 139};
+constexpr std::int16_t kStripScorpion[] = {155, 156, 303};
+constexpr std::int16_t kStripSubzero[] = {155, 156, 303};
+
 constexpr Port kPorts[] = {
     {"Versus Reptile <- story boss Reptile", 84, 6512, 1564, kBossMoves, std::size(kBossMoves), 1592, 450.0f, kVanish,
-     kTeleportFade, std::size(kTeleportFade), nullptr, 0, kZero},
+     kTeleportFade, std::size(kTeleportFade), nullptr, 0, kZero, 0},
+    {"Chameleon <- Scorpion", 84, 6742, 1994, kChamScorpion, std::size(kChamScorpion), -1, 0.0f, -1, nullptr, 0,
+     kStripScorpion, std::size(kStripScorpion), kRebase, chameleon::kFxScorpion},
+    {"Chameleon <- Sub-Zero", 84, 6802, 2515, kChamSubzero, std::size(kChamSubzero), -1, 0.0f, -1, nullptr, 0,
+     kStripSubzero, std::size(kStripSubzero), kRebase, chameleon::kFxSubzero},
     {"Versus Cage <- story Cage", 90, 6632, 1902, kCageMoves, std::size(kCageMoves), 1934, 450.0f, 1935, kCageFade,
-     std::size(kCageFade), nullptr, 0, kZero},
+     std::size(kCageFade), nullptr, 0, kZero, 0},
     {"Versus Baraka <- story boss Baraka", 83, 6482, 1465, kBarakaBossMoves, std::size(kBarakaBossMoves), -1, 0.0f, -1,
-     nullptr, 0, nullptr, 0, kZero},
+     nullptr, 0, nullptr, 0, kZero, 0},
     {"Versus Kitana <- story Mileena", 89, 6582, 1747, kMileenaMoves, std::size(kMileenaMoves), -1, 0.0f, -1, nullptr,
-     0, nullptr, 0, kZero},
+     0, nullptr, 0, kZero, 0},
 };
 
 constexpr std::uint32_t kAlloc = 0x0020F058u;      // (heap, size, best fit, file, line): FUN_0020F058
@@ -174,6 +200,14 @@ bool loaded_any(std::int16_t group, std::int32_t s) {
     for (const Port &p : kPorts)
         if (p.target_group == group && loaded_state(p, s)) return true;
     return false;
+}
+
+// an effect event's (114) param with its own-bank index moved by base: sub-ops 3 (effect) and 0xB (projectile) without
+// the shared-bank flag (0x4000 of bits 16-31) take index bits 16-22 from the fighter's own bank (group + 3)
+std::uint64_t own_fx(std::uint64_t v, std::uint32_t base) {
+    const std::uint32_t op = v & 0xFF, w1 = (v >> 16) & 0xFFFF;
+    if ((op != 3 && op != 0xB) || (w1 & 0x4000)) return v;
+    return (v & ~(0x7Full << 16)) | static_cast<std::uint64_t>(((w1 & 0x7F) + base) & 0x7F) << 16;
 }
 
 bool in(const std::int32_t *list, std::uint32_t n, std::int32_t s) {
@@ -369,14 +403,26 @@ bool alloc(Cpu &c, std::uint32_t heap, std::uint32_t size, std::uint32_t &block)
     return true;
 }
 
+// ponytail: one spill block of 432 KB; Scorpion's port is the one that needs it. More ports: a bigger guest RAM
+constexpr std::uint32_t kSpill = 0x00004000u, kSpillEnd = 0x00070000u;
+
+// the spill block is another fighter's load, still live (headers() terms)
+bool spill_held(std::uint32_t fighter) {
+    const std::uint32_t d = rd<std::uint32_t>(kSpill + 8);
+    return rd<std::uint32_t>(kSpill) == kMagic && rd<std::uint32_t>(kSpill + 4) != fighter && d < rd<std::uint32_t>(kDb) &&
+           rd<std::uint32_t>(rd<std::uint32_t>(kDb + 0x10) + 4 * d) == kSpill &&
+           rd<std::uint32_t>(rd<std::uint32_t>(kDb + 4) + d * 8 + 4) == rd<std::uint32_t>(kSpill + 12);
+}
+
 std::uint32_t heap_free(std::uint32_t heap) {
     const std::uint32_t h = kHeaps + heap * kHeapStride;
     return rd<std::uint32_t>(h + 0x1C) ? 0xFFFFFFFFu : rd<std::uint32_t>(h + 0xC) - rd<std::uint32_t>(h + 8); // not linear: try
 }
 
 // One port into descriptors desc.. : its states' parts of the donor files, built on the host, into one heap block.
-// block = its header, 0 if it did not load. false: control left.
-bool load(Cpu &c, const Port &p, std::uint32_t fighter, std::uint32_t heap, std::uint32_t desc, std::uint32_t &block) {
+// block = its header, 0 if it did not load; spilled: the fighter's spill block is taken. false: control left.
+bool load(Cpu &c, const Port &p, std::uint32_t fighter, std::uint32_t heap, std::uint32_t desc, std::uint32_t &block,
+          bool &spilled) {
     block = 0;
     const std::vector<std::uint8_t> dt2 = wad_file(p.dt2), dat = wad_file(p.dt2 + 1), rtt = wad_file(p.dt2 + 2);
     std::vector<std::uint8_t> img(kHeader + 8 * p.count);
@@ -424,7 +470,10 @@ bool load(Cpu &c, const Port &p, std::uint32_t fighter, std::uint32_t heap, std:
             const std::int16_t frames = get<std::int16_t>(rtt, start + 2);
             put<std::uint8_t>(img, rec + 0x11, static_cast<std::uint8_t>(p.target_group));
             if (!loaded_any(p.target_group, get<std::int16_t>(img, rec + 0x2A))) put<std::int16_t>(img, rec + 0x2A, 0);
-            // events past the clip's last frame never fire on a fighter (the boss AI holds the state); dropped
+            // events past the clip's last frame never fire on a fighter (the boss AI holds the state); dropped.
+            // The list starts where add() puts its first event (16-aligned): the previous clip or name leaves the image
+            // unaligned, and a pointer into that padding reads event 0, an empty list.
+            while (img.size() % 16) img.push_back(0);
             ev_at[i] = static_cast<std::uint32_t>(img.size());
             for (std::uint32_t e = events + 16 * get<std::uint32_t>(dt2, starts + 4 * k);; e += 16) {
                 if (!fits(dt2, e, 16)) {
@@ -436,6 +485,7 @@ bool load(Cpu &c, const Port &p, std::uint32_t fighter, std::uint32_t heap, std:
                 const std::uint32_t at = add(dt2, e, 16);
                 for (std::uint32_t j = 0; j < p.strip_count; ++j)
                     if (id == p.strip[j]) put<std::int16_t>(img, at + 2, kNoEvent);
+                if (id == 114 && p.fx_base) put<std::uint64_t>(img, at + 8, own_fx(get<std::uint64_t>(img, at + 8), p.fx_base));
                 if (!id) break;
             }
             const std::uint32_t name = names + get<std::uint32_t>(rtt, names + 4 * k);
@@ -447,8 +497,11 @@ bool load(Cpu &c, const Port &p, std::uint32_t fighter, std::uint32_t heap, std:
     }
     while (img.size() % 16) img.push_back(0);
     const auto size = static_cast<std::uint32_t>(img.size());
-    if (!skip && heap_free(heap) < size + 256) skip = "no room in the heap";
-    if (!skip) {
+    if (!skip && heap_free(heap) < size + 256) {
+        if (spilled || size > kSpillEnd - kSpill || spill_held(fighter)) skip = "no room in the heap";
+        else block = kSpill, spilled = true;
+    }
+    if (!skip && !block) {
         if (!alloc(c, heap, size, block)) return false;
         if (!block) skip = "allocation failed";
     }
@@ -473,8 +526,9 @@ bool load(Cpu &c, const Port &p, std::uint32_t fighter, std::uint32_t heap, std:
     wr<std::uint32_t>(block + 12, rd<std::uint32_t>(rd<std::uint32_t>(kDb + 4) + desc * 8 + 4));
     wr<std::uint32_t>(block + 16, static_cast<std::uint32_t>(&p - kPorts));
     wr<std::uint32_t>(block + 20, 0), wr<std::uint32_t>(block + 24, 0), wr<std::uint32_t>(block + 28, block + win_at);
-    std::fprintf(stderr, "[mod] versus_boss_moves: %s: %u states, descriptors %u-%u, %u bytes at %08X (heap %u, %u left)\n",
-                 p.name, p.count, desc, desc + p.count - 1, size, block, heap, heap_free(heap));
+    std::fprintf(stderr, "[mod] versus_boss_moves: %s: %u states, descriptors %u-%u, %u bytes at %08X (%s %u, %u left)\n",
+                 p.name, p.count, desc, desc + p.count - 1, size, block, block == kSpill ? "spill, heap" : "heap", heap,
+                 heap_free(heap));
     return true;
 }
 
@@ -568,9 +622,10 @@ PS2_MOD(001D11F8, versus_boss_moves_load) {
     std::uint32_t own = 0, used, hs[kMaxHeaders], n = 0;
     for (const std::uint32_t t = bank + rd<std::uint32_t>(bank); rd<std::uint32_t>(t + 4 * own); ++own) {}
     used = own;
+    bool spilled = false;
     for (const Port &p : kPorts) {
         if (p.target_group != group) continue;
-        if (!load(c, p, fighter, heap, slot * 200 + used, hs[n])) return left(p.name);
+        if (!load(c, p, fighter, heap, slot * 200 + used, hs[n], spilled)) return left(p.name);
         if (hs[n]) used += p.count, ++n;
     }
     if (!n) return void(c.r[v0] = ret); // other fighters (no port), or a port that printed why it did not load
@@ -620,3 +675,6 @@ PS2_MOD(00303340, versus_boss_moves_state) {
     if (!call(c, kFade)) return;
     c.r[v0] = ret;
 }
+
+// for chameleon_fx.cpp
+std::vector<std::uint8_t> versus_boss_moves_wad_file(std::uint32_t id) { return wad_file(id); }

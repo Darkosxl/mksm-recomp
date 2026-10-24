@@ -784,7 +784,10 @@ fn shade_frag(s: Setup, at: Attr, k: u32, fst: bool) -> NativeFrag {
             u = at.s / q * f32(1u << s.tw);
             v = at.t / q * f32(1u << s.th);
         }
-        let t = texture(s, u, v, q, k);
+        var t = texture(s, u, v, q, k);
+        if (has(s, F_FX)) {
+            t = fx_tint(s, t);
+        }
         let tr = i32(t & 0xFFu);
         let tg = i32((t >> 8u) & 0xFFu);
         let tb = i32((t >> 16u) & 0xFFu);

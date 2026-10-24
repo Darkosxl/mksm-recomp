@@ -950,6 +950,8 @@ var Module = {
     Object.assign(Module.ENV, { PS2_GS_HW: '1', PS2_PNACH: '/game/widescreen.pnach', PS2_ASPECT: '16:9', PS2_FIELD_FLAG: '4F4D68,66189C,67B758', PS2_PIPELINES: '/game/pipelines-hw.txt' });
     // gameplay mods (decomp/src/mod, PS2_MOD in ps2/decomp.hpp): Versus fighters get every upgrade; ?PS2_MOD=0 turns them off
     Module.ENV.PS2_MOD = '1';
+    // their host files, preloaded by mksm/build.sh --web (empty when the build had no PS2_MOD_DATA)
+    Module.ENV.PS2_MOD_DATA = '/game/mod';
     for (const [key, value] of params) if (key.startsWith('PS2_')) Module.ENV[key] = value;
     if (lockstepMode) {
       if (params.get('lsvu') === '0') Module.ENV.PS2_NO_VU_THREAD = '1';

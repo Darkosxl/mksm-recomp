@@ -6,6 +6,10 @@
 // at the start of the update in that frame, with every GPR restored afterwards; then the recompiled update runs
 // unchanged (this hook off for the one call). Not state-exact on the frames that call: the callee's own effects are
 // the point. Each call is logged to stderr with v0.
+// PS2_DECOMP=1EB378 hooks the per-frame fighter update fn_1eb378 at 0x001EB378 (it walks the fighters from 0x5E6B40)
+// the same way. With both on, whichever runs first in a frame calls; the log names it (fn_1d6808 runs in Versus too).
+// A set-state call (0x303340) does not play a special the way its input does: the state holds at frame 1 and fires
+// no events. Real inputs (ps2run --press) do.
 //
 // Kill: debug_kill_player(p) (the web page's mksm.kill(), host/web.cpp) or PS2_KILL="<frame>[:<p>]" calls the
 // set-health function with 0 on player p's actor (p 0 = player 1: fighter slot 1 + p of the pool at 0x5E3780, actor at
@@ -63,6 +67,25 @@ struct EnvKill {
     return k;
 }();
 
+// the calls due this frame; false: control left (return at once)
+bool run_calls(Cpu &c, const char *from) {
+    for (Call &k : calls()) {
+        if (k.done || k.frame != frame_count()) continue;
+        k.done = true;
+        Reg128 saved[32];
+        for (unsigned i = 0; i < 32; ++i) saved[i] = c.r[i];
+        c.r[a0].d[0] = k.a0;
+        c.r[a1].d[0] = k.a1;
+        const bool back = call(c, k.addr);
+        const std::uint32_t v = c.r[v0].w[0];
+        for (unsigned i = 0; i < 32; ++i) c.r[i] = saved[i];
+        std::fprintf(stderr, "[call] frame %llu (%s) %08X(%08X, %08X) -> %08X%s\n", k.frame, from, k.addr, k.a0, k.a1, v,
+                     back ? "" : " (did not come back)");
+        if (!back) return false;
+    }
+    return true;
+}
+
 }
 
 namespace decomp {
@@ -86,23 +109,17 @@ PS2_DECOMP(001D6808, debug_call) {
         if (actor) calls().push_back({frame_count(), kSetHealth, actor, 0, false});
         else std::fprintf(stderr, "[call] kill: player %d has no actor\n", p + 1);
     }
-    for (Call &k : calls()) {
-        if (k.done || k.frame != frame_count()) continue;
-        k.done = true;
-        Reg128 saved[32];
-        for (unsigned i = 0; i < 32; ++i) saved[i] = c.r[i];
-        c.r[a0].d[0] = k.a0;
-        c.r[a1].d[0] = k.a1;
-        const bool back = call(c, k.addr);
-        const std::uint32_t v = c.r[v0].w[0];
-        for (unsigned i = 0; i < 32; ++i) c.r[i] = saved[i];
-        std::fprintf(stderr, "[call] frame %llu %08X(%08X, %08X) -> %08X%s\n", k.frame, k.addr, k.a0, k.a1, v,
-                     back ? "" : " (did not come back)");
-        if (!back) return;
-    }
+    if (!run_calls(c, "fn_1d6808")) return;
     const bool keep = !g_by_request.exchange(false);
     decomp::hook_001D6808.enabled = false;
     tail(c, kSelf);
     decomp::hook_001D6808.enabled = keep;
     decomp::hook_001D6808.on = keep || decomp::hook_001D6808.record;
+}
+
+PS2_DECOMP(001EB378, debug_call_fighters) {
+    if (!run_calls(c, "fn_1eb378")) return;
+    decomp::hook_001EB378.enabled = false;
+    tail(c, 0x001EB378u);
+    decomp::hook_001EB378.enabled = true;
 }

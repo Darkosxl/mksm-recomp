@@ -242,6 +242,13 @@ inline constexpr Programs kOnePass{{vu1::kImageB + 0x000, vu1::kImageB + 0x360, 
 inline constexpr Programs kOnePassAlt{{vu1::kImageB + 0xD20, vu1::kImageB + 0x1030, vu1::kImageB + 0x1550}};
 inline constexpr Programs kEffect{{vu1::kImageB + 0x1B20, vu1::kImageB + 0x1DB0, vu1::kImageB + 0x21E0}};
 inline constexpr std::uint32_t kBoneVuAddr[3] = {12, 16, 20};  // VU1 qword address of each bone matrix
+
 }
+
+// A gameplay mod's say (PS2_MOD only; null, the default, is the original): fn_247bd8 gives a model this answers true
+// for the base state of texture mode 0, blended by the texel alpha ((Cs-Cd)*As+Cd, TEST 0x733cb), instead of the
+// opaque FIX 128 of the other texture modes. That shows in the one-pass draws; the three-pass draw sets pass 1 per mesh
+// anyway (fn_239c48). Only fn_247bd8's decompiled twin reads it, so the mod turns that twin on.
+extern bool (*g_blend_model)(std::uint32_t model);
 
 }

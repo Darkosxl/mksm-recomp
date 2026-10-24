@@ -7,6 +7,7 @@
 #include <atomic>
 #include <bit>
 #include <chrono>
+#include <cmath>
 #include <condition_variable>
 #include <cstdio>
 #include <cstdlib>
@@ -117,6 +118,55 @@ struct Pack {
     };
     std::unordered_map<std::uint64_t, Remote> remote;
 #endif
+    // fx.txt (texpack.hpp): the effects, and per listed texture its entry (fx[0]: none)
+    struct Effect {
+        std::string name;
+        std::uint32_t period;
+        float gain;
+        std::vector<float> lut;  // r, g, b per step, 128 = 1.0
+    };
+    struct Fx {
+        std::uint32_t effect, threshold;
+    };
+    std::vector<Effect> effects;
+    std::vector<Fx> fx{Fx{}};
+    std::unordered_map<std::uint64_t, std::uint32_t> fx_keys;
+    void load_fx() {
+        std::FILE *f = std::fopen((std::string(pack_dir()) + "/fx.txt").c_str(), "r");
+        if (!f) return;
+        char line[512], name[64], file[256];
+        while (std::fgets(line, sizeof line, f)) {
+            unsigned period, w, h;
+            float gain, threshold = 0.06f;
+            unsigned long long key;
+            if (line[0] == '#') continue;
+            if (std::sscanf(line, "fx %63s %u %f %255s", name, &period, &gain, file) == 4) {
+                Effect e{name, std::max(period, 1u), gain, {}};
+                const std::string path = file[0] == '/' ? std::string(file) : std::string(pack_dir()) + "/" + file;
+                if (std::FILE *l = std::fopen(path.c_str(), "r")) {
+                    char row[128];
+                    float r, g, b;
+                    while (std::fgets(row, sizeof row, l))
+                        if (row[0] != '#' && std::sscanf(row, "%f %f %f", &r, &g, &b) == 3) e.lut.insert(e.lut.end(), {r, g, b});
+                    std::fclose(l);
+                }
+                if (e.lut.empty()) std::fprintf(stderr, "[texpack] fx %s: no LUT in %s\n", name, path.c_str());
+                else effects.push_back(std::move(e));
+            } else if (std::sscanf(line, "%llx %u %u %63s %f", &key, &w, &h, name, &threshold) >= 4) {
+                std::uint32_t e = 0;
+                while (e < effects.size() && effects[e].name != name) ++e;
+                if (e == effects.size() || !std::has_single_bit(w) || !std::has_single_bit(h) || w > 1024 || h > 1024) {
+                    std::fprintf(stderr, "[texpack] fx: skipped %016llx (%ux%u, effect %s)\n", key, w, h, name);
+                    continue;
+                }
+                fx.push_back({e, static_cast<std::uint32_t>(std::lround(std::clamp(threshold, 0.0f, 1.0f) * 255.0f))});
+                fx_keys[key] = static_cast<std::uint32_t>(fx.size() - 1);
+                sizes[std::countr_zero(w)] |= 1u << std::countr_zero(h);  // keyed even where the pack lists no file
+            }
+        }
+        std::fclose(f);
+        std::fprintf(stderr, "[texpack] fx: %zu effects, %zu textures\n", effects.size(), fx_keys.size());
+    }
     Pack() {
         if (!pack_dir()) return;
         std::size_t listed = 0;
@@ -147,6 +197,7 @@ struct Pack {
         }
 #endif
         sized = listed == files.size();
+        load_fx();
         std::fprintf(stderr, "[texpack] %zu replacements in %s%s\n", files.size(), pack_dir(), sized ? ", sizes listed" : "");
     }
     bool fits(std::uint32_t tw, std::uint32_t th) const { return !sized || (tw <= 10 && th <= 10 && (sizes[tw] >> th & 1u)); }
@@ -510,6 +561,29 @@ void service(Fetcher fetch) {
     }
 }
 #endif
+
+std::uint32_t fx(std::uint64_t key) {
+    const Pack &p = pack();
+    if (p.fx_keys.empty()) return 0;
+    const auto it = p.fx_keys.find(key);
+    return it == p.fx_keys.end() ? 0 : it->second;
+}
+
+std::uint32_t fx_word(std::uint32_t entry, std::uint64_t frame) {
+    const Pack &p = pack();
+    const Pack::Fx &x = p.fx[entry];
+    const Pack::Effect &e = p.effects[x.effect];
+    const std::size_t n = e.lut.size() / 3;
+    const double at = static_cast<double>(frame % e.period) * static_cast<double>(n) / e.period;
+    const std::size_t i = std::min(static_cast<std::size_t>(at), n - 1), j = (i + 1) % n;
+    const float f = static_cast<float>(at - static_cast<double>(i));
+    std::uint32_t word = x.threshold << 24;
+    for (std::size_t c = 0; c < 3; ++c) {
+        const float v = (e.lut[i * 3 + c] + (e.lut[j * 3 + c] - e.lut[i * 3 + c]) * f) / 128.0f * e.gain;
+        word |= static_cast<std::uint32_t>(std::clamp(std::lround(v * 127.5f), 0l, 255l)) << (c * 8);
+    }
+    return word;
+}
 
 Stats &stats() { return g_stats; }
 bool timing() {
