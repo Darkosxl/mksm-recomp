@@ -109,9 +109,9 @@ constexpr std::uint32_t kState = 0x000A0000u;
 //   +0x00 u32 armed: the next ADXT start of file 79 plays the Chameleon line
 //   +0x04 u32 the select image's slot, +0x08 its original CLUT address, +0x0C 1: its recoloured copy is made, 2: his
 //         picture is in (the slot's pixels are in kSelectPixels)
-//   +0x18 u32 the highlight's slot while his highlight is in (its pixels are in kGlowPixels), else 0
-//   +0x10 u8[2] select screen: L3 held last frame, per cursor; +0x12 u8 cell 7 shows Chameleon
+//   +0x10 u8[2] select screen: L1 / L3 held last frame, per cursor; +0x12 u8 cell 7 shows Chameleon
 //   +0x14 u32 the async entry whose file the mod serves (between its size and its read)
+//   +0x18 u32 the highlight's slot while his highlight is in (its pixels are in kGlowPixels), else 0
 //   +0x20 Player[2], 0x20 bytes each:
 //         +0 u8 Chameleon (set by every player load), +1 u8 mode (0-3), +2 u8 L3 held last frame,
 //         +3 u8 served from PS2_MOD_DATA since his last load: 1 model, 2 textures,
@@ -129,6 +129,7 @@ constexpr std::uint32_t kArmed = kState + 0x00, kSelectSlot = kState + 0x04, kSe
 constexpr std::uint32_t kSelectBackup = 0x000A0400u, kSelectCopy = 0x000A0800u;  // 1 KB each
 constexpr std::uint32_t kSelectPixels = 0x000A2000u, kSelectSize = 128 * 256;    // cell 7's own pixels (32 KB)
 constexpr std::uint32_t kGlowPixels = 0x000AA000u, kGlowSize = 128 * 128;        // and its highlight's (16 KB)
+// 0xAF000: the select legend line's texts (chameleon_hint.cpp)
 constexpr std::uint32_t kP2nClut = 0x80, kP2nPixels = 0x480;                     // a P2N: header, CLUT (CSM1 order), pixels
 constexpr std::uint32_t kRainbowClut = 0x000A1000u;  // + player * 0x400: the rainbow page's CLUT as in the file
 constexpr std::uint32_t kVoice = 0x000B0000u, kVoiceMax = 0x00040000u;
