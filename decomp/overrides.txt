@@ -13,6 +13,7 @@
 001A30F0	reptile_store_page	decomp/src/mod/chameleon_moves.cpp (PS2_MOD)
 001B90B8	versus_round_upgrades	decomp/src/mod/versus_upgrades.cpp (PS2_MOD)
 001C4A88	chameleon_spear_rule	decomp/src/mod/chameleon_moves.cpp (PS2_MOD)
+001CE380	chameleon_model	decomp/src/mod/chameleon.cpp (PS2_MOD)
 001CE6E8	chameleon_costume	decomp/src/mod/chameleon.cpp (PS2_MOD)
 001CF518	fx_trace_bank_group	decomp/src/trace/fx_trace.cpp (debug trace, PS2_TRACE_FX)
 001D0688	chameleon_textures	decomp/src/mod/chameleon.cpp (PS2_MOD)
@@ -22,6 +23,8 @@
 001E6EF0	chameleon_name	decomp/src/mod/chameleon.cpp (PS2_MOD)
 001EAF30	chameleon_switch	decomp/src/mod/chameleon.cpp (PS2_MOD)
 001EB378	debug_call_fighters	decomp/src/trace/debug_call.cpp (debug tool, PS2_CALL)
+00211878	chameleon_file_size	decomp/src/mod/chameleon.cpp (PS2_MOD)
+002123A0	chameleon_file_read	decomp/src/mod/chameleon.cpp (PS2_MOD)
 002124C0	ArchiveGetFile	decomp/src/fileio/fileiodrv.cpp
 00213C78	MatrixSetTranslation	decomp/src/math/vu0math.cpp
 00213C98	MatrixGetTranslation	decomp/src/math/vu0math.cpp
