@@ -29,7 +29,8 @@
 // - 0x002ADAC0 resets DAT_006C8A28 to identity for groups 0-90 (round start, loads): the map is written again after it.
 // - 0x00303340, the set-state core (a0 = fighter, a1 = state): entering a donor state writes map, record and event
 //   pointers again first (0x321998 clears every event pointer at a load), then:
-//   vanish state played out (the game ends it for idle at its last frame): set-state goes to the teleport state
+//   vanish state played out (the game ends it for idle from 0x00303AF8, return address 0x00303B00, frame-in-state
+//   already reset to 0; a hit or another move calls from elsewhere): set-state goes to the teleport state
 //   instead, as the story boss AI does (t20_sung, then t10_sung). A press-0 command child cannot do it: it never fired.
 //   teleport state: the fighter is moved to the far side of the opponent, `gap` units past him, before it plays
 //   (the story clip plays in place: the boss AI places him itself). Leaving the fade states for another state calls
@@ -62,8 +63,8 @@ struct Port {
     std::uint32_t count;
     std::int32_t teleport;      // state that moves the fighter behind the opponent on entry, or -1
     float gap;
-    std::int32_t vanish;        // this state, ended at frame-in-state >= vanish_end (played out, not cut short),
-    std::int32_t vanish_end;    // goes on into `teleport` instead of what the game picked; -1: none
+    std::int32_t vanish;        // this state, played out (set-state from kEndOfState), goes on into `teleport`
+                                // instead of what the game picked; -1: none
     const std::int32_t *fade;   // leaving these for another state restores full opacity
     std::uint32_t fade_count;
     const std::int16_t *strip;  // frame event ids turned into a no-op
@@ -75,11 +76,12 @@ struct Port {
 // t10_sung 1592, t20_sung 1593 (none has a partner state)
 constexpr std::uint8_t kBossMoves[] = {14, 22, 23, 24, 28, 29};
 constexpr std::int32_t kTeleportFade[] = {1593, 1592}; // t20_sung vanish, t10_sung reappear
-constexpr std::int32_t kVanish = 1593, kVanishEnd = 79;  // t20_sung: an 80-frame clip, frame-in-state 0-79
+constexpr std::int32_t kVanish = 1593;                    // t20_sung
+constexpr std::uint32_t kEndOfState = 0x00303B00u;        // set-state's return address when a state played out
 
 constexpr Port kPorts[] = {
     {"Versus Reptile <- story boss Reptile", 84, 6512, 1564, kBossMoves, std::size(kBossMoves), 1592, 450.0f, kVanish,
-     kVanishEnd, kTeleportFade, std::size(kTeleportFade), nullptr, 0, kZero},
+     kTeleportFade, std::size(kTeleportFade), nullptr, 0, kZero},
 };
 
 constexpr std::uint32_t kAlloc = 0x0020F058u;      // (heap, size, best fit, file, line): FUN_0020F058
@@ -571,14 +573,14 @@ PS2_MOD(002ADAC0, versus_boss_moves_remap) {
 
 PS2_MOD(00303340, versus_boss_moves_state) {
     const std::uint32_t fighter = c.r[a0].w[0];
-    const std::int32_t cur = rd<std::int32_t>(fighter + 0x24), at = rd<std::int32_t>(fighter + 0x1C);
+    const std::int32_t cur = rd<std::int32_t>(fighter + 0x24);
     std::int32_t s = static_cast<std::int32_t>(c.r[a1].w[0]);
     std::uint32_t hs[kMaxHeaders];
     const std::uint32_t n = headers(fighter, hs);
     bool fade = false;
     for (std::uint32_t i = 0; i < n; ++i) {
         const Port &p = *port_of(hs[i]);
-        if (cur == p.vanish && s != cur && at >= p.vanish_end) c.r[a1].d[0] = static_cast<std::uint32_t>(s = p.teleport);
+        if (cur == p.vanish && s != cur && c.r[ra].w[0] == kEndOfState) c.r[a1].d[0] = static_cast<std::uint32_t>(s = p.teleport);
     }
     for (std::uint32_t i = 0; i < n; ++i) {
         const Port &p = *port_of(hs[i]);
