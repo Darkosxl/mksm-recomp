@@ -27,9 +27,9 @@ online.
 
 ### Fully playable online
 
-<p align="center"><img src="docs/media/online.webp" alt="Two monks fighting together in online co-op" width="640"></p>
+<p align="center"><img src="docs/media/online.webp" alt="Two players online: Reptile and Kitana trading new specials and combos" width="640"></p>
 
-The whole game, Story and Ko-op, with a friend over the internet, right in the browser. Share your code or link, and
+The whole game, Story, Ko-op and Versus, with a friend over the internet, right in the browser. Share your code or link, and
 they join at any time, even mid-level. Both browsers run the game in lockstep. See
 [Online co-op](#online-co-op).
 
@@ -39,8 +39,9 @@ they join at any time, even mid-level. Both browsers run the game in lockstep. S
 
 Liu Kang, Kung Lao, Scorpion and Sub-Zero are joined by Reptile, Baraka, Kitana and Johnny Cage, all playable in Story,
 Ko-op and Versus. All eight buy combo and special upgrades with Experience. The four who were Versus-only get the story
-fighters' combo extensions, plus new specials taken from their story boss versions: Reptile throws the boss's acid
-volley and vanishes and reappears behind you. Each one has a page with every move, combo and a clip:
+fighters' combo extensions, plus new specials on R1 + L1 taken from their story versions: Reptile throws acid, turns
+invisible, and vanishes to reappear behind you; Baraka gets a blade slash and a leaping counter; Johnny Cage a counter
+flip kick and a vanish; Kitana borrows her sister Mileena's low sweep. Each one has a page with every move, combo and a clip:
 [docs/characters](docs/characters/README.md).
 
 ### New secret character: Chameleon
