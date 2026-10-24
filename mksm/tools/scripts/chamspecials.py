@@ -42,6 +42,34 @@ def gate(donor, mask):
     return BASE + donor * 8 + mask
 
 
+def splice(tree, k, j):
+    """move top node j (just appended to list k) in front of the first sibling with the same input (+0x14 press,
+    hold, nothold, ignore), or right behind it when that one is the list head (heads are positional). The matcher
+    FUN_0016CE20 queues only the first sibling that matches; when its gate fails, FUN_0016F1F8 tries the LATER
+    siblings with the same input (FUN_0016F368, at most 30): a donor root behind the list's plain attack would never
+    be reached, one in front of Reptile's gated root falls through to it"""
+    top = tree.top(k)
+    assert top[-1] == j
+    n = tree.nodes[j]
+    same = [i for i in top[:-1] if sig(tree.nodes[i]) == sig(n)]
+    if not same:
+        return j
+    tree.set(top[-2], 'sibling', 0)
+    at = same[0]
+    if at == top[0]:
+        n.sibling = tree.nodes[at].sibling
+        tree.set(at, 'sibling', j)
+    else:
+        prev = top[top.index(at) - 1]
+        n.sibling = at
+        tree.set(prev, 'sibling', j)
+    return j
+
+
+def sig(n):
+    return (n.press, n.hold, n.nothold, n.ignore)
+
+
 def add(tree, wad, load=None):
     """graft the donors' specials into tree (Reptile's vscombos.Tree) and gate the special roots; load (dict) gets
     donor name -> set of donor global states the grafted nodes reach (plus their partners)"""
@@ -65,7 +93,7 @@ def add(tree, wad, load=None):
             if k not in tree.f.lists:
                 continue
             assert D.nodes[i].cond == 0, (name, i)
-            j = graft(i, 0, tree.top(k))
+            j = splice(tree, k, graft(i, 0, tree.top(k)))
             tree.nodes[j].cond = gate(1, 1 << (mode - 1))
             grafted.add(j)
             taken[(k, D.nodes[i].press & 0xFF)] |= 1 << (mode - 1)
@@ -89,6 +117,10 @@ def add(tree, wad, load=None):
                 tree.links.append((i, 0x2C, n.cond | int.from_bytes(n.tail[:2], 'little') << 16))
             gated += 1
     tree.cham_counts = (len(grafted), gated)
+    # the splices re-link list ends several times: keep each field's last value only (versus_combos.cpp writes them
+    # in order)
+    last = {(i, off): v for i, off, v in tree.links}
+    tree.links[:] = [(i, off, v) for (i, off), v in last.items()]
     return gated
 
 
