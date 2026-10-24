@@ -37,6 +37,10 @@
 //   (the story clip plays in place: the boss AI places him itself). Leaving the fade states for another state calls
 //   the event-530 handler (0x001ABCB0: alpha percent | frames << 15) with 100% over 1 frame, so a teleport cut short
 //   (hit, round end) never leaves him invisible: the alpha it sets lasts across rounds.
+// One port per fighter that does not fit in its heap (Chameleon's MKA model fills his PLAYER_MEMORY heap, 2.7 MB: the
+// story levels leave no room to grow it, heap 0 keeps as little as 270 KB) goes to guest RAM the game never uses: the
+// EE kernel's area, whose kernel is on the host here (every disc save state has 0x4000-0x75000 zero; the game puts its
+// kernel patch code at 0x75000, the kernel stack runs down from 0x80000). Not over another fighter's live load.
 // Anything unexpected (no room in the heap or the clip slots, a file that does not read or inflate, a guest call that
 // does not come back) loads nothing and says so on stderr. The hooks run their guest calls unpreempted (NoPreempt).
 #include "chameleon.hpp"
@@ -377,14 +381,26 @@ bool alloc(Cpu &c, std::uint32_t heap, std::uint32_t size, std::uint32_t &block)
     return true;
 }
 
+// ponytail: one spill block of 432 KB; Scorpion's port is the one that needs it. More ports: a bigger guest RAM
+constexpr std::uint32_t kSpill = 0x00004000u, kSpillEnd = 0x00070000u;
+
+// the spill block is another fighter's load, still live (headers() terms)
+bool spill_held(std::uint32_t fighter) {
+    const std::uint32_t d = rd<std::uint32_t>(kSpill + 8);
+    return rd<std::uint32_t>(kSpill) == kMagic && rd<std::uint32_t>(kSpill + 4) != fighter && d < rd<std::uint32_t>(kDb) &&
+           rd<std::uint32_t>(rd<std::uint32_t>(kDb + 0x10) + 4 * d) == kSpill &&
+           rd<std::uint32_t>(rd<std::uint32_t>(kDb + 4) + d * 8 + 4) == rd<std::uint32_t>(kSpill + 12);
+}
+
 std::uint32_t heap_free(std::uint32_t heap) {
     const std::uint32_t h = kHeaps + heap * kHeapStride;
     return rd<std::uint32_t>(h + 0x1C) ? 0xFFFFFFFFu : rd<std::uint32_t>(h + 0xC) - rd<std::uint32_t>(h + 8); // not linear: try
 }
 
 // One port into descriptors desc.. : its states' parts of the donor files, built on the host, into one heap block.
-// block = its header, 0 if it did not load. false: control left.
-bool load(Cpu &c, const Port &p, std::uint32_t fighter, std::uint32_t heap, std::uint32_t desc, std::uint32_t &block) {
+// block = its header, 0 if it did not load; spilled: the fighter's spill block is taken. false: control left.
+bool load(Cpu &c, const Port &p, std::uint32_t fighter, std::uint32_t heap, std::uint32_t desc, std::uint32_t &block,
+          bool &spilled) {
     block = 0;
     const std::vector<std::uint8_t> dt2 = wad_file(p.dt2), dat = wad_file(p.dt2 + 1), rtt = wad_file(p.dt2 + 2);
     std::vector<std::uint8_t> img(kHeader + 8 * p.count);
@@ -459,8 +475,11 @@ bool load(Cpu &c, const Port &p, std::uint32_t fighter, std::uint32_t heap, std:
     }
     while (img.size() % 16) img.push_back(0);
     const auto size = static_cast<std::uint32_t>(img.size());
-    if (!skip && heap_free(heap) < size + 256) skip = "no room in the heap";
-    if (!skip) {
+    if (!skip && heap_free(heap) < size + 256) {
+        if (spilled || size > kSpillEnd - kSpill || spill_held(fighter)) skip = "no room in the heap";
+        else block = kSpill, spilled = true;
+    }
+    if (!skip && !block) {
         if (!alloc(c, heap, size, block)) return false;
         if (!block) skip = "allocation failed";
     }
@@ -485,8 +504,9 @@ bool load(Cpu &c, const Port &p, std::uint32_t fighter, std::uint32_t heap, std:
     wr<std::uint32_t>(block + 12, rd<std::uint32_t>(rd<std::uint32_t>(kDb + 4) + desc * 8 + 4));
     wr<std::uint32_t>(block + 16, static_cast<std::uint32_t>(&p - kPorts));
     wr<std::uint32_t>(block + 20, 0), wr<std::uint32_t>(block + 24, 0), wr<std::uint32_t>(block + 28, block + win_at);
-    std::fprintf(stderr, "[mod] versus_boss_moves: %s: %u states, descriptors %u-%u, %u bytes at %08X (heap %u, %u left)\n",
-                 p.name, p.count, desc, desc + p.count - 1, size, block, heap, heap_free(heap));
+    std::fprintf(stderr, "[mod] versus_boss_moves: %s: %u states, descriptors %u-%u, %u bytes at %08X (%s %u, %u left)\n",
+                 p.name, p.count, desc, desc + p.count - 1, size, block, block == kSpill ? "spill, heap" : "heap", heap,
+                 heap_free(heap));
     return true;
 }
 
@@ -580,9 +600,10 @@ PS2_MOD(001D11F8, versus_boss_moves_load) {
     std::uint32_t own = 0, used, hs[kMaxHeaders], n = 0;
     for (const std::uint32_t t = bank + rd<std::uint32_t>(bank); rd<std::uint32_t>(t + 4 * own); ++own) {}
     used = own;
+    bool spilled = false;
     for (const Port &p : kPorts) {
         if (p.target_group != group) continue;
-        if (!load(c, p, fighter, heap, slot * 200 + used, hs[n])) return left(p.name);
+        if (!load(c, p, fighter, heap, slot * 200 + used, hs[n], spilled)) return left(p.name);
         if (hs[n]) used += p.count, ++n;
     }
     if (!n) return void(c.r[v0] = ret); // other fighters (no port), or a port that printed why it did not load
