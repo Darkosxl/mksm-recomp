@@ -5,7 +5,11 @@
 // The mod also grants the platform abilities, moves 4-10 (wall climb, swing, wall run, double jump, wall jump...),
 // which story mode hands out one by one and Versus otherwise leaves off. They are checked in engine code, not in a
 // fighter's move data, so they work for every fighter. The upgrade levels are per player slot, not per character.
+// The slot is the fighter's index (+0x68) - 1: 0 = P1, 1 = P2. The round start also makes a fighter left invisible by
+// a ported boss move visible again (versus_boss_moves.cpp).
 #include "ps2/decomp.hpp"
+
+bool versus_boss_moves_reveal(ps2::Cpu &c, std::uint32_t index); // versus_boss_moves.cpp
 
 namespace {
 
@@ -29,4 +33,5 @@ PS2_MOD(001B90B8, versus_round_upgrades) {
         c.f[12] = 0u;
         if (!call(c, kSetLevel)) return;
     }
+    versus_boss_moves_reveal(c, slot + 1);
 }

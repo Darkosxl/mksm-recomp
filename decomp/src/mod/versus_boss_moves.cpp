@@ -45,6 +45,11 @@
 //   (the story clip plays in place: the boss AI places him itself). Leaving the fade states for another state calls
 //   the event-530 handler (0x001ABCB0: alpha percent | frames << 15) with 100% over 1 frame, so a teleport cut short
 //   (hit, round end) never leaves him invisible: the alpha it sets lasts across rounds.
+// - 0x001B90B8, the Versus round start (versus_upgrades.cpp calls versus_boss_moves_reveal): the boss s30_sp_n (1586)
+//   ends with frame event 515 (0x001ABCB0), a toggle of every mesh part's mode bit 2 (drawn unseen): R1 + L1 +
+//   triangle makes Versus Reptile invisible until he does it again. Nothing in the game clears it (the story boss
+//   fight has one round), so he stayed invisible through the KO, the win pose and every later round: a fighter with
+//   a loaded port and a part in that mode is made visible at the round start, as the toggle's visible branch does.
 // One port per fighter that does not fit in its heap (Chameleon's MKA model fills his PLAYER_MEMORY heap, 2.7 MB: the
 // story levels leave no room to grow it, heap 0 keeps as little as 270 KB) goes to guest RAM the game never uses: the
 // EE kernel's area, whose kernel is on the host here (every disc save state has 0x4000-0x75000 zero; the game puts its
@@ -136,6 +141,10 @@ constexpr std::uint32_t kHeaps = 0x0064E998u, kHeapStride = 0x68u; // +8 free bo
 constexpr std::uint32_t kSetDesc = 0x002AF908u;    // (desc, format, channels, frames, clip + 6)
 constexpr std::uint32_t kSetName = 0x002B1960u;    // (db, desc, name)
 constexpr std::uint32_t kFade = 0x001ABCB0u;       // frame-event handler (fighter, event, param)
+constexpr std::uint32_t kPartModeOff = 0x00226880u; // (fighter, part, bit): clears a mesh part's mode bit
+constexpr std::uint32_t kPartModes = 0x006595F8u;   // u8 [fighter index (+0x68)][200]: mesh part mode bits
+constexpr std::uint32_t kModels = 0x00668720u;      // 24-byte records [fighter index]: +8 model (+0x30 part count)
+constexpr std::uint32_t kUnseen = 2;                // the mode bit event 515 toggles
 constexpr std::uint32_t kDb = 0x006B3000u, kMap = 0x006C8A28u;
 constexpr std::uint32_t kFighters = 0x005E6B40u, kFighterSize = 0x33C0u;
 constexpr std::uint32_t kGroupFirst = 0x004E94C8u, kGroupEnd = 0x004E9648u; // s32[group]: global state range
@@ -678,3 +687,25 @@ PS2_MOD(00303340, versus_boss_moves_state) {
 
 // for chameleon_fx.cpp
 std::vector<std::uint8_t> versus_boss_moves_wad_file(std::uint32_t id) { return wad_file(id); }
+
+// for versus_upgrades.cpp, at a Versus round start: player `index` (fighter +0x68: 1 = P1, 2 = P2) with a loaded port
+// and a mesh part left in the unseen mode gets every part cleared (FUN_00226880 per part, the visible branch of event
+// 515). Nothing to clear: no guest call. false: control left.
+bool versus_boss_moves_reveal(Cpu &c, std::uint32_t index) {
+    std::uint32_t hs[kMaxHeaders];
+    const std::uint32_t fighter = kPool + index * kFighterSize;
+    if (index - 1 > 1 || !headers(fighter, hs)) return true;
+    const std::uint32_t model = rd<std::uint32_t>(kModels + index * 0x18 + 8), modes = kPartModes + index * 200;
+    const std::uint32_t parts = model ? std::min<std::uint32_t>(rd<std::uint32_t>(model + 0x30), 200) : 0;
+    std::uint32_t unseen = 0;
+    for (std::uint32_t k = 0; k < parts; ++k) unseen += rd<std::uint8_t>(modes + k) >> kUnseen & 1;
+    if (!unseen) return true;
+    const NoPreempt guard(c);
+    for (std::uint32_t k = 0; k < parts; ++k) {
+        c.r[a0].d[0] = fighter, c.r[a1].d[0] = k, c.r[a2].d[0] = kUnseen;
+        if (!call(c, kPartModeOff)) return false;
+    }
+    std::fprintf(stderr, "[mod] versus_boss_moves: player %u visible again at the round start (%u of %u parts unseen)\n",
+                 index, unseen, parts);
+    return true;
+}
