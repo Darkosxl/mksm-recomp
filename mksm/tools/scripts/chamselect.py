@@ -1,7 +1,11 @@
 #!/usr/bin/env python3
 """Chameleon's select-screen picture: the converted MKA model (chammodel.py's cham.pme2 / cham.pwf) rendered in the pose
 his bones have in a savestate, framed like Reptile's pre-rendered image (file 78 entry 4, 128x256 PSMT8), as a P2N the
-chameleon mod swaps into cell 7's texture slot (PS2_MOD_DATA/cham_select.p2n). Disc-derived: written outside git.
+chameleon mod swaps into cell 7's texture slot (PS2_MOD_DATA/cham_select.p2n), and the red highlight behind it made from
+his silhouette (cham_glow.p2n, like entry 5). Disc-derived: written outside git.
+
+The highlight (entry 5, 128x128, 16 grays the game tints red) is the picture's silhouette scaled by 0.66 x 0.49 into
+its texels at (22, 1), blurred and brightened (GLOW_*: fitted to Reptile's pair).
 
 The pose: a skinned model's Bone array (0x1C0 bytes per bone; +0x50 the world matrix, rows for row vectors; +0x90 the
 bind pivot) is found in EE RAM by its pivots, which are the PME2 bone positions. A vertex goes to
@@ -11,15 +15,15 @@ front whatever way he faced in the game.
 Usage:
   chamselect.py STATE MODEL_DIR OUT [YAW_DEG]
       STATE: a .state with Reptile or Chameleon on screen (the first matching bone array is used; a Versus fight start
-      gives the fight stance); MODEL_DIR: cham.pme2 + cham.pwf; OUT: cham_select.p2n, cham_select.png (RGBA, PS2
-      alpha scaled to 255) and cham_select_4x.png (the 4x render, for a texture pack)
+      gives the fight stance); MODEL_DIR: cham.pme2 + cham.pwf; OUT: cham_select.p2n, cham_glow.p2n, cham_select.png
+      (RGBA, PS2 alpha scaled to 255) and cham_select_4x.png (the 4x render, for a texture pack)
 """
 import os
 import struct
 import sys
 
 import numpy as np
-from PIL import Image
+from PIL import Image, ImageFilter
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import chammodel as cm  # noqa: E402
@@ -31,6 +35,9 @@ RAM = 0x5B4                     # EE RAM's offset in a .state
 BONE, PIVOT, WORLD = 0x1C0, 0x90, 0x50
 X = 4                           # supersampling
 LAYERED = (0, 5)                # cham.pme2's blended pages (chammodel.previews)
+GLOW = (78, 5)                  # the select highlight
+GLOW_MAP = (0.66, 0.49, 22, 1)  # picture -> highlight texels: scale x, y, offset x, y
+GLOW_BLUR, GLOW_GAIN, GLOW_GAMMA = 3.0, 1.5, 0.7
 
 
 def bone_matrices(state, piv):
@@ -102,6 +109,16 @@ def quantize(img):
     return clut, idx.astype(np.uint8)
 
 
+def glow(mask):
+    """the highlight for a 128x256 silhouette (bool), as Reptile's is made from his: 128x128 indices 0-15"""
+    sx, sy, ox, oy = GLOW_MAP
+    im = Image.fromarray(mask.astype(np.uint8) * 255).resize((round(128 * sx), round(256 * sy)), Image.BOX)
+    can = Image.new('L', (128, 128), 0)
+    can.paste(im, (ox, oy))
+    b = np.asarray(can.filter(ImageFilter.GaussianBlur(GLOW_BLUR))) / 255.0
+    return np.rint(np.minimum(b ** GLOW_GAMMA * GLOW_GAIN, 1) * 15).astype(np.uint8)
+
+
 def p2n_file(disc_entry, clut, idx):
     """a P2N like the disc's: its 0x80-byte header, the CLUT in CSM1 order, the indices"""
     i = np.arange(256)
@@ -132,6 +149,12 @@ def main(argv):
     clut, idx = quantize(one)
     os.makedirs(out, exist_ok=True)
     open(os.path.join(out, 'cham_select.p2n'), 'wb').write(p2n_file(b[o:o + s], clut, idx))
+    go, gs = entries(wad.get(GLOW[0]))[GLOW[1]]
+    disc_glow = wad.get(GLOW[0])[go:go + gs]
+    mine = np.frombuffer(disc_glow[0x480:], np.uint8).reshape(128, 128)
+    d = np.abs(glow(ref[..., 3] > 0).astype(int) - mine).mean()
+    assert d < 0.5, 'the highlight recipe no longer makes Reptile\'s (mean |d| %.2f levels)' % d
+    open(os.path.join(out, 'cham_glow.p2n'), 'wb').write(disc_glow[:0x480] + glow(idx > 0).tobytes())
     shown = clut[idx].copy()
     shown[..., 3] = np.minimum(255, shown[..., 3].astype(int) * 255 // 128)
     Image.fromarray(shown, 'RGBA').save(os.path.join(out, 'cham_select.png'))

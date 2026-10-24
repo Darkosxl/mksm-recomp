@@ -34,12 +34,13 @@
 //    (chameleon_moves.cpp); the look is the same in every mode. Switch: L3 (pad bit 0x200, unused by every fighter's
 //    command tree), read per actor in 0x001EAF30 (the per-actor pad read) from the raw held word; the remapped words the
 //    actor keeps drop L3.
-//  - Select screen, 0x0013CD80 (its per-frame input): L3 on cell 7 swaps Reptile and Chameleon for that cursor's player
+//  - Select screen, 0x0013CD80 (its per-frame input): L1 or L3 on cell 7 swaps Reptile and Chameleon for that cursor's player
 //    (Reptile until then; the pick lasts the session). For Chameleon, cell 7's pre-rendered image (front-end file 78
 //    entry 4, 128x256 PSMT8, found by its CLUT's hash) shows his own picture: PS2_MOD_DATA/cham_select.p2n
 //    (chamselect.py: the converted model in Reptile's fight stance, a P2N like the disc's) is written over the slot's
-//    pixels (the old ones kept, put back for Reptile) and its CLUT copied for the slot to point at. Without the file the
-//    image gets a recoloured copy of its CLUT (gray cloth, gold trim). 0x001E6EF0
+//    pixels (the old ones kept, put back for Reptile) and its CLUT copied for the slot to point at; the red highlight
+//    behind it (entry 5, 128x128: the slot with the image's key, +0x240) gets his silhouette's, cham_glow.p2n, the same
+//    way. Without the picture the image gets a recoloured copy of its CLUT (gray cloth, gold trim). 0x001E6EF0
 //    (get_string) answers "CHAMELEON" for Reptile's name (text 0x6D0) to the select screen's calls.
 //  - Name elsewhere (HUD, menus), 0x001E6EC8 (character name: get_string(0x67C + group)): "CHAMELEON" for group 84
 //    while a player is Chameleon. Story enemies that look like Reptile are other groups (0x3B), so they keep theirs.
@@ -82,7 +83,7 @@ constexpr std::uint32_t kTextureManager = 0x004EFE94u;
 constexpr std::uint32_t kSlots = 321, kSlotSize = 0x430;  // TextureSlot: +0 pixels, +8 u16 width, +0xA height, +0xC psm, +0x38 CLUT, +0x240 key
 constexpr std::uint32_t kPads = 0x006B4330u, kPadSize = 0x98;  // +0x1C connected bits, port * 0x98 + 0x24 held
 constexpr std::uint32_t kPortOf = 0x0050BC10u;        // u32 [slot * 2]: the pad port of player slot 0/1
-constexpr std::uint16_t kL3 = 0x0200;
+constexpr std::uint16_t kL3 = 0x0200, kL1 = 0x0004;
 constexpr std::uint32_t kReptileName = 0x6D0;
 constexpr std::uint32_t kSelectCode = 0x0013B000u, kSelectCodeEnd = 0x0013F000u;  // FUN_0013B050..FUN_0013EF48
 constexpr std::uint32_t kAdxtStartMem2 = 0x0041AE28u;
@@ -108,6 +109,7 @@ constexpr std::uint32_t kState = 0x000A0000u;
 //   +0x00 u32 armed: the next ADXT start of file 79 plays the Chameleon line
 //   +0x04 u32 the select image's slot, +0x08 its original CLUT address, +0x0C 1: its recoloured copy is made, 2: his
 //         picture is in (the slot's pixels are in kSelectPixels)
+//   +0x18 u32 the highlight's slot while his highlight is in (its pixels are in kGlowPixels), else 0
 //   +0x10 u8[2] select screen: L3 held last frame, per cursor; +0x12 u8 cell 7 shows Chameleon
 //   +0x14 u32 the async entry whose file the mod serves (between its size and its read)
 //   +0x20 Player[2], 0x20 bytes each:
@@ -122,9 +124,11 @@ constexpr std::uint32_t kState = 0x000A0000u;
 //   +0x80 "CHAMELEON"
 constexpr std::uint32_t kArmed = kState + 0x00, kSelectSlot = kState + 0x04, kSelectOrig = kState + 0x08,
                         kSelectShown = kState + 0x0C, kSelectHeld = kState + 0x10, kSelectPicked = kState + 0x12,
-                        kServing = kState + 0x14, kPlayers = kState + 0x20, kName = kState + 0x80;
+                        kServing = kState + 0x14, kSelectGlow = kState + 0x18, kPlayers = kState + 0x20,
+                        kName = kState + 0x80;
 constexpr std::uint32_t kSelectBackup = 0x000A0400u, kSelectCopy = 0x000A0800u;  // 1 KB each
 constexpr std::uint32_t kSelectPixels = 0x000A2000u, kSelectSize = 128 * 256;    // cell 7's own pixels (32 KB)
+constexpr std::uint32_t kGlowPixels = 0x000AA000u, kGlowSize = 128 * 128;        // and its highlight's (16 KB)
 constexpr std::uint32_t kP2nClut = 0x80, kP2nPixels = 0x480;                     // a P2N: header, CLUT (CSM1 order), pixels
 constexpr std::uint32_t kRainbowClut = 0x000A1000u;  // + player * 0x400: the rainbow page's CLUT as in the file
 constexpr std::uint32_t kVoice = 0x000B0000u, kVoiceMax = 0x00040000u;
@@ -359,35 +363,55 @@ void next_mode(std::uint32_t slot) {
 std::uint32_t port_of(std::uint32_t slot) { return rd<std::uint32_t>(kPortOf + slot * 8); }
 
 // L3 went down this frame on that port (raw held word, as FUN_002C7360 reads it)
-bool l3_pressed(std::uint32_t port, std::uint32_t last) {
+bool pressed(std::uint32_t port, std::uint32_t last, std::uint16_t buttons) {
     std::uint16_t held = 0;
     if (port == 2) held = rd<std::uint16_t>(kPads + 0x10);
     else if (port < 2 && ((rd<std::uint8_t>(kPads + 0x1C) >> port) & 1)) held = rd<std::uint16_t>(kPads + port * kPadSize + 0x24);
-    const bool down = held & kL3;
+    const bool down = held & buttons;
     const bool was = rd<std::uint8_t>(last);
     wr<std::uint8_t>(last, down);
     return down && !was;
 }
 
 // ---- the select image ----
-// his picture, PS2_MOD_DATA/cham_select.p2n, if it is a 128x256 P2N
-const std::vector<std::uint8_t> *select_picture() {
-    const std::vector<std::uint8_t> *p = mod_data("cham_select.p2n");
-    static bool warned;
-    std::uint32_t w = 0, h = 0;
-    if (p && p->size() == kP2nPixels + kSelectSize && std::equal(p->begin(), p->begin() + 4, "P2N")) {
-        std::memcpy(&w, p->data() + 0x10, 4);
-        std::memcpy(&h, p->data() + 0x14, 4);
+// a 128 x h P2N from PS2_MOD_DATA (chamselect.py), or nullptr
+const std::vector<std::uint8_t> *p2n(const char *name, std::uint32_t h, bool &warned) {
+    const std::vector<std::uint8_t> *p = mod_data(name);
+    std::uint32_t pw = 0, ph = 0;
+    if (p && p->size() == kP2nPixels + 128 * h && std::equal(p->begin(), p->begin() + 4, "P2N")) {
+        std::memcpy(&pw, p->data() + 0x10, 4);
+        std::memcpy(&ph, p->data() + 0x14, 4);
     }
-    if (w == 128 && h == 256) return p;
-    if (!warned) std::fprintf(stderr, "[mod] chameleon: no 128x256 PS2_MOD_DATA/cham_select.p2n, the select image is recoloured\n");
+    if (pw == 128 && ph == h) return p;
+    if (!warned) std::fprintf(stderr, "[mod] chameleon: no 128x%u PS2_MOD_DATA/%s\n", h, name);
     warned = true;
     return nullptr;
+}
+
+// the file's pixels over the slot's; the slot's own go to `keep` unless `kept` (they are there already)
+void put_pixels(std::uint32_t slot, const std::vector<std::uint8_t> &file, std::uint32_t keep, bool kept) {
+    const std::uint32_t pixels = rd<std::uint32_t>(slot), size = static_cast<std::uint32_t>(file.size()) - kP2nPixels;
+    if (!kept) copy(pixels, keep, size);
+    for (std::uint32_t i = 0; i < size; ++i) wr<std::uint8_t>(pixels + i, file[kP2nPixels + i]);
+}
+
+// the highlight behind the select image: the other slot with its key, 128x128 PSMT8
+std::uint32_t glow_slot(std::uint32_t image) {
+    const std::uint32_t slots = rd<std::uint32_t>(rd<std::uint32_t>(kTextureManager) + 0x20), key = rd<std::uint32_t>(image + 0x240);
+    for (std::uint32_t i = 0; i < kSlots; ++i) {
+        const std::uint32_t s = slots + i * kSlotSize;
+        if (s != image && rd<std::uint32_t>(s + 0x240) == key && rd<std::uint16_t>(s + 8) == 128 && rd<std::uint16_t>(s + 0xA) == 128 &&
+            rd<std::uint16_t>(s + 0xC) == 0x13 && rd<std::uint32_t>(s))
+            return s;
+    }
+    return 0;
 }
 
 // cell 7 as Reptile's own image
 void select_reptile(std::uint32_t slot) {
     if (rd<std::uint32_t>(kSelectShown) == 2) copy(kSelectPixels, rd<std::uint32_t>(slot), kSelectSize);
+    if (const std::uint32_t glow = rd<std::uint32_t>(kSelectGlow)) copy(kGlowPixels, rd<std::uint32_t>(glow), kGlowSize);
+    wr<std::uint32_t>(kSelectGlow, 0);
     if (rd<std::uint32_t>(slot + 0x38) == kSelectCopy) wr<std::uint32_t>(slot + 0x38, rd<std::uint32_t>(kSelectOrig));
     wr<std::uint32_t>(kSelectShown, 0);
 }
@@ -409,10 +433,11 @@ void select_image(std::uint32_t select) {
         wr<std::uint32_t>(kSelectSlot, slot);
         wr<std::uint32_t>(kSelectOrig, rd<std::uint32_t>(slot + 0x38));
         wr<std::uint32_t>(kSelectShown, 0);
+        wr<std::uint32_t>(kSelectGlow, 0);
         copy(rd<std::uint32_t>(slot + 0x38), kSelectBackup, 0x400);
     }
     if (!story_or_koop(mode)) return select_reptile(slot);  // Versus: Reptile's own image
-    // the player whose cursor is on cell 7 (story: the one cursor at +0x3C; Ko-op: +0x3C, +0x40); L3 there swaps
+    // the player whose cursor is on cell 7 (story: the one cursor at +0x3C; Ko-op: +0x3C, +0x40); L1 or L3 there swaps
     // Reptile and Chameleon (Ko-op: cursor k's pad port is at +0x2C + 4k, FUN_00378640, 2 = no pad yet; 0x50BC10 is
     // only filled at the start)
     std::uint32_t on = 0;
@@ -420,7 +445,7 @@ void select_image(std::uint32_t select) {
         if (rd<std::uint32_t>(select + 0x3C + 4 * k) != 7) continue;
         on = k;
         const std::uint32_t port = mode == 0 ? port_of(0) : rd<std::uint32_t>(select + 0x2C + 4 * k);
-        if (port < 2 && l3_pressed(port, kSelectHeld + k)) {
+        if (port < 2 && pressed(port, kSelectHeld + k, kL1 | kL3)) {
             player(k).picked = !player(k).picked;
             std::fprintf(stderr, "[mod] chameleon: player %u picks %s\n", k + 1, player(k).picked ? "Chameleon" : "Reptile");
         }
@@ -428,11 +453,16 @@ void select_image(std::uint32_t select) {
     wr<std::uint8_t>(kSelectPicked, player(on).picked);
     if (!player(on).picked) return select_reptile(slot);
     if (rd<std::uint32_t>(slot + 0x38) != kSelectCopy || !rd<std::uint32_t>(kSelectShown)) {
-        if (const std::vector<std::uint8_t> *pic = select_picture()) {
-            const std::uint32_t pixels = rd<std::uint32_t>(slot);
-            if (rd<std::uint32_t>(kSelectShown) != 2) copy(pixels, kSelectPixels, kSelectSize);
-            for (std::uint32_t i = 0; i < kSelectSize; ++i) wr<std::uint8_t>(pixels + i, (*pic)[kP2nPixels + i]);
+        static bool warned[2];
+        if (const std::vector<std::uint8_t> *pic = p2n("cham_select.p2n", 256, warned[0])) {
+            put_pixels(slot, *pic, kSelectPixels, rd<std::uint32_t>(kSelectShown) == 2);
             for (std::uint32_t i = 0; i < 0x400; ++i) wr<std::uint8_t>(kSelectCopy + i, (*pic)[kP2nClut + i]);
+            const std::uint32_t glow = rd<std::uint32_t>(kSelectGlow) ? 0 : glow_slot(slot);
+            const std::vector<std::uint8_t> *halo = glow ? p2n("cham_glow.p2n", 128, warned[1]) : nullptr;
+            if (halo) {
+                put_pixels(glow, *halo, kGlowPixels, false);
+                wr<std::uint32_t>(kSelectGlow, glow);
+            }
             wr<std::uint32_t>(kSelectShown, 2);
         } else {
             recolour(kSelectBackup, kSelectCopy);
@@ -569,7 +599,7 @@ PS2_MOD(001EAF30, chameleon_switch) {
     if (chameleon::is(actor)) {
         const std::uint32_t who = rd<std::uint32_t>(actor + 0x68);
         const Player p = player(who - 1);
-        if (l3_pressed(port_of(who - 1), p.held.address())) next_mode(who - 1);
+        if (pressed(port_of(who - 1), p.held.address(), kL3)) next_mode(who - 1);
         rainbow(who - 1);
         if (p.blend) arm_blend();
         if (const std::uint32_t heap = p.heaplog) {
