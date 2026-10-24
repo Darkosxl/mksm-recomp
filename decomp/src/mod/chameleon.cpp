@@ -19,12 +19,13 @@
 //    0, so the next poll reports it done: the disc is not read at all. The callbacks free the buffer by its allocated
 //    size, so a bigger file needs nothing else. No file, a preset buffer or no room in a linear heap: the disc file,
 //    said once on stderr. A plain Reptile (Ko-op partner, mirror alt) loads the same file ids from the disc.
-//  - Rainbow: the served PWF's rainbow page (the converter's: an 8-bit 128x128 page whose index image is constant along
-//    each row, indices lo..hi) is found at the texture callback; its CLUT is kept here and the texture slot that shows
-//    it is found by its key (page << 16 | 6851) and content. Every frame (per-actor pad read, below) that slot's CLUT
-//    entries lo..hi rotate one step per kRainbowCycle / (hi - lo + 1) frames, MKA's V scroll of cham_grad (0.0005 per
-//    frame, 2000 frames per cycle), in every mode; the next character draw uploads it (kLastTexture reset). The CLUT is
-//    in GS CSM1 order (logical index bits 3 and 4 swapped).
+//  - Rainbow: the served PWF's page 2 (chammodel.py's RAINBOW: an 8-bit 128x128 page whose CLUT entries 1-224 are 7
+//    blocks of 32 hues, hue h showing cham_grad row 4h + phase; 225-255 fixed) is checked and its CLUT kept here at the
+//    texture callback; the texture slot that shows it is found by its key (2 << 16 | 6851) and content. Every frame
+//    (per-actor pad read, below), in every mode, each block of that slot's CLUT is rewritten as the file's block
+//    scrolled by frame * 32 / 2000 entries, the fraction blended linearly between neighbours: MKA's smooth V scroll of
+//    cham_grad (0.0005 per frame, 2000 frames per cycle). The next character draw uploads it (kLastTexture reset). The
+//    CLUT is in GS CSM1 order (logical index bits 3 and 4 swapped).
 //  - Modes: 0 rainbow, 1 yellow (Scorpion's specials), 2 blue (Sub-Zero's), 3 green (Reptile's) only pick his moves
 //    (chameleon_moves.cpp); the look is the same in every mode. Switch: L3 (pad bit 0x200, unused by every fighter's
 //    command tree), read per actor in 0x001EAF30 (the per-actor pad read) from the raw held word; the remapped words the
@@ -85,6 +86,7 @@ constexpr std::uint32_t kRam = 0x02000000u;
 // FNV-1a 64 of the 1 KB CLUT as on the disc: file 78 entry 4
 constexpr std::uint64_t kSelectClut = 0x0b9a8ce58a836985ull;
 constexpr std::uint32_t kRainbowCycle = 2000;  // frames per rainbow cycle (MKA: cham_grad V scroll 0.0005 per frame)
+constexpr std::uint32_t kRainbowPage = 2, kHues = 32, kBlocks = 7;  // chammodel.py RAINBOW: CLUT 1 + 32 * block + hue
 
 // ---- the mod's EE memory ----
 constexpr std::uint32_t kState = 0x000A0000u;
@@ -96,8 +98,7 @@ constexpr std::uint32_t kState = 0x000A0000u;
 //         +0 u8 Chameleon (set by every player load), +1 u8 mode (0-3), +2 u8 L3 held last frame,
 //         +3 u8 served from PS2_MOD_DATA since his last load: 1 model, 2 textures,
 //         +4 u32 the texture slot showing his rainbow page (0: not found yet), +8 u8 picked Chameleon at the select
-//         screen, +9 u8 rainbow page (0xFF: none), +0xA u8 its first and +0xB its last CLUT index, +0xC u32 rainbow
-//         phase (frames x entries, mod kRainbowCycle), +0x10 u32 that slot's CLUT address, +0x14 u32 build heap + 1
+//         screen, +9 u8 rainbow page (0xFF: none), +0xC u32 rainbow phase (frames, mod kRainbowCycle), +0x10 u32 that slot's CLUT address, +0x14 u32 build heap + 1
 //         to report on his next frame (0: none)
 //   +0x80 "CHAMELEON"
 constexpr std::uint32_t kArmed = kState + 0x00, kSelectSlot = kState + 0x04, kSelectOrig = kState + 0x08,
@@ -120,8 +121,6 @@ struct Player {
     Field<std::uint32_t> rslot{addr + 4};
     Field<std::uint8_t> picked{addr + 8};
     Field<std::uint8_t> rpage{addr + 9};
-    Field<std::uint8_t> lo{addr + 0xA};
-    Field<std::uint8_t> hi{addr + 0xB};
     Field<std::uint32_t> phase{addr + 0xC};
     Field<std::uint32_t> rclut{addr + 0x10};
     Field<std::uint32_t> heaplog{addr + 0x14};
@@ -237,30 +236,20 @@ const std::vector<std::uint8_t> *serve(std::uint32_t entry, const Costume &f) {
 // ---- the rainbow ----
 std::uint32_t csm1(std::uint32_t i) { return (i & 0xE7u) | (i & 0x08u) << 1 | (i & 0x10u) >> 1; }
 
-// file 6851 served at `data` for player slot: its rainbow page (8-bit 128x128, index constant along each row)
+// file 6851 served at `data` for player slot: keep its rainbow page's CLUT (page kRainbowPage, 8-bit 128x128)
 void find_rainbow_page(std::uint32_t slot, std::uint32_t data) {
     const Player p = player(slot);
     const std::uint32_t pages = rd<std::uint32_t>(data + 12);
-    for (std::uint32_t k = 0; rd<std::uint32_t>(data) == 0x20465750u && k < pages && k < 0xFF; ++k) {
-        const std::uint32_t p2n = data + rd<std::uint32_t>(data + 0x20 + 8 * k);
-        if (rd<std::uint32_t>(p2n) != 0x004E3250u || rd<std::uint32_t>(p2n + 0x10) != 128 || rd<std::uint32_t>(p2n + 0x14) != 128 ||
-            rd<std::uint32_t>(p2n + 0x18) != 8)
-            continue;
-        const std::uint32_t pix = p2n + rd<std::uint32_t>(p2n + 0x34), clut = p2n + rd<std::uint32_t>(p2n + 0x38);
-        std::uint32_t lo = 255, hi = 0;
-        bool rows = true;
-        for (std::uint32_t y = 0; y < 128 && rows; ++y) {
-            const std::uint8_t v = rd<std::uint8_t>(pix + 128 * y);
-            for (std::uint32_t x = 1; x < 128 && rows; ++x) rows = rd<std::uint8_t>(pix + 128 * y + x) == v;
-            lo = v < lo ? v : lo, hi = v > hi ? v : hi;
-        }
-        if (!rows || hi <= lo) continue;
-        p.rpage = static_cast<std::uint8_t>(k), p.lo = static_cast<std::uint8_t>(lo), p.hi = static_cast<std::uint8_t>(hi);
-        copy(clut, kRainbowClut + slot * 0x400, 0x400);
-        std::fprintf(stderr, "[mod] chameleon: player %u rainbow page %u of %u, CLUT %u-%u\n", slot + 1, k, pages, lo, hi);
+    const std::uint32_t p2n = data + rd<std::uint32_t>(data + 0x20 + 8 * kRainbowPage);
+    if (rd<std::uint32_t>(data) != 0x20465750u || pages <= kRainbowPage || rd<std::uint32_t>(p2n) != 0x004E3250u ||
+        rd<std::uint32_t>(p2n + 0x10) != 128 || rd<std::uint32_t>(p2n + 0x14) != 128 || rd<std::uint32_t>(p2n + 0x18) != 8) {
+        std::fprintf(stderr, "[mod] chameleon: player %u textures (%u pages): page %u is no 8-bit 128x128 rainbow page\n", slot + 1,
+                     pages, kRainbowPage);
         return;
     }
-    std::fprintf(stderr, "[mod] chameleon: player %u textures (%u pages) have no rainbow page\n", slot + 1, pages);
+    p.rpage = kRainbowPage;
+    copy(p2n + rd<std::uint32_t>(p2n + 0x38), kRainbowClut + slot * 0x400, 0x400);
+    std::fprintf(stderr, "[mod] chameleon: player %u rainbow page %u of %u\n", slot + 1, kRainbowPage, pages);
 }
 
 // the texture slot showing player slot's rainbow page: key page << 16 | 6851, 8-bit 128x128, CLUT entries 1-255 as in
@@ -293,13 +282,18 @@ void rainbow(std::uint32_t slot) {
                      (s - rd<std::uint32_t>(rd<std::uint32_t>(kTextureManager) + 0x20)) / kSlotSize, static_cast<std::uint32_t>(p.rclut),
                      static_cast<unsigned long long>(frame_count()));
     }
-    const std::uint32_t lo = p.lo, n = p.hi - lo + 1u, phase = p.phase + n, steps = phase / kRainbowCycle;
-    p.phase = phase % kRainbowCycle;
-    if (!steps) return;
-    // logical entry lo + i takes the colour of lo + (i + steps) mod n
-    std::uint32_t was[256];
-    for (std::uint32_t i = 0; i < n; ++i) was[i] = rd<std::uint32_t>(p.rclut + 4 * csm1(lo + i));
-    for (std::uint32_t i = 0; i < n; ++i) wr<std::uint32_t>(p.rclut + 4 * csm1(lo + i), was[(i + steps) % n]);
+    const std::uint32_t phase = (p.phase + 1) % kRainbowCycle, at = phase * kHues, step = at / kRainbowCycle,
+                        w = at % kRainbowCycle, file = kRainbowClut + slot * 0x400;
+    p.phase = phase;
+    // logical entry 1 + 32 b + h shows the file's 1 + 32 b + (h + step) mod 32, blended w / 2000 towards the next one
+    for (std::uint32_t b = 0; b < kBlocks; ++b)
+        for (std::uint32_t h = 0; h < kHues; ++h) {
+            const std::uint32_t base = 1 + kHues * b, from = file + 4 * csm1(base + (h + step) % kHues),
+                                to = file + 4 * csm1(base + (h + step + 1) % kHues), out = p.rclut + 4 * csm1(base + h);
+            for (std::uint32_t k = 0; k < 4; ++k)
+                wr<std::uint8_t>(out + k, static_cast<std::uint8_t>((rd<std::uint8_t>(from + k) * (kRainbowCycle - w) +
+                                                                     rd<std::uint8_t>(to + k) * w + kRainbowCycle / 2) / kRainbowCycle));
+        }
     wr<std::uint32_t>(kLastTexture, 0xFFFFFFFFu);  // the next character draw uploads its texture set again
 }
 
