@@ -26,6 +26,10 @@
 //    scrolled by frame * 32 / 2000 entries, the fraction blended linearly between neighbours: MKA's smooth V scroll of
 //    cham_grad (0.0005 per frame, 2000 frames per cycle). The next character draw uploads it (kLastTexture reset). The
 //    CLUT is in GS CSM1 order (logical index bits 3 and 4 swapped).
+//  - Blend (D5): D3's layered files (6 texture pages: the shell on page 5) give the shell and skin materials no linked
+//    texture, so the three-pass fighter draw (single-player story) blends them by texel alpha per mesh (fn_239c48). The
+//    one-pass draw (Ko-op) takes fn_247bd8's opaque FIX 128 for every mesh of texture mode 2; for his model the mod
+//    picks the texel-alpha state instead (decomp::render::g_blend_model, through fn_247bd8's decompiled twin).
 //  - Modes: 0 rainbow, 1 yellow (Scorpion's specials), 2 blue (Sub-Zero's), 3 green (Reptile's) only pick his moves
 //    (chameleon_moves.cpp); the look is the same in every mode. Switch: L3 (pad bit 0x200, unused by every fighter's
 //    command tree), read per actor in 0x001EAF30 (the per-actor pad read) from the raw held word; the remapped words the
@@ -309,11 +313,13 @@ void rainbow(std::uint32_t slot) {
     wr<std::uint32_t>(kLastTexture, 0xFFFFFFFFu);  // the next character draw uploads its texture set again
 }
 
-// fn_247bd8 asks (decomp::render::g_blend_model): the model is a Chameleon's layered build, drawn blended by texel alpha
+// fn_247bd8 asks (decomp::render::g_blend_model): the model is a Chameleon's layered build, drawn blended by texel alpha.
+// The Model object itself lives elsewhere; its segment array (Model +0x20) is in his build.
 bool blended_model(std::uint32_t model) {
+    const std::uint32_t segments = decomp::render::Model{model}.segments;
     for (std::uint32_t slot = 0; slot < 2; ++slot) {
         const Player p = player(slot);
-        if (!p.chameleon || !p.blend || model < p.build_lo || model >= p.build_hi) continue;
+        if (!p.chameleon || !p.blend || segments < p.build_lo || segments >= p.build_hi) continue;
         if (!p.blend_said) {
             p.blend_said = 1;
             std::fprintf(stderr, "[mod] chameleon: player %u model %08x drawn blended by texel alpha (frame %llu)\n", slot + 1, model,
@@ -322,6 +328,14 @@ bool blended_model(std::uint32_t model) {
         return true;
     }
     return false;
+}
+
+// the one-pass draw (Ko-op) gets its base state from fn_247bd8 only (the three-pass draw of single-player story sets
+// pass 1 per mesh, fn_239c48): its decompiled twin (exact; ci.sh gates it) carries the blend switch, so turn it on. Host
+// state, so it is asserted every frame a layered Chameleon plays (savestates do not hold it).
+void arm_blend() {
+    decomp::render::g_blend_model = blended_model;
+    decomp::hook_00247BD8.enabled = decomp::hook_00247BD8.on = true;
 }
 
 void next_mode(std::uint32_t slot) {
@@ -497,10 +511,7 @@ PS2_MOD(001CE380, chameleon_model) {
                  built <= data ? "clear" : "OVERLAPPED", static_cast<int>(data - built));
     const Player p = player(who - 1);
     p.heaplog = heap + 1, p.build_lo = bottom, p.build_hi = built;
-    if (p.blend) {  // fn_247bd8's decompiled twin (exact; ci.sh gates it) carries the blend switch: turn it on
-        decomp::render::g_blend_model = blended_model;
-        decomp::hook_00247BD8.enabled = decomp::hook_00247BD8.on = true;
-    }
+    if (p.blend) arm_blend();
 }
 
 PS2_MOD(001D0688, chameleon_textures) {
@@ -526,6 +537,7 @@ PS2_MOD(001EAF30, chameleon_switch) {
         const Player p = player(who - 1);
         if (l3_pressed(port_of(who - 1), p.held.address())) next_mode(who - 1);
         rainbow(who - 1);
+        if (p.blend) arm_blend();
         if (const std::uint32_t heap = p.heaplog) {
             p.heaplog = 0;
             std::fprintf(stderr, "[mod] chameleon: player %u in play (frame %llu): heap %u has %u bytes free\n", who,
