@@ -10,9 +10,15 @@
 // the same way. With both on, whichever runs first in a frame calls; the log names it (fn_1d6808 runs in Versus too).
 // A set-state call (0x303340) does not play a special the way its input does: the state holds at frame 1 and fires
 // no events. Real inputs (ps2run --press) do.
+//
+// Kill: debug_kill_player(p) (the web page's mksm.kill(), host/web.cpp) or PS2_KILL="<frame>[:<p>]" calls the
+// set-health function with 0 on player p's actor (p 0 = player 1: fighter slot 1 + p of the pool at 0x5E3780, actor at
+// +0x210), the game's own damage path, so it dies as from a hit. A request switches this hook on for the one frame
+// when PS2_DECOMP left it off.
 #include "ps2/decomp.hpp"
 #include "ps2/system.hpp"
 
+#include <atomic>
 #include <cstdio>
 #include <cstdlib>
 #include <vector>
@@ -21,6 +27,13 @@ namespace {
 
 using namespace ps2;
 using namespace ps2::gpr;
+
+constexpr std::uint32_t kSelf = 0x001D6808u;
+constexpr std::uint32_t kSetHealth = 0x00286DB8u; // (actor, hp)
+constexpr std::uint32_t kFighters = 0x005E3780u, kFighterSize = 0x33C0u, kActor = 0x210u;
+
+std::atomic<int> g_kill{-1};           // player to kill at the next update
+std::atomic<bool> g_by_request{false}; // the hook is on only for that request
 
 struct Call {
     unsigned long long frame;
@@ -45,6 +58,15 @@ std::vector<Call> &calls() {
     return v;
 }
 
+struct EnvKill {
+    unsigned long long frame = ~0ull;
+    int player = 0;
+} const g_env_kill = [] {
+    EnvKill k;
+    if (const char *s = std::getenv("PS2_KILL")) std::sscanf(s, "%llu:%d", &k.frame, &k.player);
+    return k;
+}();
+
 // the calls due this frame; false: control left (return at once)
 bool run_calls(Cpu &c, const char *from) {
     for (Call &k : calls()) {
@@ -66,11 +88,33 @@ bool run_calls(Cpu &c, const char *from) {
 
 }
 
+namespace decomp {
+extern ps2::DecompFn hook_001D6808; // defined by PS2_DECOMP below
+}
+
+namespace ps2 {
+void debug_kill_player(int player) {
+    g_kill.store(player);
+    if (!decomp::hook_001D6808.enabled) {
+        g_by_request.store(true);
+        decomp::hook_001D6808.enabled = decomp::hook_001D6808.on = true;
+    }
+}
+}
+
 PS2_DECOMP(001D6808, debug_call) {
+    if (frame_count() == g_env_kill.frame) g_kill.store(g_env_kill.player);
+    if (const int p = g_kill.exchange(-1); p >= 0) {
+        const std::uint32_t actor = rd<std::uint32_t>(kFighters + (1u + static_cast<std::uint32_t>(p)) * kFighterSize + kActor);
+        if (actor) calls().push_back({frame_count(), kSetHealth, actor, 0, false});
+        else std::fprintf(stderr, "[call] kill: player %d has no actor\n", p + 1);
+    }
     if (!run_calls(c, "fn_1d6808")) return;
+    const bool keep = !g_by_request.exchange(false);
     decomp::hook_001D6808.enabled = false;
-    tail(c, 0x001D6808u);
-    decomp::hook_001D6808.enabled = true;
+    tail(c, kSelf);
+    decomp::hook_001D6808.enabled = keep;
+    decomp::hook_001D6808.on = keep || decomp::hook_001D6808.record;
 }
 
 PS2_DECOMP(001EB378, debug_call_fighters) {

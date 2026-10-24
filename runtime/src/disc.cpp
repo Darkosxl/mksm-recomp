@@ -1,10 +1,15 @@
 #include "ps2/disc.hpp"
 
+#include "ps2/system.hpp"
+
 #include <algorithm>
 #include <cctype>
 #include <cstdio>
+#include <cstdlib>
 #include <cstring>
 #include <map>
+#include <memory>
+#include <utility>
 
 namespace ps2::disc {
 
@@ -62,6 +67,61 @@ void index_layer(std::uint32_t pvd_sector, std::uint32_t base) {
 
 }
 
+// PS2_DISC_LATENCY=<ms>[:<jitter ms>[:<seed>]] (diagnostic, native only): the browser's remote disc (host/web.cpp,
+// non-blocking mode) in emulated time. 256 KB chunks, a 256-chunk LRU cache and the same sequential read-ahead (up to
+// 16 chunks); a chunk arrives <ms> (+ 0..jitter, seeded) of emulated time after it is first wanted, and the emulated
+// drive waits for it (iop::kernel::disc_arrived) as it does in a browser on a slow connection.
+Probe latency_probe() {
+    const char *env = std::getenv("PS2_DISC_LATENCY");
+    if (!env || !*env) return {};
+    struct Model {
+        std::uint64_t latency = 0, jitter = 0, rng = 1, use_clock = 0, last = ~0ull, run = 0, waits = 0;
+        std::map<std::uint64_t, std::pair<std::uint64_t, std::uint64_t>> chunks;  // index -> {ready_at, used}
+    };
+    auto m = std::make_shared<Model>();
+    unsigned long long ms = 0, jitter = 0, seed = 1;
+    std::sscanf(env, "%llu:%llu:%llu", &ms, &jitter, &seed);
+    m->latency = ms * kEeClock / 1000;
+    m->jitter = jitter * kEeClock / 1000;
+    m->rng = seed ? seed : 1;
+    std::fprintf(stderr, "[disc] PS2_DISC_LATENCY: %llu ms + 0..%llu ms per 256 KB chunk (seed %llu)\n", ms, jitter, seed);
+    static constexpr std::uint64_t kChunk = 256u << 10, kSlots = 256, kReadAhead = 16;
+    auto want = [m](std::uint64_t index) -> std::uint64_t {
+        if (index * kChunk >= g_size) return 0;
+        auto it = m->chunks.find(index);
+        if (it == m->chunks.end()) {
+            if (m->chunks.size() >= kSlots) {
+                auto victim = m->chunks.begin();
+                for (auto i = m->chunks.begin(); i != m->chunks.end(); ++i)
+                    if (i->second.second < victim->second.second) victim = i;
+                m->chunks.erase(victim);
+            }
+            m->rng ^= m->rng << 13;
+            m->rng ^= m->rng >> 7;
+            m->rng ^= m->rng << 17;
+            const std::uint64_t extra = m->jitter ? m->rng % (m->jitter + 1) : 0;
+            it = m->chunks.emplace(index, std::make_pair(ps2::now() + m->latency + extra, 0)).first;
+        }
+        it->second.second = ++m->use_clock;
+        return it->second.first;
+    };
+    return [m, want](std::uint64_t offset, std::size_t size) {
+        if (!size) return true;
+        const std::uint64_t last = (offset + size - 1) / kChunk, t = ps2::now();
+        bool ready = true;
+        for (std::uint64_t index = offset / kChunk; index <= last; ++index) {
+            ready = want(index) <= t && ready;
+            if (!(index <= m->last && m->last - index <= kReadAhead * 4)) {
+                m->run = index == m->last + 1 ? m->run + 1 : 0;
+                m->last = index;
+            }
+        }
+        const std::uint64_t from = std::max(last, m->last);
+        for (std::uint64_t k = 1; k <= std::min(m->run * 2, kReadAhead); ++k) want(from + k);
+        return ready;
+    };
+}
+
 bool open(const std::string &path) {
     g_file = std::fopen(path.c_str(), "rb");
     if (!g_file) return false;
@@ -80,7 +140,7 @@ bool open(const std::string &path) {
         fseeko(file, static_cast<off_t>(offset), SEEK_SET);
 #endif
         return std::fread(out, 1, bytes, file);
-    });
+    }, latency_probe());
 }
 
 bool open(const std::string &name, std::uint64_t size, Reader reader, Probe probe) {
@@ -110,8 +170,37 @@ bool is_open() { return static_cast<bool>(g_reader); }
 bool read(std::uint32_t sector, std::uint32_t count, void *out) {
     if (!g_reader) return false;
     const std::size_t want = static_cast<std::size_t>(count) * kSector;
-    const std::size_t got = g_reader(static_cast<std::uint64_t>(sector) * kSector, out, want);
+    std::size_t got = g_reader(static_cast<std::uint64_t>(sector) * kSector, out, want);
+    // PS2_DISC_ZERO=<lsn hex> (diagnostic): the first read that covers that sector comes back as zeros from it on, as a
+    // browser read does when its chunk fetch fails for good (host/web.cpp chunk() gives up, read_disc returns short).
+    static std::uint32_t zero_at = [] {
+        const char *env = std::getenv("PS2_DISC_ZERO");
+        return env && *env ? static_cast<std::uint32_t>(std::strtoul(env, nullptr, 16)) : ~0u;
+    }();
+    if (zero_at != ~0u && sector <= zero_at && zero_at < sector + count) {
+        std::fprintf(stderr, "[disc] PS2_DISC_ZERO: read lsn 0x%X count %u returns zeros from 0x%X\n", sector, count, zero_at);
+        got = std::min(got, static_cast<std::size_t>(zero_at - sector) * kSector);
+        zero_at = ~0u;
+    }
     if (got < want) std::memset(static_cast<std::uint8_t *>(out) + got, 0, want - got);
+    // PS2_DISC_WRONG=<lsn hex>[-<lsn hex>] (diagnostic): the 256 KB browser cache chunks holding those sectors are served
+    // from 16 chunks (4 MB) later, as when the solo cache hands back a slot that read-ahead re-targeted (host/web.cpp
+    // want(), 059c731). Every read that overlaps them gets the wrong bytes for the overlap.
+    static const std::pair<std::uint32_t, std::uint32_t> wrong = [] {
+        const char *env = std::getenv("PS2_DISC_WRONG");
+        if (!env || !*env) return std::pair<std::uint32_t, std::uint32_t>{1, 0};
+        char *end = nullptr;
+        const auto first = static_cast<std::uint32_t>(std::strtoul(env, &end, 16));
+        const auto last = *end == '-' ? static_cast<std::uint32_t>(std::strtoul(end + 1, nullptr, 16)) : first;
+        return std::pair<std::uint32_t, std::uint32_t>{first / 128 * 128, last / 128 * 128 + 128};
+    }();
+    const std::uint32_t lo = std::max(sector, wrong.first), hi = std::min(sector + count, wrong.second);
+    if (lo < hi) {
+        std::fprintf(stderr, "[disc] PS2_DISC_WRONG: read lsn 0x%X count %u gets lsn 0x%X-0x%X from +4 MB\n", sector, count, lo,
+                     hi - 1);
+        g_reader((static_cast<std::uint64_t>(lo) + 2048) * kSector, static_cast<std::uint8_t *>(out) + (lo - sector) * kSector,
+                 static_cast<std::size_t>(hi - lo) * kSector);
+    }
     return got > 0 || !count;
 }
 
