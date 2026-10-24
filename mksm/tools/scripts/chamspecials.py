@@ -42,11 +42,40 @@ def gate(donor, mask):
     return BASE + donor * 8 + mask
 
 
+def splice(tree, k, j):
+    """move top node j (just appended to list k) in front of the first sibling with the same input (+0x14 press,
+    hold, nothold, ignore), or right behind it when that one is the list head (heads are positional). The matcher
+    FUN_0016CE20 queues only the first sibling that matches; when its gate fails, FUN_0016F1F8 tries the LATER
+    siblings with the same input (FUN_0016F368, at most 30): a donor root behind the list's plain attack would never
+    be reached, one in front of Reptile's gated root falls through to it"""
+    top = tree.top(k)
+    assert top[-1] == j
+    n = tree.nodes[j]
+    same = [i for i in top[:-1] if sig(tree.nodes[i]) == sig(n)]
+    if not same:
+        return j
+    tree.set(top[-2], 'sibling', 0)
+    at = same[0]
+    if at == top[0]:
+        n.sibling = tree.nodes[at].sibling
+        tree.set(at, 'sibling', j)
+    else:
+        prev = top[top.index(at) - 1]
+        n.sibling = at
+        tree.set(prev, 'sibling', j)
+    return j
+
+
+def sig(n):
+    return (n.press, n.hold, n.nothold, n.ignore)
+
+
 def add(tree, wad, load=None):
     """graft the donors' specials into tree (Reptile's vscombos.Tree) and gate the special roots; load (dict) gets
     donor name -> set of donor global states the grafted nodes reach (plus their partners)"""
-    load = load if load is not None else {}
+    load = tree.cham_load = load if load is not None else {}
     taken = collections.defaultdict(int)     # (list, button) -> modes with a donor special there
+    grafted = set()
     for name, mode in DONORS:
         D = dt2.Fighter(name, wad)
         st = fstates.states(name, wad)
@@ -64,24 +93,34 @@ def add(tree, wad, load=None):
             if k not in tree.f.lists:
                 continue
             assert D.nodes[i].cond == 0, (name, i)
-            j = graft(i, 0, tree.top(k))
+            j = splice(tree, k, graft(i, 0, tree.top(k)))
             tree.nodes[j].cond = gate(1, 1 << (mode - 1))
+            grafted.add(j)
             taken[(k, D.nodes[i].press & 0xFF)] |= 1 << (mode - 1)
         for s in list(reach):
             p = st[s - D.first]['partner']
             if D.first <= p < D.end:
                 reach.add(p)
+    # Reptile's side: every other special root that plays a move (his own, the boss's, retargeted or added by
+    # vsboss.py), not the common-state roots of lists 20-24
     f, gated = tree.f, 0
-    for k, i in list(roots(f, tree.nodes, f.lists)):
-        n = tree.nodes[i]
-        mask = 7 & ~taken[(k, n.press & 0xFF)]
-        if mask == 7 or i in tree.added:
-            continue
-        assert n.cond == 0, i
-        n.cond = gate(0, mask)
-        # versus_combos.cpp writes a u32 at the field: keep the disc's +0x2E
-        tree.links.append((i, 0x2C, n.cond | int.from_bytes(n.tail[:2], 'little') << 16))
-        gated += 1
+    for k, h in sorted(f.lists.items()):
+        for i in tree.top(k):
+            n = tree.nodes[i]
+            mask = 7 & ~taken[(k, n.press & 0xFF)]
+            if not n.req & SPECIAL or n.state < dt2.COMMON[1] or i in grafted or mask == 7:
+                continue
+            assert n.cond == 0, i
+            n.cond = gate(0, mask)
+            if i < tree.n_disc - 1:
+                # versus_combos.cpp writes a u32 at the field: keep the disc's +0x2E
+                tree.links.append((i, 0x2C, n.cond | int.from_bytes(n.tail[:2], 'little') << 16))
+            gated += 1
+    tree.cham_counts = (len(grafted), gated)
+    # the splices re-link list ends several times: keep each field's last value only (versus_combos.cpp writes them
+    # in order)
+    last = {(i, off): v for i, off, v in tree.links}
+    tree.links[:] = [(i, off, v) for (i, off), v in last.items()]
     return gated
 
 
@@ -91,11 +130,10 @@ def main(argv):
         return 2
     import vsfallback
     wad = Wad()
-    tree = vsfallback.build('reptile', wad)
-    n0 = len(tree.added)
-    load = {}
-    gated = add(tree, wad, load)
-    print('%d nodes added (after %d of vsfallback/vsboss), %d Reptile roots gated' % (len(tree.added) - n0, n0, gated))
+    tree = vsfallback.build('reptile', wad)      # calls add()
+    load = tree.cham_load
+    print('%d donor roots grafted (%d nodes added in all), %d Reptile roots gated' % (
+        tree.cham_counts[0], len(tree.added), tree.cham_counts[1]))
     total = 0
     for name, _ in DONORS:
         first = dt2.FIGHTERS[name][2]

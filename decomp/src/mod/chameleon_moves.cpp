@@ -4,7 +4,8 @@
 // donor states on group 84. This hook evaluates those ids:
 //   id = 12723 + donor * 8 + mask, mask bit m - 1 = the node is on in mode m (1 yellow Scorpion, 2 blue Sub-Zero,
 //   3 green Reptile; rainbow plays green's). Not Chameleon: Reptile's own roots (donor 0) pass, the donors' never.
-// A failed gate makes FUN_0016F1F8 try the next node queued for the same input, so one press finds the mode's move.
+// A failed gate makes FUN_0016F1F8 try the later siblings with the same input (FUN_0016F368, at most 30): chamspecials.py
+// splices each donor root in front of (or right behind, at a list head) Reptile's gated root for that input.
 //
 // The hook: int fn_2e7f30(Fighter *a0, int cond) at 0x002E7F30, the condition test of command nodes (FUN_0016F1F8)
 // and frame events (FUN_002E6F98 / FUN_002E7240); every other id runs the original.
