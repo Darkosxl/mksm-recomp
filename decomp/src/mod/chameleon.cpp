@@ -112,6 +112,7 @@ constexpr std::uint32_t kState = 0x000A0000u;
 //         layered variant: more than 5 texture pages), +0xB u8 1: said so, +0xC u32 rainbow phase (frames, mod
 //         kRainbowCycle), +0x10 u32 that slot's CLUT address, +0x14 u32 build heap + 1 to report on his next frame
 //         (0: none), +0x18 u32 and +0x1C u32 the model build's first and end address
+//   +0x60 s32[2] each slot's own (Reptile's) stance (chameleon_moves.cpp)
 //   +0x80 "CHAMELEON"
 constexpr std::uint32_t kArmed = kState + 0x00, kSelectSlot = kState + 0x04, kSelectOrig = kState + 0x08,
                         kSelectShown = kState + 0x0C, kSelectHeld = kState + 0x10, kSelectPicked = kState + 0x12,

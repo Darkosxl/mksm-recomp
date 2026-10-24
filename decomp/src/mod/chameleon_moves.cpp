@@ -18,6 +18,9 @@
 
 #include "chameleon.hpp"
 
+#include <algorithm>
+#include <iterator>
+
 namespace {
 
 using namespace ps2;
@@ -127,25 +130,34 @@ PS2_MOD(00167458, chameleon_spear_flag) {
 
 // Stance per colour mode. FUN_00169A10(slot, set) loads the player's stance (0x004E8388 + 4 * slot, the state the end
 // of a move returns to: the set's +0, or its +8 when locked on an enemy) and walk from the stance set table 0x0064B9D8
-// (28-byte sets, FUN_001F5758); the game calls it on spawn, lock-on changes and frame event 303. In yellow / blue a
-// Chameleon stands as Scorpion / Sub-Zero (their a00_stnd and c00_stnd, loaded by versus_boss_moves.cpp); his walk and
-// run stay Reptile's. A mode switch remaps it at once (chameleon.cpp next_mode); the game walks him into it.
+// (28-byte sets, FUN_001F5758); the game calls it on spawn, lock-on changes and frame event 303 (FUN_001F29D0 resets
+// the stance to the group's last one). In yellow / blue a Chameleon stands as Scorpion / Sub-Zero: Reptile's a00_stnd
+// and his story b00_stnd / b50_st_m become their a00_stnd, his c00_stnd (locked on) their c00_stnd (all four loaded by
+// versus_boss_moves.cpp; their b-series is not: the 200 clip slots are full). His walk and run stay Reptile's. Reptile's
+// own stance is kept per slot, so a switch back restores it; a mode switch remaps at once (chameleon.cpp next_mode) and
+// the game walks him into it.
 namespace {
 
 constexpr std::uint32_t kStance = 0x004E8388u, kFighters = 0x005E6B40u, kFighterSize = 0x33C0u;
-// a00_stnd, c00_stnd per mode (rainbow and green are Reptile's)
-constexpr std::int32_t kStances[4][2] = {{2299, 2317}, {1994, 2012}, {2515, 2534}, {2299, 2317}};
+constexpr std::uint32_t kOwnStance = 0x000A0060u; // chameleon.cpp's state block, past the Player records: s32 [slot]
+constexpr std::int32_t kOwn[4] = {2299, 2309, 2315, 2317}; // a00_stnd, b00_stnd, b50_st_m, c00_stnd
+constexpr std::int32_t kAs[2][4] = {{1994, 1994, 1994, 2012}, {2515, 2515, 2515, 2534}}; // yellow, blue
 
 }
 
 void chameleon::restance(std::uint32_t slot) {
     const int m = mode(kFighters + slot * kFighterSize);
-    if (m < 0) return;
-    const std::uint32_t at = kStance + 4 * slot;
+    if (m < 0 || slot > 1) return;
+    const std::uint32_t at = kStance + 4 * slot, own_at = kOwnStance + 4 * slot;
     const std::int32_t s = rd<std::int32_t>(at);
-    for (const auto &k : kStances)
-        for (int j = 0; j < 2; ++j)
-            if (s == k[j]) return wr<std::int32_t>(at, kStances[m][j]);
+    if (std::find(std::begin(kOwn), std::end(kOwn), s) != std::end(kOwn)) wr<std::int32_t>(own_at, s);
+    const std::int32_t own = rd<std::int32_t>(own_at);
+    if (!own) return;
+    std::int32_t to = own;
+    if (m == 1 || m == 2)
+        for (int j = 0; j < 4; ++j)
+            if (own == kOwn[j]) to = kAs[m - 1][j];
+    wr<std::int32_t>(at, to);
 }
 
 PS2_MOD(00169A10, chameleon_stance) {
