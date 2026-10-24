@@ -25,7 +25,7 @@ using namespace ps2::gpr;
 
 constexpr std::uint32_t kBase = 12723, kIds = 16;
 constexpr int kGreen = 3;
-constexpr std::uint16_t kReptile = 84, kAsDonor = 82;
+constexpr std::uint16_t kAsDonor = 82;
 
 // gate k (id - kBase) for that fighter
 bool on(std::uint32_t fighter, std::uint32_t k) {
@@ -34,13 +34,13 @@ bool on(std::uint32_t fighter, std::uint32_t k) {
     return mode < 0 ? !donor : (k & 7) >> ((mode ? mode : kGreen) - 1) & 1;
 }
 
-// the original with the fighter's group shown as kAsDonor; guest code run from a hook must not be preempted (a thread
+// the original with the fighter's group shown as `shown`; guest code run from a hook must not be preempted (a thread
 // switch would unwind the host stack with the group still swapped), so the budget is lifted around it
-void as_donor(Cpu &c, std::uint32_t fighter, DecompFn &hook) {
+void as_donor(Cpu &c, std::uint32_t fighter, DecompFn &hook, std::uint16_t shown = kAsDonor) {
     const std::uint16_t group = rd<std::uint16_t>(fighter + 0x1E0E);
     const std::int32_t budget = c.budget;
     c.budget = 0x40000000;
-    wr<std::uint16_t>(fighter + 0x1E0E, kAsDonor);
+    wr<std::uint16_t>(fighter + 0x1E0E, shown);
     hook.enabled = false;
     const bool back = call(c, hook.addr, Ra{c.r[ra].w[0]});
     hook.enabled = true;
@@ -73,19 +73,38 @@ PS2_MOD(002E7F30, chameleon_moves_cond) {
     decomp::hook_002E7F30.enabled = true;
 }
 
-// Upgrades for Reptile and Chameleon (group 84). The Experience store picks its page by fighter group, key = the group
-// if it is 0, 1, 82 or 88, else 0 (Liu Kang's); Liu Kang's levels gate nothing in Reptile's tree. Group 84 gets
-// Scorpion's page: the levels are per player slot, not per fighter (FUN_001BB3F8), so his Specials gate the donor
-// specials' level variants and his Combos the combo extensions versus_combos.inc gave Reptile. The mapping is inline in
-// every function that reads the group from the fighter (the current one: *(0x67C59C + 12 * (*0x5D2498 + 1))):
-// 0x0019FF30 (the page drawn every frame), 0x001A1200 (store entry: the highlighted node), 0x001A1B48 (owned flags from
-// the levels), 0x001A1010 (the preview video); they run with the fighter shown as group 82. FUN_001A30F0 takes the
-// group as a1 (a0 = the menu) and serves the purchases (FUN_001A2D48) and the "something to buy" hint.
+// Experience store pages for the fighters without one. The store picks its page by fighter group, key = the group if
+// it is 0, 1, 82 or 88, else 0 (Liu Kang's). The levels are per player slot, not per fighter (FUN_001BB3F8: Specials
+// moves 0-3, Combos 13-17), and every command tree reads them alike (requirement bits 0x10000000 << special and
+// 0x100000000 << level, FUN_001B89E0; conditions S0L1-S3L5, C0-C5), so any page drives any tree. The page decides
+// what can be bought and whose names and previews show: Specials to levels 4/4/3/4, 3/3/5/4, 3/3/3/4, 1/3/3/4 and
+// 5, 5, 3, 2 Combos (Liu Kang, Kung Lao, Scorpion, Sub-Zero). A fighter gets the page that sells every combo its tree
+// checks and, of those, the one whose combos versus_combos.inc gave it (Baraka and Kitana C1 + C3 / C4 from Kung
+// Lao, Cage C1, C2, C5 from Liu Kang). Specials do not tell pages apart for them: specials 1-3 play the same move at
+// every level, special 4 adds moves at levels 2-4 on every page. Group 84 keeps Scorpion's page, whose Specials are
+// Chameleon's donor specials (its 3 Combos leave the C4 / C5 ports unsold). Cage's 0 is the store's own fallback, made
+// explicit so the preview video (FUN_001A1010, table 0x4C3E00: groups 0, 1, 88, 82) follows it too.
+// The mapping is inline in every function that reads the group from the fighter (the current one:
+// *(0x67C59C + 12 * (*0x5D2498 + 1))): 0x0019FF30 (the page drawn every frame), 0x001A1200 (store entry: the
+// highlighted node), 0x001A1B48 (owned flags from the levels), 0x001A1010 (the preview video); they run with the
+// fighter shown as the page's group. FUN_001A30F0 takes the group as a1 (a0 = the menu) and serves the purchases
+// (FUN_001A2D48) and the "something to buy" hint.
 namespace {
+
+// fighter group -> store page: Reptile / Chameleon, Baraka, Kitana, Johnny Cage
+constexpr std::uint16_t kStorePage[][2] = {{84, 82}, {83, 1}, {89, 1}, {90, 0}};
+
+// the page for that group, or -1 (the game's own)
+int store_page(std::uint32_t group) {
+    for (const auto &p : kStorePage)
+        if (p[0] == group) return p[1];
+    return -1;
+}
 
 void store(Cpu &c, DecompFn &hook) {
     const std::uint32_t fighter = rd<std::uint32_t>(0x0067C59Cu + 12 * (rd<std::uint32_t>(0x005D2498u) + 1));
-    if (fighter && rd<std::uint16_t>(fighter + 0x1E0E) == kReptile) return as_donor(c, fighter, hook);
+    const int page = fighter ? store_page(rd<std::uint16_t>(fighter + 0x1E0E)) : -1;
+    if (page >= 0) return as_donor(c, fighter, hook, static_cast<std::uint16_t>(page));
     hook.enabled = false;
     tail(c, hook.addr);
     hook.enabled = true;
@@ -99,7 +118,8 @@ PS2_MOD(001A1B48, reptile_store_owned) { store(c, decomp::hook_001A1B48); }
 PS2_MOD(001A1010, reptile_store_video) { store(c, decomp::hook_001A1010); }
 
 PS2_MOD(001A30F0, reptile_store_page) {
-    if (c.r[a1].w[0] == kReptile) c.r[a1].d[0] = kAsDonor;
+    const int page = store_page(c.r[a1].w[0]);
+    if (page >= 0) c.r[a1].d[0] = static_cast<std::uint32_t>(page);
     decomp::hook_001A30F0.enabled = false;
     tail(c, 0x001A30F0u);
     decomp::hook_001A30F0.enabled = true;
