@@ -16,7 +16,8 @@
 //  - Switch: L3 (pad bit 0x200, unused by every fighter's command tree), read per actor in 0x001EAF30 (the per-actor
 //    pad read) from the raw held word; the remapped words the actor keeps drop L3.
 //  - Select screen, 0x0013CD80 (its per-frame input): cell 7's pre-rendered image (front-end file 78 entry 4, found
-//    by its CLUT's hash) gets a recoloured copy of its CLUT for the mode of the player on cell 7; L3 there cycles it.
+//    by its CLUT's hash) gets a recoloured copy of its CLUT for the mode of the player on cell 7 (L3 only switches
+//    in game).
 //    0x001E6EF0 (get_string) answers "CHAMELEON" for Reptile's name (text 0x6D0) to the select screen's calls.
 //  - Name elsewhere (HUD, menus), 0x001E6EC8 (character name: get_string(0x67C + group)): "CHAMELEON" for group 84
 //    while a player is Chameleon. Story enemies that look like Reptile are other groups (0x3B), so they keep theirs.
@@ -68,14 +69,13 @@ constexpr std::uint64_t kPageClut[4] = {0x18170f8c6aa34322ull, 0x6154cd79faad23e
 constexpr std::uint32_t kState = 0x000A0000u;
 //   +0x00 u32 armed: the next ADXT start of file 79 plays the Chameleon line
 //   +0x04 u32 the select image's slot, +0x08 its original CLUT address, +0x0C the mode its copy shows (+1, 0 = none)
-//   +0x10 u8[2] select screen: L3 held last frame, per port
 //   +0x20 Player[2], 0x20 bytes each:
 //         +0 u8 Chameleon (set by every player load), +1 u8 mode (0-3), +2 u8 L3 held last frame,
 //         +3 u8 the mode his texture slots show, +4 u32 where file 6851 was loaded (0: not attached; only a flag, the
 //         buffer is freed after the load)
 //   +0x80 "CHAMELEON"
 constexpr std::uint32_t kArmed = kState + 0x00, kSelectSlot = kState + 0x04, kSelectOrig = kState + 0x08,
-                        kSelectShown = kState + 0x0C, kSelectHeld = kState + 0x10, kPlayers = kState + 0x20,
+                        kSelectShown = kState + 0x0C, kPlayers = kState + 0x20,
                         kName = kState + 0x80;
 constexpr std::uint32_t kSelectBackup = 0x000A0400u, kSelectCopy = 0x000A0800u;  // 1 KB each
 constexpr std::uint32_t kCostumeBackup = 0x000A1000u;  // + player * 0x1000 + page * 0x400
@@ -279,11 +279,6 @@ void select_image(std::uint32_t select) {
     std::uint32_t on = 0;
     for (std::uint32_t k = mode == 0 ? 1u : 2u; k-- > 0;)
         if (rd<std::uint32_t>(select + 0x3C + 4 * k) == 7) on = k;
-    // Ko-op: cursor k's pad port is at +0x2C + 4k (FUN_00378640; 2 = no pad yet). 0x50BC10 is only filled at the start.
-    for (std::uint32_t k = 0; k < (mode == 0 ? 1u : 2u); ++k) {
-        const std::uint32_t port = mode == 0 ? port_of(0) : rd<std::uint32_t>(select + 0x2C + 4 * k);
-        if (port < 2 && l3_pressed(port, kSelectHeld + k) && rd<std::uint32_t>(select + 0x3C + 4 * k) == 7) next_mode(k), on = k;
-    }
     const std::uint8_t shown = player(on).mode;
     if (rd<std::uint32_t>(slot + 0x38) != kSelectCopy || rd<std::uint32_t>(kSelectShown) != shown + 1u) {
         recolour(kSelectBackup, kSelectCopy, shown, true);
