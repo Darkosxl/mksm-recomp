@@ -11,7 +11,7 @@
 #                                               f<f0>+10 (debug_call; hex fighter, decimal state, 0 = no call), N
 #                                               frames (150): audio.wav + stems.wav, frames/ every 2nd, fx.txt (cue
 #                                               lookups, event-114 calls, bank loads), watch.txt (P1 state)
-# Env: MOD (1) runs with PS2_MOD=1; BIN = ps2run.
+# Env: MOD (1) runs with PS2_MOD=1; PAD2 (1) connects pad 2 in move runs (0 for story states); BIN = ps2run.
 set -uo pipefail
 mode=${1:?usage: chamfx.sh vsstart|story|move <out> ...}; O=${2:?out}; shift 2
 G=~/w/games/mksm S=~/w/remaster-data/states
@@ -36,7 +36,9 @@ story)
 move)
   state=${1:?state} f0=${2:?f0} fighter=${3:?fighter} gs=${4:?gstate} n=${5:-150}
   end=$((f0 + n)) args=(--frames-dir "$O/frames" --frame-every 2)
-  export PS2_DECOMP=1D6808,31AE78,2E9700,1CF518,3195F8 PS2_TRACE_FX=$O/fx.txt PS2_DUMP_AUDIO=$O/audio.wav PS2_DUMP_STEMS=$O/stems.wav
+  [ "${PAD2:-1}" = 0 ] || args+=(--pad2)  # a Versus state without pad 2 pauses on "controller removed"
+  mkdir -p "$O/frames"
+  export PS2_DECOMP=1D6808,1EB378,31AE78,2E9700,1CF518,3195F8 PS2_TRACE_FX=$O/fx.txt PS2_DUMP_AUDIO=$O/audio.wav PS2_DUMP_STEMS=$O/stems.wav
   [ "$gs" = 0 ] || export PS2_CALL="$((f0 + 10)):303340:$fighter:$(printf %X "$gs")"
   export PS2_WATCH="5E6B64,4;5E6B5C,4;5E894E,2" PS2_WATCH_OUT=$O/watch.txt PS2_WATCH_EVERY=1 ;;
 *) echo "unknown mode $mode" >&2; exit 2 ;;

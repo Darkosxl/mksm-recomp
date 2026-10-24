@@ -6,6 +6,8 @@
 // at the start of the update in that frame, with every GPR restored afterwards; then the recompiled update runs
 // unchanged (this hook off for the one call). Not state-exact on the frames that call: the callee's own effects are
 // the point. Each call is logged to stderr with v0.
+// fn_1d6808 does not run in Versus; there PS2_DECOMP=1EB378 hooks the per-frame fighter update fn_1eb378 at
+// 0x001EB378 (it walks the fighters from 0x5E6B40) the same way. With both on, whichever runs first in a frame calls.
 #include "ps2/decomp.hpp"
 #include "ps2/system.hpp"
 
@@ -17,8 +19,6 @@ namespace {
 
 using namespace ps2;
 using namespace ps2::gpr;
-
-constexpr std::uint32_t kSelf = 0x001D6808u;
 
 struct Call {
     unsigned long long frame;
@@ -43,9 +43,8 @@ std::vector<Call> &calls() {
     return v;
 }
 
-}
-
-PS2_DECOMP(001D6808, debug_call) {
+// the calls due this frame; false: control left (return at once)
+bool run_calls(Cpu &c) {
     for (Call &k : calls()) {
         if (k.done || k.frame != frame_count()) continue;
         k.done = true;
@@ -58,9 +57,23 @@ PS2_DECOMP(001D6808, debug_call) {
         for (unsigned i = 0; i < 32; ++i) c.r[i] = saved[i];
         std::fprintf(stderr, "[call] frame %llu %08X(%08X, %08X) -> %08X%s\n", k.frame, k.addr, k.a0, k.a1, v,
                      back ? "" : " (did not come back)");
-        if (!back) return;
+        if (!back) return false;
     }
+    return true;
+}
+
+}
+
+PS2_DECOMP(001D6808, debug_call) {
+    if (!run_calls(c)) return;
     decomp::hook_001D6808.enabled = false;
-    tail(c, kSelf);
+    tail(c, 0x001D6808u);
     decomp::hook_001D6808.enabled = true;
+}
+
+PS2_DECOMP(001EB378, debug_call_fighters) {
+    if (!run_calls(c)) return;
+    decomp::hook_001EB378.enabled = false;
+    tail(c, 0x001EB378u);
+    decomp::hook_001EB378.enabled = true;
 }
