@@ -1,10 +1,14 @@
 #include "ps2/disc.hpp"
 
+#include "ps2/system.hpp"
+
 #include <algorithm>
 #include <cctype>
 #include <cstdio>
+#include <cstdlib>
 #include <cstring>
 #include <map>
+#include <memory>
 
 namespace ps2::disc {
 
@@ -62,6 +66,61 @@ void index_layer(std::uint32_t pvd_sector, std::uint32_t base) {
 
 }
 
+// PS2_DISC_LATENCY=<ms>[:<jitter ms>[:<seed>]] (diagnostic, native only): the browser's remote disc (host/web.cpp,
+// non-blocking mode) in emulated time. 256 KB chunks, a 256-chunk LRU cache and the same sequential read-ahead (up to
+// 16 chunks); a chunk arrives <ms> (+ 0..jitter, seeded) of emulated time after it is first wanted, and the emulated
+// drive waits for it (iop::kernel::disc_arrived) as it does in a browser on a slow connection.
+Probe latency_probe() {
+    const char *env = std::getenv("PS2_DISC_LATENCY");
+    if (!env || !*env) return {};
+    struct Model {
+        std::uint64_t latency = 0, jitter = 0, rng = 1, use_clock = 0, last = ~0ull, run = 0, waits = 0;
+        std::map<std::uint64_t, std::pair<std::uint64_t, std::uint64_t>> chunks;  // index -> {ready_at, used}
+    };
+    auto m = std::make_shared<Model>();
+    unsigned long long ms = 0, jitter = 0, seed = 1;
+    std::sscanf(env, "%llu:%llu:%llu", &ms, &jitter, &seed);
+    m->latency = ms * kEeClock / 1000;
+    m->jitter = jitter * kEeClock / 1000;
+    m->rng = seed ? seed : 1;
+    std::fprintf(stderr, "[disc] PS2_DISC_LATENCY: %llu ms + 0..%llu ms per 256 KB chunk (seed %llu)\n", ms, jitter, seed);
+    static constexpr std::uint64_t kChunk = 256u << 10, kSlots = 256, kReadAhead = 16;
+    auto want = [m](std::uint64_t index) -> std::uint64_t {
+        if (index * kChunk >= g_size) return 0;
+        auto it = m->chunks.find(index);
+        if (it == m->chunks.end()) {
+            if (m->chunks.size() >= kSlots) {
+                auto victim = m->chunks.begin();
+                for (auto i = m->chunks.begin(); i != m->chunks.end(); ++i)
+                    if (i->second.second < victim->second.second) victim = i;
+                m->chunks.erase(victim);
+            }
+            m->rng ^= m->rng << 13;
+            m->rng ^= m->rng >> 7;
+            m->rng ^= m->rng << 17;
+            const std::uint64_t extra = m->jitter ? m->rng % (m->jitter + 1) : 0;
+            it = m->chunks.emplace(index, std::make_pair(ps2::now() + m->latency + extra, 0)).first;
+        }
+        it->second.second = ++m->use_clock;
+        return it->second.first;
+    };
+    return [m, want](std::uint64_t offset, std::size_t size) {
+        if (!size) return true;
+        const std::uint64_t last = (offset + size - 1) / kChunk, t = ps2::now();
+        bool ready = true;
+        for (std::uint64_t index = offset / kChunk; index <= last; ++index) {
+            ready = want(index) <= t && ready;
+            if (!(index <= m->last && m->last - index <= kReadAhead * 4)) {
+                m->run = index == m->last + 1 ? m->run + 1 : 0;
+                m->last = index;
+            }
+        }
+        const std::uint64_t from = std::max(last, m->last);
+        for (std::uint64_t k = 1; k <= std::min(m->run * 2, kReadAhead); ++k) want(from + k);
+        return ready;
+    };
+}
+
 bool open(const std::string &path) {
     g_file = std::fopen(path.c_str(), "rb");
     if (!g_file) return false;
@@ -80,7 +139,7 @@ bool open(const std::string &path) {
         fseeko(file, static_cast<off_t>(offset), SEEK_SET);
 #endif
         return std::fread(out, 1, bytes, file);
-    });
+    }, latency_probe());
 }
 
 bool open(const std::string &name, std::uint64_t size, Reader reader, Probe probe) {
