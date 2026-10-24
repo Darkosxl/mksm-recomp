@@ -5,6 +5,8 @@
 // clip where the target has it (vscombos.py), else the target's own move for that button and direction that fits
 // best (vsfallback.py). The result is versus_combos.inc. No new states, clips or cancel windows: only command-tree
 // nodes (combo links run through the command queue, FUN_0016B138, not through ERG.DAT cancel windows).
+// Reptile's table also carries the story boss's attacks (vsboss.py): new special nodes, and some of his own nodes
+// retargeted to boss states (links on field 0x00); versus_boss_moves.cpp makes those states playable on him.
 //
 // The hook: int fn_2f8640(int group, S56 *nodes) at 0x002F8640, called by the four ERG.DT2 loaders (0x00320328,
 // 0x00320740, 0x003209A0, 0x00320E58) right after they copied the fighter's command tree (DT2 section 2, 56-byte
@@ -28,8 +30,8 @@ using namespace ps2::gpr;
 
 struct Link {
     std::uint16_t node;  // disc node to patch
-    std::uint16_t field; // 0x20 first child / 0x24 next sibling
-    std::uint32_t value; // index of an added node
+    std::uint16_t field; // 0x20 first child / 0x24 next sibling / 0x00 target state (s16)
+    std::uint32_t value; // index of an added node (0: none), or the new target state
     std::int16_t state;  // the disc node's target state, checked first
 };
 
@@ -93,7 +95,11 @@ bool graft(Cpu &c, const Port &p, std::uint32_t buf) {
     for (std::uint32_t b = 0; b < kNode; ++b) end[b] = rd<std::uint8_t>(buf + (n - 1) * kNode + b);
     for (std::uint32_t b = 0; b < p.count * kNode; ++b) wr<std::uint8_t>(buf + (n - 1) * kNode + b, p.nodes[b]);
     for (std::uint32_t b = 0; b < kNode; ++b) wr<std::uint8_t>(buf + (n - 1 + p.count) * kNode + b, end[b]);
-    for (std::uint32_t i = 0; i < p.link_count; ++i) wr<std::uint32_t>(buf + p.links[i].node * kNode + p.links[i].field, p.links[i].value);
+    for (std::uint32_t i = 0; i < p.link_count; ++i) {
+        const std::uint32_t at = buf + p.links[i].node * kNode + p.links[i].field;
+        if (p.links[i].field) wr<std::uint32_t>(at, p.links[i].value);
+        else wr<std::int16_t>(at, static_cast<std::int16_t>(p.links[i].value));
+    }
     const std::uint32_t h = kHeaps + heap * kHeapStride;
     std::fprintf(stderr, "[mod] versus_combos: %s +%u command nodes (heap %d, %u bytes left)\n", p.name, p.count, heap,
                  rd<std::uint32_t>(h + 0xC) - rd<std::uint32_t>(h + 8));

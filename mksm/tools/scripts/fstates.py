@@ -82,6 +82,8 @@ FIGHTERS = {
     'subzero': (88, 2515, 2684, 6801),
     'kitana': (89, 2684, 2831, 6811),
     'cage': (90, 2831, 2978, 6821),
+    'big_snake': (50, 1338, 1345, 6421),      # story boss (Reptile fight, map 0x90): the serpent
+    'reptile_npc': (59, 1564, 1595, 6511),    # story boss (Reptile fight, map 0x90): Reptile himself
 }
 DONORS = ('subzero', 'scorpion', 'liukang', 'kunglao')
 TARGETS = ('reptile', 'baraka', 'kitana', 'cage')
