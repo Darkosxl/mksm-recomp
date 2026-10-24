@@ -80,7 +80,8 @@ add_library(ps2runtime STATIC
     runtime/src/iop/sif.cpp
     runtime/src/iop/cdvdfsv.cpp
     runtime/src/decomp/decomp.cpp
-    runtime/src/decomp/difftest.cpp)
+    runtime/src/decomp/difftest.cpp
+    runtime/src/decomp/mod_data.cpp)
 target_include_directories(ps2runtime PUBLIC runtime/include)
 target_compile_options(ps2runtime PRIVATE -Wall -Wextra)
 # SSE4.1 (every x86-64 CPU since 2008): floor/ceil inline as roundss instead of libm calls; the render thread's binning

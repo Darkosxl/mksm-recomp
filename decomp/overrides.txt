@@ -1,6 +1,13 @@
 # EE functions whose entry gets the decomp hook (decomp/README.md): address, then anything (name, notes).
 # Each needs a PS2_DECOMP(<address>, name) in decomp/src; retranslate after editing (mksm/build.sh --retranslate).
+0013B3B0	chameleon_announce	decomp/src/mod/chameleon.cpp (PS2_MOD)
+0013CD80	chameleon_select	decomp/src/mod/chameleon.cpp (PS2_MOD)
 001B90B8	versus_round_upgrades	decomp/src/mod/versus_upgrades.cpp (PS2_MOD)
+001CE6E8	chameleon_costume	decomp/src/mod/chameleon.cpp (PS2_MOD)
+001D0688	chameleon_textures	decomp/src/mod/chameleon.cpp (PS2_MOD)
+001E6EC8	chameleon_group_name	decomp/src/mod/chameleon.cpp (PS2_MOD)
+001E6EF0	chameleon_name	decomp/src/mod/chameleon.cpp (PS2_MOD)
+001EAF30	chameleon_switch	decomp/src/mod/chameleon.cpp (PS2_MOD)
 002124C0	ArchiveGetFile	decomp/src/fileio/fileiodrv.cpp
 00213C78	MatrixSetTranslation	decomp/src/math/vu0math.cpp
 00213C98	MatrixGetTranslation	decomp/src/math/vu0math.cpp
@@ -73,4 +80,5 @@
 002F8640	versus_combos	decomp/src/mod/versus_combos.cpp (PS2_MOD)
 00326140	ObjectGetGroundY	decomp/src/paradox/object.cpp
 00379988	PointLightIsOn	decomp/src/paradox/point_light.cpp
+0041ABB8	chameleon_voice	decomp/src/mod/chameleon.cpp (PS2_MOD)
 00474EDC	strlen	decomp/src/libc/strlen.cpp

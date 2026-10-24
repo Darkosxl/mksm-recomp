@@ -20,6 +20,8 @@ Usage:
                                   the 4x pages as PACKDIR/<key>.pam (+ sizes.txt, fx.txt for the rainbow mode);
                                   KEYS: lines "<mode> <page> <key>", the keys the game shows (a PS2_TEX_DUMP run)
   chameleon.py key PNG            the texture-pack key of a 1x page as the game shows it (decoded RGBA, PS2 alpha)
+  chameleon.py keys               the KEYS lines for `pack`, computed from the mod's own recolour (no dump needed;
+                                  check them against a PS2_TEX_DUMP run)
 """
 import os
 import struct
@@ -168,6 +170,90 @@ def paint_select(src, mka, mode='rainbow'):
     return rgba
 
 
+# ---- the mod's runtime recolour (decomp/src/mod/chameleon.cpp), integer for integer: the textures the game shows ----
+MOD_MODES = ('rainbow', 'scorpion', 'subzero', 'reptile')   # the mod's mode numbers 0-3 (rainbow, yellow, blue, green)
+GOLD100 = (15145, 10526, 2357)                               # load_mka()['gold'] x100
+
+
+def _luma1000(r, g, b):
+    return 299 * r + 587 * g + 114 * b
+
+
+def _div_round(n, d):
+    return (2 * n + d) // (2 * d)
+
+
+def _clamp(v):
+    return max(0, min(255, v))
+
+
+def mod_green(r, g, b):
+    mx, mn = max(r, g, b), min(r, g, b)
+    d = mx - mn
+    if mx < 21 or 5 * d <= mx:
+        return False
+    if mx == r:
+        return g >= b and 12 * (g - b) > 11 * d
+    if mx == g:
+        return 12 * (b - r) < 11 * d
+    return False
+
+
+def mod_bronze(r, g, b):
+    mx, mn = max(r, g, b), min(r, g, b)
+    d = mx - mn
+    if mx <= 51 or 10 * d <= 3 * mx or mx != r or g < b:
+        return False
+    return d <= 4 * (g - b) and 12 * (g - b) <= 11 * d
+
+
+def mod_recolour(clut, mode, select):
+    """the mod's recolour of a 256x4 CLUT (any order) for mode name `mode`"""
+    out = clut.copy()
+    for i, (r, g, b, a) in enumerate(clut.astype(int).tolist()):
+        l = _luma1000(r, g, b)
+        if mod_green(r, g, b):
+            if MODES[mode] is None:
+                r = g = b = _clamp(_div_round(l * 23, 20000))
+            else:
+                k = MODES[mode]
+                lc = _luma1000(*k)
+                r, g, b = (_clamp(_div_round(k[j] * l, lc)) for j in range(3))
+        elif select and mod_bronze(r, g, b):
+            lg = _luma1000(*GOLD100)
+            r, g, b = (_clamp(_div_round(GOLD100[j] * l * 5, lg * 4)) for j in range(3))
+        out[i] = (r, g, b, a)
+    return out
+
+
+def mod_page(wad, fid, idx, mode, select=False):
+    """file fid entry idx as the game shows it with the mod in `mode` (RGBA, PS2 alpha)"""
+    b = wad.get(fid)
+    o, s = entries(b)[idx]
+    t = b[o:o + s]
+    w, h = struct.unpack_from('<2I', t, 0x10)
+    clut = mod_recolour(np.frombuffer(t[0x80:0x480], np.uint8).reshape(256, 4), mode, select)
+    if not select:
+        clut[0] = 0  # the game's copy of a character page has CLUT entry 0 cleared (seen in its texture slots)
+    i = np.arange(256)
+    clut = clut[(i & ~0x18) | ((i & 0x8) << 1) | ((i & 0x10) >> 1)]
+    return clut[np.frombuffer(t[0x480:0x480 + w * h], np.uint8).reshape(h, w)]
+
+
+def mod_keys():
+    """'<mode> <page> <key>' for every page the mod recolours, as the game will key them (pages without cloth have one
+    key for every mode: listed once, under a non-rainbow mode, so the rainbow glow (fx.txt) stays off them)"""
+    wad, lines, seen = Wad(), [], {}
+    for page in list(PAGES) + ['s']:
+        for mode in ('scorpion', 'subzero', 'reptile', 'rainbow'):
+            k = '%016x' % key(mod_page(wad, *(SELECT if page == 's' else (COSTUME, page)), mode, page == 's'))
+            if k in seen:
+                continue
+            seen[k] = (mode, page)
+            lines.append('%s %s %s' % (mode, page, k))
+    return lines
+
+
 def load_mka(out):
     tex = os.path.join(out, 'mka')
     im = lambda n: np.asarray(Image.open(os.path.join(tex, '0_%s.png' % n)).convert('RGBA'))
@@ -278,6 +364,8 @@ def main(argv):
         a = np.asarray(Image.open(argv[1]).convert('RGBA')).copy()
         a[..., 3] = (a[..., 3].astype(int) * 128 + 127) // 255
         print('%016x' % key(a))
+    elif argv == ['keys']:
+        print('\n'.join(mod_keys()))
     elif argv == ['check']:
         assert '%016x' % key(p2n(Wad(), *SELECT)) == '0aed83b92ebf5e11'     # pack-v2 holds this key
         print('ok')

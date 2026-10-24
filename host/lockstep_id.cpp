@@ -1,5 +1,6 @@
 #include "lockstep_id.hpp"
 
+#include "ps2/mod_data.hpp"
 #include "ps2/system.hpp"
 
 #include <unistd.h>
@@ -8,6 +9,7 @@
 #include <cstdint>
 #include <cstdio>
 #include <cstdlib>
+#include <cstring>
 #include <fstream>
 #include <iterator>
 #include <vector>
@@ -49,7 +51,8 @@ bool local_only(const std::string &name) {
                                    "PS2_VU_JIT", "PS2_PNACH", "PS2_RTC", "PS2_PROFILE", "PS2_PROFILE_FROM", "PS2_CENSUS", "PS2_DRAW_DUMP",
                                    "PS2_DUMP_AUDIO", "PS2_DUMP_STEMS", "PS2_DUMP_VRAM", "PS2_NETPLAY_ASYNC", "PS2_RASTER_DIAG",
                                    "PS2_GS_HW", "PS2_GS_SPLIT", "PS2_GS_PRIMS", "PS2_SUBMIT_THREAD", "PS2_PIPELINES", "PS2_WEB_THREADS", "PS2_FRAME_LOG",
-                                   "PS2_DISC_BLOCK"};
+                                   "PS2_DISC_BLOCK",
+                                   "PS2_MOD_DATA"};  // the folder is local; the files' content goes in as "mod_data"
     for (const char *n : kNames)
         if (name == n) return true;
     return name.rfind("PS2_TRACE_", 0) == 0 || name.rfind("PS2_LOCKSTEP_", 0) == 0;
@@ -84,12 +87,26 @@ Identity identity() {
         const std::string kv = *e;
         if (kv.rfind("PS2_", 0) == 0 && !local_only(kv.substr(0, kv.find('=')))) env.push_back(kv);
     }
+    // the gameplay mods' host files (ps2/mod_data.hpp): by content, only when a folder is set
+    std::string mod_data;
+    if (const char *dir = std::getenv("PS2_MOD_DATA"); dir && *dir) {
+        std::vector<std::uint8_t> all;
+        for (const char *name : ps2::kModDataFiles) {
+            const std::vector<std::uint8_t> *bytes = ps2::mod_data(name);
+            const std::uint64_t size = bytes ? bytes->size() : 0;
+            all.insert(all.end(), name, name + std::strlen(name) + 1);
+            all.insert(all.end(), reinterpret_cast<const std::uint8_t *>(&size), reinterpret_cast<const std::uint8_t *>(&size) + 8);
+            if (bytes) all.insert(all.end(), bytes->begin(), bytes->end());
+        }
+        mod_data = hex16(ps2::hash_bytes(all.data(), all.size()));
+    }
     std::sort(env.begin(), env.end());
     Json env_json = Json::array();
     for (const std::string &kv : env) env_json.push(kv);
     const char *rate = ps2::g_options.rate_forced ? (ps2::g_options.pal ? "pal" : "ntsc") : "auto";
     // no start state: the guest drops into the host's game (W4), whatever it booted from
     id.config = Json::object().set("lockstep", 1).set("rate", rate).set("patches", patches).set("env", env_json);
+    if (!mod_data.empty()) id.config.set("mod_data", mod_data);
     return id;
 }
 
