@@ -26,7 +26,7 @@ MemoryMax=5G
 Environment=PATH=$PATH
 ExecStart=$(realpath "$0") run
 EOF
-    printf '[Unit]\nDescription=Check %s/%s for new commits\n[Timer]\nOnBootSec=5min\nOnUnitInactiveSec=10min\n[Install]\nWantedBy=timers.target\n' \
+    printf '[Unit]\nDescription=Check %s/%s for new commits\n[Timer]\nOnBootSec=5min\nOnUnitInactiveSec=30s\n[Install]\nWantedBy=timers.target\n' \
         "$REMOTE" "$BRANCH" >"$units/mksm-autodeploy.timer"
     systemctl --user daemon-reload
     systemctl --user enable --now mksm-autodeploy.timer
