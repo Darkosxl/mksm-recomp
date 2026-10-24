@@ -2,7 +2,10 @@
 # vsrun.sh: headless Versus driver for the combo mods. AWS box only (from ~/w/wt/<tree>, normally via remaster/w.sh run).
 #   remaster/vsrun.sh start <out>                 char-select state (f1890) -> P1 Reptile, P2 Kung Lao, The Rooftops,
 #                                                 "FIGHT!", P1 runs up to P2 (bodies touching) and stands; saves
-#                                                 <out>/fight-start-reptile[-nomod].state at f$FS (P1 idle 2299, P2 idle)
+#                                                 <out>/fight-start-$FIGHTER[-nomod].state at f$FS (P1 idle 2299, P2 idle)
+#                                                 PICK: P1's cursor moves from Liu Kang (default "right right right" =
+#                                                 Reptile), one every 25 frames from f1900; P2PICK: P2's from Kung Lao
+#                                                 (default none), from f2040; FIGHTER names the state
 #   remaster/vsrun.sh combo <out> <gap> <btn>...  from $START, P1 presses each <btn> for $LEN frames, one every <gap> frames
 #                                                 from f$((FS+10)); runs $N frames. btn: square triangle circle cross ...,
 #                                                 b1+b2 (e.g. right+square), or - (an empty slot)
@@ -21,7 +24,8 @@ G=~/w/games/mksm
 S=~/w/remaster-data/states/vs
 FS=3720   # frame the fight-start state is saved at (start mode); combo inputs are relative to it
 [ "${MOD:-0}" = 1 ] && tag= || tag=-nomod
-START=${START:-$S/fight-start-reptile$tag.state}
+FIGHTER=${FIGHTER:-reptile} PICK=${PICK:-right right right} P2PICK=${P2PICK:-}
+START=${START:-$S/fight-start-$FIGHTER$tag.state}
 EVERY=${EVERY:-10} N=${N:-300} LEN=${LEN:-4}
 mkdir -p "$O/frames"
 export SDL_AUDIODRIVER=dummy PS2_GS=${PS2_GS:-soft} PS2_RTC=1792000000
@@ -35,8 +39,11 @@ start)
   # P1 takes input from f3543. The camera looks across the arena, so "towards P2" (+x) is stick 225,46 (up-right):
   # held 3530..3625, P1 runs (2300, 2302), stops (2303) touching P2 (dx ~ 500) and stands (2299) from f3692.
   state=$S/versus-csel-unlocked-f1890.state end=$((FS + 5))
-  args=(--pad2 --press 1900:right:4 --press 1925:right:4 --press 1950:right:4 --press 2005:cross:4
-        --press 2095:p2:cross:4 --press 2195:cross:4 --stick 3530:225,46:96 --save-state "$FS:$O/fight-start-reptile$tag.state") ;;
+  args=(--pad2) f=1900
+  for b in $PICK; do args+=(--press "$f:$b:4"); f=$((f + 25)); done
+  f=2040; for b in $P2PICK; do args+=(--press "$f:p2:$b:4"); f=$((f + 12)); done
+  args+=(--press 2005:cross:4 --press 2095:p2:cross:4 --press 2195:cross:4 --stick 3530:225,46:96
+         --save-state "$FS:$O/fight-start-$FIGHTER$tag.state") ;;
 combo)
   gap=${1:?gap}; shift
   state=$START end=$((FS + N)) f=$((FS + 10))
