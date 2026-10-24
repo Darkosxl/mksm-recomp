@@ -35,6 +35,8 @@ RAM = 0x5B4                     # EE RAM's offset in a .state
 BONE, PIVOT, WORLD = 0x1C0, 0x90, 0x50
 X = 4                           # supersampling
 LAYERED = (0, 5)                # cham.pme2's blended pages (chammodel.previews)
+KEY = (-0.55, -0.75, -0.35)     # the select pictures' hard light, from the upper left (view space: y down, z away)
+BACK = (0.8, -0.4, 0.45)        # a back light on his right edges
 GLOW = (78, 5)                  # the select highlight
 GLOW_MAP = (0.66, 0.49, 22, 1)  # picture -> highlight texels: scale x, y, offset x, y
 GLOW_BLUR, GLOW_GAIN, GLOW_GAMMA = 3.0, 1.5, 0.7
@@ -57,10 +59,19 @@ def bone_matrices(state, piv):
     raise SystemExit('%s: no bone array with these pivots' % state)
 
 
+def shade(N, L):
+    """lit like the other select pictures: one-sided key over little ambient, a highlight at the key's half vector,
+    the back light"""
+    n = N / np.maximum(np.linalg.norm(N, axis=1, keepdims=True), 1e-6)
+    h, b = L + [0, 0, -1], np.array(BACK)
+    return (0.08 + 0.9 * np.maximum(n @ L, 0) + 1.2 * np.maximum(n @ (h / np.linalg.norm(h)), 0) ** 20
+            + 0.8 * np.maximum(n @ (b / np.linalg.norm(b)), 0) ** 3)
+
+
 def rgba(P, N, UV, tris, pages, yaw, S):
     """S x S float RGBA (alpha 0-1): two renders (the shell blended), on black and on white"""
-    k = cm.render(P, N, UV, tris, pages, yaw, S, LAYERED, bg=0)[0]
-    w = cm.render(P, N, UV, tris, pages, yaw, S, LAYERED, bg=255)[0]
+    k = cm.render(P, N, UV, tris, pages, yaw, S, LAYERED, light=KEY, bg=0, shade=shade)[0]
+    w = cm.render(P, N, UV, tris, pages, yaw, S, LAYERED, light=KEY, bg=255, shade=shade)[0]
     a = np.clip(1 - (w - k).mean(2) / 255.0, 0, 1)
     c = np.where(a[..., None] > 1e-3, k / np.maximum(a[..., None], 1e-3), 0)
     return np.dstack([np.clip(c, 0, 255), a])

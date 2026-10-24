@@ -1182,7 +1182,8 @@ def skin(v, p, n, pose):
     return outp, outn
 
 
-def render(P, N, UV, tris, pages, yaw, S=1024, blend_pages=(), box=None, light=(-0.4, -0.6, -0.7), bg=40.0):
+def render(P, N, UV, tris, pages, yaw, S=1024, blend_pages=(), box=None, light=(-0.4, -0.6, -0.7), bg=40.0,
+           shade=None):
     c, s = np.cos(yaw), np.sin(yaw)
     R = np.array([[c, 0, s], [0, 1, 0], [-s, 0, c]])
     lo, hi = box if box is not None else (P.min(0), P.max(0))
@@ -1191,7 +1192,7 @@ def render(P, N, UV, tris, pages, yaw, S=1024, blend_pages=(), box=None, light=(
     Q = (P - ctr) @ R.T
     Nr = N @ R.T
     L = np.array(light) / np.linalg.norm(light)
-    sh = 0.45 + 0.75 * np.abs(Nr @ L)                                 # pme2.preview's shading
+    sh = 0.45 + 0.75 * np.abs(Nr @ L) if shade is None else shade(Nr, L)  # pme2.preview's shading, or the caller's
     scr = np.stack([S / 2 + Q[:, 0] * scale, S / 2 + Q[:, 1] * scale, Q[:, 2]], 1)
     img = np.full((S, S, 3), float(bg))
     zb = np.full((S, S), np.inf)
