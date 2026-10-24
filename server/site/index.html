@@ -180,8 +180,21 @@
     min-width: 2rem; padding: .05rem .4rem; text-align: center; font: 600 .8rem/1.5 var(--mono); color: var(--gold-hi);
     background: #0d0a09; border: 1px solid var(--line-hi); border-bottom-width: 2px; border-radius: 4px;
   }
+  /* phones and tablets: shown over the page until Continue (start() below) */
+  .gate {
+    position: fixed; inset: 0; z-index: 10; display: flex; flex-direction: column; justify-content: center; align-items: center;
+    padding: 2rem 16px; text-align: center; overflow-y: auto;
+    background: radial-gradient(120% 60% at 50% 0%, rgba(165, 20, 18, .45), transparent 65%), linear-gradient(180deg, #15110f, var(--ink) 70%);
+  }
+  .gate h2 {
+    margin: 0; font: 700 clamp(2.2rem, 11vw, 3.2rem)/.95 var(--display); text-transform: uppercase; letter-spacing: .03em;
+    color: var(--gold-hi); filter: drop-shadow(0 3px 0 #2a0605);
+  }
+  .gate p { margin: 1rem 0 0; max-width: 22rem; }
+  .gate .primary { width: 100%; max-width: 22rem; margin-top: 1.75rem; padding: .9rem 1rem; font-size: 1.1rem; }
+
   /* after the font shorthands, which reset it */
-  .hero h1, .tag, h2, summary, .play, .hello strong { font-synthesis: none; }
+  .hero h1, .tag, h2, summary, .play, .hello strong, .gate h2 { font-synthesis: none; }
   @media (max-width: 480px) {
     .pad { grid-template-columns: 1fr 1fr; grid-template-areas: "lsh rsh" "dpad face" "mid mid" "lst rst"; padding: 16px 8px 20px; border-radius: 22px 22px 48px 48px; }
     .play { font-size: 2rem; }
@@ -190,6 +203,12 @@
 </style>
 </head>
 <body>
+<div id="gate" class="gate" role="dialog" aria-modal="true" aria-labelledby="gate-h" hidden>
+  <h2 id="gate-h">Play on your computer</h2>
+  <p>Shaolin Monks is made for a desktop or laptop, with a gamepad or keyboard. It does not play on a phone.</p>
+  <p class="muted">Open this page on your desktop or laptop. Already on one? Press Continue.</p>
+  <button id="gate-go" class="primary" type="button">Continue</button>
+</div>
 <main>
   <header class="hero">
     <h1>Shaolin Monks</h1>
@@ -718,9 +737,29 @@ $('notice-x').onclick = () => { $('notice').hidden = true; };
 requestCode();
 if (!nick()) store('mksm-nick', 'Monk ' + (1000 + crypto.getRandomValues(new Uint16Array(1))[0] % 9000));
 const toFriend = !!(pending && pending.id);
-home();
-// Straight into the game: your own as host, or (home() above) the friend's game a /play/<code> link names.
-if (!menu && !toFriend) $('play').click();
+function start() {
+  home();
+  // Straight into the game: your own as host, or (home() above) the friend's game a /play/<code> link names.
+  if (!menu && !toFriend) $('play').click();
+}
+// Phones and tablets get the gate first. Continue is remembered: a touch-screen computer can look like a tablet here.
+const agent = navigator.userAgent;
+const handheld = /Android|iPhone|iPad|iPod|Mobi/.test(agent) || (agent.includes('Macintosh') && navigator.maxTouchPoints > 1) ||
+  matchMedia('(hover: none) and (pointer: coarse)').matches;
+if (handheld && !load('mksm-desktop')) {
+  const page = document.querySelector('main');
+  $('gate').hidden = false;
+  page.inert = true;
+  $('gate-go').focus();
+  $('gate-go').onclick = () => {
+    store('mksm-desktop', '1');
+    $('gate').hidden = true;
+    page.inert = false;
+    start();
+  };
+} else {
+  start();
+}
 </script>
 </body>
 </html>
