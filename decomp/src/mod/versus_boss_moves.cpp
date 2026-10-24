@@ -85,19 +85,22 @@ constexpr std::uint32_t kEndOfState = 0x00303B00u;        // set-state's return 
 // Chameleon's specials per colour mode (chamspecials.py report: the states his grafted command nodes reach, plus
 // their partners), gated by chameleon_moves.cpp. Scorpion's spear events 155/156 show/hide mesh parts by Scorpion's
 // slot list, which on Reptile's are his hand, flaps, jaw and fingers: stripped, the spear pulls without its rope.
+// Event 303 (FUN_00169A10) sets the stance a move returns to from the donor's own stance sets, whose states are not
+// loaded: set-state gave up at the move's end and the clip looped. Stripped, he returns to Reptile's current stance.
 constexpr std::uint8_t kChamScorpion[] = {30, 31, 61, 67, 69, 70, 71, 73, 78, 79, 108, 109, 110, 131, 132, 133, 134,
                                           135, 142, 143, 146};
 constexpr std::uint8_t kChamSubzero[] = {39, 41, 43, 45, 46, 81, 96, 97, 99, 100, 114, 115, 116, 128, 129, 130, 131,
                                          132, 133, 134, 135, 136, 137, 138, 139};
-constexpr std::int16_t kSpearParts[] = {155, 156};
+constexpr std::int16_t kStripScorpion[] = {155, 156, 303};
+constexpr std::int16_t kStripSubzero[] = {303};
 
 constexpr Port kPorts[] = {
     {"Versus Reptile <- story boss Reptile", 84, 6512, 1564, kBossMoves, std::size(kBossMoves), 1592, 450.0f, kVanish,
      kTeleportFade, std::size(kTeleportFade), nullptr, 0, kZero, 0},
     {"Chameleon <- Scorpion", 84, 6742, 1994, kChamScorpion, std::size(kChamScorpion), -1, 0.0f, -1, nullptr, 0,
-     kSpearParts, std::size(kSpearParts), kRebase, chameleon::kFxScorpion},
-    {"Chameleon <- Sub-Zero", 84, 6802, 2515, kChamSubzero, std::size(kChamSubzero), -1, 0.0f, -1, nullptr, 0, nullptr,
-     0, kRebase, chameleon::kFxSubzero},
+     kStripScorpion, std::size(kStripScorpion), kRebase, chameleon::kFxScorpion},
+    {"Chameleon <- Sub-Zero", 84, 6802, 2515, kChamSubzero, std::size(kChamSubzero), -1, 0.0f, -1, nullptr, 0,
+     kStripSubzero, std::size(kStripSubzero), kRebase, chameleon::kFxSubzero},
 };
 
 constexpr std::uint32_t kAlloc = 0x0020F058u;      // (heap, size, best fit, file, line): FUN_0020F058
