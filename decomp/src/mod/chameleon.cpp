@@ -42,6 +42,13 @@
 //    behind it (entry 5, 128x128: the slot with the image's key, +0x240) gets his silhouette's, cham_glow.p2n, the same
 //    way. Without the picture the image gets a recoloured copy of its CLUT (gray cloth, gold trim). 0x001E6EF0
 //    (get_string) answers "CHAMELEON" for Reptile's name (text 0x6D0) to the select screen's calls.
+//  - Save, 0x001DA6A8 (Load Game: fn_1da6a8(_, slot) copies the slot's 0x5430-byte record into the profile *0x4D8B80):
+//    a story save remembers Chameleon. Record +0x83 (player 1) / +0x82 (player 2), the tail of the description buffer at
+//    +4 (its only writer, sprintf "%s.%3d.%02d:%02d:%02d", stays near 30 characters; its readers take it as a string),
+//    is 1 for Chameleon: every story player load writes it into the profile, the game's own whole-record copies carry it
+//    (profile to slot on save, slot to profile on load, profile and checkpoint both ways), and a load takes the pick
+//    from it. Load Game skips the select screen, so without it a Chameleon save would come back as Reptile. The game
+//    never reads those bytes: with the mod off a marked card plays as before.
 //  - Name elsewhere (HUD, menus), 0x001E6EC8 (character name: get_string(0x67C + group)): "CHAMELEON" for group 84
 //    while a player is Chameleon. Story enemies that look like Reptile are other groups (0x3B), so they keep theirs.
 //  - Announcer: 0x0013B3B0 (lock: the cursor's "Reptile" line) arms a swap; 0x0041ABB8 (ADXT_StartAfs(adxt,
@@ -75,6 +82,7 @@ using namespace ps2::gpr;
 // ---- game ----
 constexpr std::uint32_t kProfile = 0x004D8B80u;      // Profile *: +0x88 play mode (0 story, 1 Ko-op, 2 Versus)
 constexpr std::uint32_t kSelectMode = 0x005CA2ACu;   // the character select's mode, same values
+constexpr std::uint32_t kSaveMark = 0x83;  // profile / save record: u8 player 1 is Chameleon (player 2 at 0x82)
 constexpr std::uint32_t kAltFlag[2] = {0x004D5E1Cu, 0x004D5E20u};
 constexpr std::uint32_t kReptile = 84;
 constexpr std::uint32_t kAltModel = 6852, kAltTextures = 6851;  // Reptile's alt costume (player table 0x4D6988 + 84 * 0x30)
@@ -502,6 +510,7 @@ PS2_MOD(001CE6E8, chameleon_costume) {
         const Player p = player(who - 1);
         const bool chameleon = group == kReptile && playing_story() && p.picked;
         p.chameleon = chameleon;
+        if (playing_story()) wr<std::uint8_t>(rd<std::uint32_t>(kProfile) + kSaveMark + 1 - who, chameleon);
         p.served = 0, p.rslot = 0, p.rpage = 0xFF, p.heaplog = 0, p.blend = 0, p.blend_said = 0, p.build_lo = 0, p.build_hi = 0;
         wr<std::uint32_t>(kAltFlag[0], who == 1 && chameleon);
         wr<std::uint32_t>(kAltFlag[1], who == 2 && chameleon);
@@ -510,6 +519,16 @@ PS2_MOD(001CE6E8, chameleon_costume) {
     decomp::hook_001CE6E8.enabled = false;
     tail(c, kLoadPlayer);
     decomp::hook_001CE6E8.enabled = true;
+}
+
+// Load Game: the pick from the loaded record (Save, above)
+PS2_MOD(001DA6A8, chameleon_save_load) {
+    if (!call_original(c, decomp::hook_001DA6A8)) return;
+    const std::uint32_t profile = rd<std::uint32_t>(kProfile);
+    for (std::uint32_t k = 0; k < 2; ++k) {
+        player(k).picked = rd<std::uint8_t>(profile + kSaveMark - k) == 1;
+        if (player(k).picked) std::fprintf(stderr, "[mod] chameleon: player %u is Chameleon in the loaded save\n", k + 1);
+    }
 }
 
 // GetAsyncFileSize from the async loader for a Chameleon costume file: its size from PS2_MOD_DATA, nothing to inflate

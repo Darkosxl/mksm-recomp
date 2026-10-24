@@ -19,6 +19,7 @@
 001D0688	chameleon_textures	decomp/src/mod/chameleon.cpp (PS2_MOD)
 001D11F8	versus_boss_moves_load	decomp/src/mod/versus_boss_moves.cpp (PS2_MOD)
 001D6808	debug_call	decomp/src/trace/debug_call.cpp (debug tool, PS2_CALL)
+001DA6A8	chameleon_save_load	decomp/src/mod/chameleon.cpp (PS2_MOD)
 001E6EC8	chameleon_group_name	decomp/src/mod/chameleon.cpp (PS2_MOD)
 001E6EF0	chameleon_name	decomp/src/mod/chameleon.cpp (PS2_MOD)
 001EAF30	chameleon_switch	decomp/src/mod/chameleon.cpp (PS2_MOD)
