@@ -14,9 +14,6 @@ Versus (his only L1 nodes need requirement bit 0x200000000000), so R1 + L1 + but
   R1 + L1 + square      d10_cntr (1916): the story Cage's counter, a flip kick that hits on frame 5 (10 damage), lands
                         (common state 7) and returns to stance; it moves him frame by frame (record +0x04 clear)
                                                                                                  (his R1 + square: l00_sp_q)
-  R1 + L1 + R2          t20_sung (1935): vanish, then t10_sung (1934): reappear behind the opponent (set by
-                        versus_boss_moves.cpp when t20 plays out; the story Cage's own tree has R2 -> t20_sung)
-                                                                                                 (his R1 + R2: n00_sp_t)
 Each input is a copy of the non-directional list-0 nodes of his l00_sp_q (TEMPLATE, one per special level), so that
 special's level and upgrade requirements gate it, plus L1 held (hold 0x04; ignore 0x04: L1 may go down in the same
 frame as the button). The new nodes go in front of list 0 (vscombos.Tree.front), because his own R1 + button nodes
@@ -29,13 +26,14 @@ import dt2
 import fstates
 from wad import Wad
 
-COUNTER, VANISH = 1916, 1935  # d10_cntr; t20_sung (versus_boss_moves.cpp goes on into t10_sung 1934)
+COUNTER = 1916                # d10_cntr
 DIRS = 0xF000                 # direction bits in press / hold
 L1 = 0x04                     # pad bit (press / hold / ignore)
 TEMPLATE = 130                # his l00_sp_q (local state): R1 + square, five nodes, one per special level
 # (button tapped with R1 + L1 held, story Cage's global state)
-MOVES = ((0x80, COUNTER), (0x02, VANISH))
+MOVES = ((0x80, COUNTER),)
 DROPPED = """
+t20_sung / t10_sung (1935 / 1934, vanish then reappear behind the opponent) were on R1 + L1 + R2: dropped (Cem).
 t00_deth (1933) is his death (45 frames, then a 344-unit snap back into stance). sn40_ger (1932) is a 130-frame
 standing taunt: no hit frames, no hit events. a10_walk and b00_stnd are walk / stance variants, not moves.
 Group 74 (files 6661-6664, the only other group on his skeleton: a grenade + revolver soldier) has only root-motion

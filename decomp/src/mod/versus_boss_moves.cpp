@@ -4,10 +4,10 @@
 // are not here (versus_combos.cpp grafts them).
 // Several ports may target one group: their clips take consecutive free slots, in table order.
 // Port 0: Reptile (group 84, any mode: the Versus and the story/NPC load paths, FUN_001CE6E8 and FUN_001D1068, both
-// register the callback hooked here) gets 6 of the story boss Reptile's states (group 59).
+// register the callback hooked here) gets 4 of the story boss Reptile's states (group 59).
 // Ports 1-2: Chameleon (Reptile in Chameleon mode) gets Scorpion's and Sub-Zero's specials (chameleon_moves.cpp).
-// Port 3: Johnny Cage (group 90) gets the story Johnny Cage's (group 71: model 'Cage', his skeleton) counter strike and
-// vanish / reappear (mksm/tools/scripts/vsboss_cage.py); t20_sung / t10_sung are the same clips as the boss Reptile's.
+// Port 3: Johnny Cage (group 90) gets the story Johnny Cage's (group 71: model 'Cage', his skeleton) counter strike
+// (mksm/tools/scripts/vsboss_cage.py).
 // Port 4: Baraka (group 83, any mode) gets 2 of the story boss Baraka's states (group 56: GAMEDATA.WAD 6482 ERG.DT2,
 // 6483 ERG.DAT, 6484 nim.rtt; 15 KB): no teleport, no fades, no cancel windows (group 56 has none).
 // Port 5: Kitana (group 89, any mode, same paths) gets her story sister Mileena's d20_cntr (group 66), the one move of
@@ -87,15 +87,13 @@ struct Port {
     std::uint8_t fx_base;       // added to own-bank effect indices (event 114), 0 = none
 };
 
-// the states his command tree reaches (vsboss.py): d30_cntr 1578, s30_sp_n 1586, s40_sp_n 1587, s50_sp_n 1588,
-// t10_sung 1592, t20_sung 1593 (none has a partner state)
-constexpr std::uint8_t kBossMoves[] = {14, 22, 23, 24, 28, 29};
-constexpr std::int32_t kTeleportFade[] = {1593, 1592}; // t20_sung vanish, t10_sung reappear
-constexpr std::int32_t kVanish = 1593;                    // t20_sung
+// the states his command tree reaches (vsboss.py): d30_cntr 1578, s30_sp_n 1586, s40_sp_n 1587, s50_sp_n 1588 (none
+// has a partner state). The vanish (t20_sung 1593 -> t10_sung 1592) is gone (Cem): no port uses vanish / teleport now.
+// ponytail: teleport() and the vanish / teleport / fade fields stay for one; delete them if none comes back.
+constexpr std::uint8_t kBossMoves[] = {14, 22, 23, 24};
 constexpr std::uint32_t kEndOfState = 0x00303B00u;        // set-state's return address when a state played out
-// the states his command tree reaches (vsboss_cage.py): d10_cntr 1916, t10_sung 1934, t20_sung 1935
-constexpr std::uint8_t kCageMoves[] = {14, 32, 33};
-constexpr std::int32_t kCageFade[] = {1935, 1934};        // t20_sung vanish, t10_sung reappear
+// the state his command tree reaches (vsboss_cage.py): d10_cntr 1916 (his vanish, t20_sung / t10_sung, is gone)
+constexpr std::uint8_t kCageMoves[] = {14};
 // the states his command tree reaches (vsboss_baraka.py): d30_cntr 1480, t02_misc 1507 (no partner state)
 constexpr std::uint8_t kBarakaBossMoves[] = {15, 42};
 
@@ -117,14 +115,14 @@ constexpr std::int16_t kStripScorpion[] = {155, 156, 303};
 constexpr std::int16_t kStripSubzero[] = {155, 156, 303};
 
 constexpr Port kPorts[] = {
-    {"Versus Reptile <- story boss Reptile", 84, 6512, 1564, kBossMoves, std::size(kBossMoves), 1592, 450.0f, kVanish,
-     kTeleportFade, std::size(kTeleportFade), nullptr, 0, kZero, 0},
+    {"Versus Reptile <- story boss Reptile", 84, 6512, 1564, kBossMoves, std::size(kBossMoves), -1, 0.0f, -1, nullptr,
+     0, nullptr, 0, kZero, 0},
     {"Chameleon <- Scorpion", 84, 6742, 1994, kChamScorpion, std::size(kChamScorpion), -1, 0.0f, -1, nullptr, 0,
      kStripScorpion, std::size(kStripScorpion), kRebase, chameleon::kFxScorpion},
     {"Chameleon <- Sub-Zero", 84, 6802, 2515, kChamSubzero, std::size(kChamSubzero), -1, 0.0f, -1, nullptr, 0,
      kStripSubzero, std::size(kStripSubzero), kRebase, chameleon::kFxSubzero},
-    {"Versus Cage <- story Cage", 90, 6632, 1902, kCageMoves, std::size(kCageMoves), 1934, 450.0f, 1935, kCageFade,
-     std::size(kCageFade), nullptr, 0, kZero, 0},
+    {"Versus Cage <- story Cage", 90, 6632, 1902, kCageMoves, std::size(kCageMoves), -1, 0.0f, -1, nullptr, 0,
+     nullptr, 0, kZero, 0},
     {"Versus Baraka <- story boss Baraka", 83, 6482, 1465, kBarakaBossMoves, std::size(kBarakaBossMoves), -1, 0.0f, -1,
      nullptr, 0, nullptr, 0, kZero, 0},
     {"Versus Kitana <- story Mileena", 89, 6582, 1747, kMileenaMoves, std::size(kMileenaMoves), -1, 0.0f, -1, nullptr,
