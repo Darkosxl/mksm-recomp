@@ -1,9 +1,9 @@
 # Reptile
 
-<img src="clips/boss-square.webp" width="480" alt="Reptile: the boss's acid volley">
+<img src="clips/boss-triangle.webp" width="480" alt="Reptile: the boss's invisibility">
 
 Versus-only in the original game. This build adds the story fighters' combo extensions to his strings and gives him
-the story boss Reptile's attacks on R1 + L1. Chameleon is a variant of him: see [Chameleon](../chameleon/README.md).
+two of the story boss Reptile's moves on R1 + L1. Chameleon is a variant of him: see [Chameleon](../chameleon/README.md).
 General notes (buttons, upgrades, damage): [Fighters](../README.md).
 
 ## Special moves
@@ -44,16 +44,10 @@ Damage 12 with Flip Up.
 
 ## Boss moves: R1 + L1
 
-The story boss Reptile's attacks (`mksm/tools/scripts/vsboss.py`, `decomp/src/mod/versus_boss_moves.cpp`). Hold R1
+The story boss Reptile's moves (`mksm/tools/scripts/vsboss.py`, `decomp/src/mod/versus_boss_moves.cpp`). Hold R1
 and L1, then press the button. L1 does nothing else in a fight, so R1 + L1 is a free layer over his own specials.
-Each boss move copies the level requirement of one of his specials: square and R2 need Acid Spit, triangle needs
-Slide Attack, circle needs Force Ball. They work in every mode.
-
-### R1 + L1 + square: acid volley
-
-The boss's s50 attack (state 1588): a volley of acid. No damage on a standing opponent in the test run.
-
-<img src="clips/boss-square.webp" width="480" alt="Reptile: acid volley">
+Each boss move copies the level requirement of one of his specials: triangle needs Slide Attack, R2 needs Acid Spit.
+They work in every mode.
 
 ### R1 + L1 + triangle: Invisibility (press again to reappear)
 
@@ -62,11 +56,6 @@ combos, until you press R1 + L1 + triangle again. The clip presses it twice, abo
 
 <img src="clips/boss-triangle.webp" width="480" alt="Reptile: invisibility, then back">
 
-### R1 + L1 + circle: s40
-
-The boss's s40 attack (state 1587). No damage on a standing opponent in the test run.
-
-<img src="clips/boss-circle.webp" width="480" alt="Reptile: boss s40">
 
 ### R1 + L1 + R2: the boss's counter
 
@@ -74,8 +63,9 @@ The boss's counter, d30 (state 1578), as its own move.
 
 <img src="clips/boss-r2.webp" width="480" alt="Reptile: the boss's counter">
 
-Three boss attacks are not ported: s11 (1584), g20 (1581) and g10 (1580). They keep their travel in the clip's root
-bone, so the fighter's position would only catch up when the move ends (`vsboss.py`, DROPPED).
+Not ported (`vsboss.py`, DROPPED): the boss's acid volley (s50, 1588) and s40 (1587), whose projectiles never hit a
+Versus opponent, and s11 (1584), g20 (1581) and g10 (1580), which keep their travel in the clip's root bone, so the
+fighter's position would only catch up when the move ends.
 
 ## Combos
 

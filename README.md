@@ -39,8 +39,8 @@ they join at any time, even mid-level. Both browsers run the game in lockstep. S
 
 Liu Kang, Kung Lao, Scorpion and Sub-Zero are joined by Reptile, Baraka, Kitana and Johnny Cage, all playable in Story,
 Ko-op and Versus. All eight buy combo and special upgrades with Experience. The four who were Versus-only get the story
-fighters' combo extensions, plus new specials on R1 + L1 taken from their story versions: Reptile throws acid, turns
-invisible and gets the boss's counter; Baraka gets a blade slash and a leaping counter; Johnny Cage a counter
+fighters' combo extensions, plus new specials on R1 + L1 taken from their story versions: Reptile turns invisible and
+gets the boss's counter; Baraka gets a blade slash and a leaping counter; Johnny Cage a counter
 flip kick; Kitana borrows her sister Mileena's low sweep. Each one has a page with every move, combo and a clip:
 [docs/characters](docs/characters/README.md).
 
