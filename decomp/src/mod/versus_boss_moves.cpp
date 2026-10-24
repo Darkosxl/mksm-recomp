@@ -9,6 +9,9 @@
 // vanish / reappear (mksm/tools/scripts/vsboss_cage.py); t20_sung / t10_sung are the same clips as the boss Reptile's.
 // Port 2: Baraka (group 83, any mode) gets 2 of the story boss Baraka's states (group 56: GAMEDATA.WAD 6482 ERG.DT2,
 // 6483 ERG.DAT, 6484 nim.rtt; 15 KB): no teleport, no fades, no cancel windows (group 56 has none).
+// Port 3: Kitana (group 89, any mode, same paths) gets her story sister Mileena's d20_cntr (group 66), the one move of
+// the story NPC groups (kitana_npc 65, mileena 66, jade 67) that hits in place and returns to stance
+// (vsboss_kitana.py).
 //
 // How a state plays (mksm/tools/scripts/fstates.py): global state s -> anim descriptor DAT_006C8A28[s] (u32[3010]),
 // descriptor d = 8 bytes in the state DB at 0x6B3000 (+4: table of {u8 format, u8 channels, u16 frames, u32 clip + 6});
@@ -88,6 +91,9 @@ constexpr std::int32_t kCageFade[] = {1935, 1934};        // t20_sung vanish, t1
 // the states his command tree reaches (vsboss_baraka.py): d30_cntr 1480, t02_misc 1507 (no partner state)
 constexpr std::uint8_t kBarakaBossMoves[] = {15, 42};
 
+// mileena d20_cntr 1762 (no partner state)
+constexpr std::uint8_t kMileenaMoves[] = {15};
+
 constexpr Port kPorts[] = {
     {"Versus Reptile <- story boss Reptile", 84, 6512, 1564, kBossMoves, std::size(kBossMoves), 1592, 450.0f, kVanish,
      kTeleportFade, std::size(kTeleportFade), nullptr, 0, kZero},
@@ -95,6 +101,8 @@ constexpr Port kPorts[] = {
      std::size(kCageFade), nullptr, 0, kZero},
     {"Versus Baraka <- story boss Baraka", 83, 6482, 1465, kBarakaBossMoves, std::size(kBarakaBossMoves), -1, 0.0f, -1,
      nullptr, 0, nullptr, 0, kZero},
+    {"Versus Kitana <- story Mileena", 89, 6582, 1747, kMileenaMoves, std::size(kMileenaMoves), -1, 0.0f, -1, nullptr,
+     0, nullptr, 0, kZero},
 };
 
 constexpr std::uint32_t kAlloc = 0x0020F058u;      // (heap, size, best fit, file, line): FUN_0020F058

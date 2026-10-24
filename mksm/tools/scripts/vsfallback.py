@@ -26,6 +26,7 @@ import fstates  # noqa: E402
 import vsboss  # noqa: E402
 import vsboss_cage  # noqa: E402
 import vsboss_baraka  # noqa: E402
+import vsboss_kitana  # noqa: E402
 import vscombos  # noqa: E402
 from wad import Wad  # noqa: E402
 
@@ -206,7 +207,8 @@ def port(tree, T, donor, wad, log, votes, links):
 
 def build(target, wad, log=None, votes=None, links=None):
     """the target's vscombos.Tree with every donor of vscombos.PORTS[target] ported (for vscombos.emit), plus, for
-    Reptile and Baraka, their story boss's moves (vsboss.py, vsboss_baraka.py), for Cage the story Cage's (vsboss_cage.py)"""
+    Reptile and Baraka, their story boss's moves (vsboss.py, vsboss_baraka.py), for Cage the story Cage's
+    (vsboss_cage.py), for Kitana her story NPC sister's (vsboss_kitana.py)"""
     T = Target(target, wad)
     tree = vscombos.Tree(dt2.Fighter(target, wad))
     for d in vscombos.PORTS[target]:
@@ -218,6 +220,8 @@ def build(target, wad, log=None, votes=None, links=None):
         vsboss_cage.add(tree, wad)
     if target == 'baraka':
         vsboss_baraka.add(tree, wad)
+    if target == 'kitana':
+        vsboss_kitana.add(tree, wad)
     return tree
 
 
