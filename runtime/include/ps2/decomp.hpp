@@ -36,6 +36,16 @@
     }                                                                             \
     void decomp::fn_##addr([[maybe_unused]] ps2::Cpu &c)
 
+// A gameplay mod: same hook, but it changes what the game does, so it is not held to the contract above. It is on
+// only with PS2_MOD=1 (default off; the web page sets it for every player, so lockstep peers agree), never with
+// PS2_DECOMP=all, and never recorded for difftest.
+#define PS2_MOD(addr, name)                                                       \
+    namespace decomp {                                                            \
+    void fn_##addr(ps2::Cpu &c);                                                  \
+    ps2::DecompFn hook_##addr{0x##addr##u, #name, &fn_##addr, true};              \
+    }                                                                             \
+    void decomp::fn_##addr([[maybe_unused]] ps2::Cpu &c)
+
 namespace ps2 {
 
 // ---- registry and configuration ----
