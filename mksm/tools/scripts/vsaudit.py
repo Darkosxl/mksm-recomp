@@ -23,11 +23,7 @@ import vsfallback  # noqa: E402
 from wad import Wad  # noqa: E402
 
 DIRS = 0xF000
-BUTTONS = ('l2', 'r2', 'l1', 'r1', 'triangle', 'circle', 'cross', 'square')   # pad bits 0x01..0x80
-
-
-def buttons(press):
-    return '+'.join(b for k, b in enumerate(BUTTONS) if press >> k & 1)
+buttons = vsfallback.buttons
 
 
 def strings(tree):
