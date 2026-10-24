@@ -61,8 +61,6 @@ combos, until you press R1 + L1 + triangle again. The clip presses it twice, abo
 
 The boss's counter, d30 (state 1578), as its own move.
 
-<img src="clips/boss-r2.webp" width="480" alt="Reptile: the boss's counter">
-
 Not ported (`vsboss.py`, DROPPED): the boss's acid volley (s50, 1588) and s40 (1587), whose projectiles never hit a
 Versus opponent, and s11 (1584), g20 (1581) and g10 (1580), which keep their travel in the clip's root bone, so the
 fighter's position would only catch up when the move ends.
