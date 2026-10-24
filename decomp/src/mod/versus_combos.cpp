@@ -1,7 +1,10 @@
 // Versus combo extensions for the Versus-only fighters (Reptile, Baraka, Kitana, Johnny Cage), whose move data has no
-// Experience-bought combo extensions of its own. vscombos.py ports the story fighters' extensions (command-tree nodes
-// gated C0-C5) onto them where every state of the string maps onto a state of the target that plays the same
-// animation; the result is versus_combos.inc. No new states, clips or cancel windows: only command-tree nodes.
+// Experience-bought combo extensions of its own. mksm/tools/scripts/vsfallback.py ports the story fighters'
+// extensions (command-tree nodes gated C0-C5, from Kung Lao, Liu Kang, Sub-Zero, Scorpion) onto them: each string is
+// anchored on the target's own string with the same inputs, and each new hit plays the target state with the donor's
+// clip where the target has it (vscombos.py), else the target's own move for that button and direction that fits
+// best (vsfallback.py). The result is versus_combos.inc. No new states, clips or cancel windows: only command-tree
+// nodes (combo links run through the command queue, FUN_0016B138, not through ERG.DAT cancel windows).
 //
 // The hook: int fn_2f8640(int group, S56 *nodes) at 0x002F8640, called by the four ERG.DT2 loaders (0x00320328,
 // 0x00320740, 0x003209A0, 0x00320E58) right after they copied the fighter's command tree (DT2 section 2, 56-byte
@@ -91,7 +94,9 @@ bool graft(Cpu &c, const Port &p, std::uint32_t buf) {
     for (std::uint32_t b = 0; b < p.count * kNode; ++b) wr<std::uint8_t>(buf + (n - 1) * kNode + b, p.nodes[b]);
     for (std::uint32_t b = 0; b < kNode; ++b) wr<std::uint8_t>(buf + (n - 1 + p.count) * kNode + b, end[b]);
     for (std::uint32_t i = 0; i < p.link_count; ++i) wr<std::uint32_t>(buf + p.links[i].node * kNode + p.links[i].field, p.links[i].value);
-    std::fprintf(stderr, "[mod] versus_combos: %s +%u command nodes (heap %d)\n", p.name, p.count, heap);
+    const std::uint32_t h = kHeaps + heap * kHeapStride;
+    std::fprintf(stderr, "[mod] versus_combos: %s +%u command nodes (heap %d, %u bytes left)\n", p.name, p.count, heap,
+                 rd<std::uint32_t>(h + 0xC) - rd<std::uint32_t>(h + 8));
     return true;
 }
 
