@@ -169,7 +169,18 @@ bool is_open() { return static_cast<bool>(g_reader); }
 bool read(std::uint32_t sector, std::uint32_t count, void *out) {
     if (!g_reader) return false;
     const std::size_t want = static_cast<std::size_t>(count) * kSector;
-    const std::size_t got = g_reader(static_cast<std::uint64_t>(sector) * kSector, out, want);
+    std::size_t got = g_reader(static_cast<std::uint64_t>(sector) * kSector, out, want);
+    // PS2_DISC_ZERO=<lsn hex> (diagnostic): the first read that covers that sector comes back as zeros from it on, as a
+    // browser read does when its chunk fetch fails for good (host/web.cpp chunk() gives up, read_disc returns short).
+    static std::uint32_t zero_at = [] {
+        const char *env = std::getenv("PS2_DISC_ZERO");
+        return env && *env ? static_cast<std::uint32_t>(std::strtoul(env, nullptr, 16)) : ~0u;
+    }();
+    if (zero_at != ~0u && sector <= zero_at && zero_at < sector + count) {
+        std::fprintf(stderr, "[disc] PS2_DISC_ZERO: read lsn 0x%X count %u returns zeros from 0x%X\n", sector, count, zero_at);
+        got = std::min(got, static_cast<std::size_t>(zero_at - sector) * kSector);
+        zero_at = ~0u;
+    }
     if (got < want) std::memset(static_cast<std::uint8_t *>(out) + got, 0, want - got);
     return got > 0 || !count;
 }
