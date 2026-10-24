@@ -9,8 +9,8 @@ usage: serve.py <build dir> <disc image> [port] [--record <dir for unrecorded VU
 --disc-delay and --disc-fail throttle disc.iso reads (every Range request waits ms + random(0..jitter), and a
 fraction of them answer 503) to test the lockstep host's blocking disc fetch.
 
---pack serves /pack/current.json, /pack/<id>.txt and /pack/obj/<key>.<sha>.tex as stored (the .tex files are gzip
-bytes the page decompresses itself, so never with Content-Encoding).
+--pack serves /pack/current.json, /pack/<id>.txt, /pack/obj/<key>.<sha>.tex and /pack/obj/<name>.<sha>.txt (fx.txt and
+its LUTs) as stored (the .tex files are gzip bytes the page decompresses itself, so never with Content-Encoding).
 """
 
 import http.server
@@ -37,7 +37,7 @@ FILES = option('--files')
 FILES = FILES and os.path.abspath(FILES)
 PACK = option('--pack')
 PACK = PACK and os.path.abspath(PACK)
-PACK_FILE = re.compile(r'/pack/(current\.json|[0-9a-f]{16}\.txt|obj/[0-9a-f]{16}\.[0-9a-f]{12}\.tex)')
+PACK_FILE = re.compile(r'/pack/(current\.json|[0-9a-f]{16}\.txt|obj/[0-9a-f]{16}\.[0-9a-f]{12}\.tex|obj/[\w-]+\.[0-9a-f]{12}\.txt)')
 DELAY = [float(x) for x in option('--disc-delay', '0').split(',')] + [0.0]
 FAIL = float(option('--disc-fail', '0'))
 BUILD = os.path.abspath(sys.argv[1])

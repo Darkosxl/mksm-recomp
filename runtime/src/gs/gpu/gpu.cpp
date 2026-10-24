@@ -126,6 +126,8 @@ constexpr std::uint32_t kSourcePages = 1u << 20, kSourceSplit = 21;
 // a Z24 texture at a target's Z24 Z buffer, read from its depth (z_source_of, native.wgsl source_texel; one per batch);
 // setup word 26 (unused without mipmaps or a replacement) the GS pixels across | down << 16 of the Z buffer's tiles
 constexpr std::uint32_t kSourceZ = 1u << 28;
+// A texture-pack effect (texpack fx.txt, fx_tag): setup word 27 holds its colour this frame (gs.wgsl fx)
+constexpr std::uint32_t kFx = 1u << 29;
 // Texture-pack replacements live in this many words after kDecodedWords (PS2_TEX_PACK_MB, default 256 MB).
 const std::uint32_t kReplWords = [] {
     const char *e = std::getenv("PS2_TEX_PACK_MB");
@@ -387,6 +389,7 @@ struct SetupCache {
     std::uint32_t mips = 0;
     std::uint8_t hw = 0;  // why the hardware GS renderer cannot draw the setup (hw_setup; kHwOk: it can)
     std::uint64_t pack_key = 0;  // split, with a texture pack: the texture's texpack::key, replaced on the gsdraw thread
+    std::uint32_t fx = 0;        // the texture's texpack::fx entry (fx_tag)
 } g_setup_cache;
 
 bool g_hw = false;  // PS2_GS_HW=1: the hardware GS renderer, step 1 (hw_flush)
@@ -4953,6 +4956,21 @@ void replace_texture(std::uint64_t key, SetupCache &cache) {
     cache.mips = 0;
 }
 
+// Texture-pack effects (texpack fx.txt, the Chameleon glow): a texture listed there, replaced or not, gets kFx and its
+// entry, and draw_back writes the entry's colour for the frame into setup word 27 on every primitive, so a setup cached
+// across frames never holds an old colour. Mipmapping goes off as with a replacement: words 26-31 are the levels.
+void fx_tag(std::uint64_t key, SetupCache &cache) {
+    cache.fx = key ? texpack::fx(key) : 0u;
+    if (!cache.fx) return;
+    std::uint32_t *w = cache.setup;
+    w[0] |= kFx;
+    cache.flags = w[0];
+    if (cache.mips) {
+        std::fill(w + 25, w + kSetupWords, 0u);
+        cache.mips = 0;
+    }
+}
+
 // ---- The GS front end and the renderer on two threads (desktop default with a render thread; PS2_GS_SPLIT=0 off) ----
 // draw() builds a primitive's record from the GS state (the front half); draw_back() batches it (the back half). Split,
 // the render thread posts the records and the other GS ops that reach the renderer to a "gsdraw" thread in chunks, and
@@ -5062,6 +5080,7 @@ void draw_rt(SetupCache &cache, const PrimOp &op) {
 
 // After draw_head(): the primitive draw() built, into the batch.
 void draw_back(SetupCache &cache, const PrimOp &op) {
+    if (cache.fx) cache.setup[27] = texpack::fx_word(cache.fx, g_nat.frame);
     if (rt_sprite(cache, op.prim)) draw_rt(cache, op);
     if (op.hidden) return;
     const std::uint32_t *setup = cache.setup;
@@ -5433,7 +5452,7 @@ void split_run(const Chunk &c) {
             std::memcpy(static_cast<void *>(&g_split.cache), p, sizeof(SetupCache));
             if (SetupCache &cache = g_split.cache; cache.pack_key) {
                 if (g_image.active && !g_image.pending.empty()) flush_image();  // unsplit, draw()'s draw_head ran first
-                if (pack_candidate(cache)) replace_texture(cache.pack_key, cache);
+                if (pack_candidate(cache)) replace_texture(cache.pack_key, cache), fx_tag(cache.pack_key, cache);
             }
             break;
         case kOpPrim:
@@ -5565,12 +5584,17 @@ void draw(const State &st, const Vertex *v, int count, texcache::Run run) {
                     (static_cast<std::uint64_t>(w[5]) << 26) | (static_cast<std::uint64_t>(w[6]) << 40);
         cache.mips = 0;
         cache.pack_key = 0;
+        cache.fx = 0;
         if (cache.flags & 2u) {
             cache.tex = level_range(w, 0);
             cache.mips = mip_levels(w);
             for (std::uint32_t n = 1; n <= cache.mips; ++n) cache.levels[n] = level_range(w, n);
             if (split && texpack::packing() && ((w[7] >> 24) & 3u) != 3u && ((w[7] >> 26) & 3u) != 3u) cache.pack_key = texpack::key(st);
-            else if (texpack::active() && pack_candidate(cache)) replace_texture(texpack::key(st), cache);
+            else if (texpack::active() && pack_candidate(cache)) {
+                const std::uint64_t key = texpack::key(st);
+                replace_texture(key, cache);
+                fx_tag(key, cache);
+            }
         }
         cache.hw = g_hw ? hw_setup(cache.setup) : kHwOk;
         if (split) std::memcpy(split_op(kOpSetup, sizeof cache), static_cast<const void *>(&cache), sizeof cache);
