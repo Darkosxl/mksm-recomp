@@ -23,6 +23,34 @@ Mortal Kombat: Shaolin Monks (PS2, NTSC-U, `SLUS_210.87`), statically recompiled
 browser, with a graphics remaster (3x6 supersampling, 16:9 widescreen, HD textures) and two-player co-op, locally and
 online.
 
+## What's new
+
+### Fully playable online
+
+<p align="center"><img src="docs/media/online.webp" alt="Two monks fighting together in online co-op" width="640"></p>
+
+The whole game, Story and Ko-op, with a friend over the internet, right in the browser. Share your code or link, and
+they join at any time, even mid-level. Both browsers run the game in lockstep. See
+[Online co-op](#online-co-op).
+
+### 8 fighters, all with combo and special upgrades
+
+<p align="center"><img src="docs/media/fighters.webp" alt="All eight fighters, one move each" width="640"></p>
+
+Liu Kang, Kung Lao, Scorpion and Sub-Zero are joined by Reptile, Baraka, Kitana and Johnny Cage, all playable in Story,
+Ko-op and Versus. All eight buy combo and special upgrades with Experience. The four who were Versus-only get the story
+fighters' combo extensions, plus new specials taken from their story boss versions: Reptile throws the boss's acid
+volley and vanishes and reappears behind you. Each one has a page with every move, combo and a clip:
+[docs/characters](docs/characters/README.md).
+
+### New secret character: Chameleon
+
+<p align="center"><img src="docs/media/chameleon.webp" alt="Chameleon switching colours and fighting" width="640"></p>
+
+Reptile's story costume hides a new fighter. At the select screen, press L3 on Reptile to turn him into
+Chameleon. In a fight, L3 cycles his colour: each colour fights with a different ninja's specials, Scorpion's or
+Sub-Zero's. His page: [docs/characters/chameleon](docs/characters/chameleon/README.md).
+
 ## Install (Linux)
 
 ```sh
