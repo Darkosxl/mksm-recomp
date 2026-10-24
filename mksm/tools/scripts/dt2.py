@@ -67,6 +67,8 @@ FIGHTERS = {
     'subzero': (88, 6802, 2515, 2684),
     'kitana': (89, 6812, 2684, 2831),
     'cage': (90, 6822, 2831, 2978),
+    'big_snake': (50, 6422, 1338, 1345),      # story boss (Reptile fight, map 0x90): the serpent
+    'reptile_npc': (59, 6512, 1564, 1595),    # story boss (Reptile fight, map 0x90): Reptile himself
 }
 COMMON = (0, 194)  # group 92: states shared by everyone
 

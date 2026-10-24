@@ -1,6 +1,7 @@
 # EE functions whose entry gets the decomp hook (decomp/README.md): address, then anything (name, notes).
 # Each needs a PS2_DECOMP(<address>, name) in decomp/src; retranslate after editing (mksm/build.sh --retranslate).
 001B90B8	versus_round_upgrades	decomp/src/mod/versus_upgrades.cpp (PS2_MOD)
+001D11F8	versus_boss_moves_load	decomp/src/mod/versus_boss_moves.cpp (PS2_MOD)
 001D6808	debug_call	decomp/src/trace/debug_call.cpp (debug tool, PS2_CALL)
 002124C0	ArchiveGetFile	decomp/src/fileio/fileiodrv.cpp
 00213C78	MatrixSetTranslation	decomp/src/math/vu0math.cpp
@@ -71,7 +72,10 @@
 002752B0	screen_page_other_field	decomp/src/renderer/screen/screen_page_other_field.cpp
 00275300	screen_zbuffer_page	decomp/src/renderer/screen/screen_zbuffer.cpp
 002753A0	screen_zbuffer_format	decomp/src/renderer/screen/screen_zbuffer.cpp
+002ADAC0	versus_boss_moves_remap	decomp/src/mod/versus_boss_moves.cpp (PS2_MOD)
 002F8640	versus_combos	decomp/src/mod/versus_combos.cpp (PS2_MOD)
+00303340	versus_boss_moves_state	decomp/src/mod/versus_boss_moves.cpp (PS2_MOD)
+00306078	fighter_state_trace	decomp/src/trace/fighter_state_trace.cpp (debug trace, PS2_TRACE_STATES)
 00326140	ObjectGetGroundY	decomp/src/paradox/object.cpp
 00379988	PointLightIsOn	decomp/src/paradox/point_light.cpp
 00474EDC	strlen	decomp/src/libc/strlen.cpp

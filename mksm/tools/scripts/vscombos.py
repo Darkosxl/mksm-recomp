@@ -58,6 +58,7 @@ class Tree:
         self.end = self.nodes.pop()          # the -999 terminator moves behind the added nodes
         self.added = []
         self.links = []                      # (node index, field offset, new value) on disc nodes
+        self.heads = {}                      # list -> head node, where front() moved it
 
     def children(self, idx):
         out, c = [], self.nodes[idx].child
@@ -67,7 +68,7 @@ class Tree:
         return out
 
     def top(self, lst):
-        out, c = [], self.f.lists[lst]
+        out, c = [], self.heads.get(lst, self.f.lists[lst])
         while c:
             out.append(c)
             c = self.nodes[c].sibling
@@ -84,6 +85,27 @@ class Tree:
         else:
             self.set(parent, 'child', n.idx)
         return n.idx
+
+    def front(self, lst, roots):
+        """add [(template node, state)] as the first nodes of list lst, in that order, ahead of its disc nodes; returns
+        their indices. FUN_002F8640 sets a list's head to the node behind each marker for that list (s16 -2 - list at
+        +0), the last marker winning, so an added marker right before them moves the head; no disc node changes."""
+        old = self.top(lst)[0]
+        m = dt2.Node(len(self.nodes), (-2 - lst).to_bytes(2, 'little', signed=True) + bytes(dt2.Node.SIZE - 2))
+        self.nodes.append(m)
+        self.added.append(m.idx)
+        out = []
+        for t, state in roots:
+            n = dt2.Node(len(self.nodes), t.raw)
+            n.state, n.parent, n.child, n.sibling = state, t.parent, 0, 0
+            if out:
+                self.nodes[out[-1]].sibling = n.idx
+            self.nodes.append(n)
+            self.added.append(n.idx)
+            out.append(n.idx)
+        self.nodes[out[-1]].sibling = old
+        self.heads[lst] = out[0]
+        return out
 
     def set(self, idx, field, value):
         setattr(self.nodes[idx], field, value)
