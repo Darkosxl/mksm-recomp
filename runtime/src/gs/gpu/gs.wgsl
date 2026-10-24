@@ -508,6 +508,7 @@ const F_AEM: u32 = 32768u;
 const F_REPLACED: u32 = 65536u;
 const F_RT_HIRES: u32 = 131072u;
 const F_SOURCE: u32 = 262144u;
+const F_FX: u32 = 0x20000000u;
 
 // Hardware draws (gpu.cpp hw_flush): the setup also sits in the draw's parameters from prm(32) on, read there as constants
 // instead of loaded into registers. Words 26 on: the mip levels' TBP and TBW, or a texture pack's scale (mip_word).
@@ -868,6 +869,21 @@ fn texture(s: Setup, u: f32, v: f32, q: f32, k: u32) -> u32 {
     return out;
 }
 
+// Texture-pack effect (gpu.cpp fx_tag, texpack fx.txt: the Chameleon glow): a near-neutral texel becomes its luma times
+// the effect's colour this frame. Setup word 27: the tint's r, g, b (x 2 / 255), the saturation threshold in the top byte
+// (/ 255). Saturation is (max - min) / max with max at least 0.1, so very dark texels count as neutral and their noise
+// doesn't flicker; the tint fades out between the threshold and twice it. Alpha stays.
+fn fx_tint(s: Setup, t: u32) -> u32 {
+    let w = mip_word(s, 1u);
+    let c = vec3<f32>(f32(t & 0xFFu), f32((t >> 8u) & 0xFFu), f32((t >> 16u) & 0xFFu));
+    let hi = max(c.x, max(c.y, c.z));
+    let sat = (hi - min(c.x, min(c.y, c.z))) / max(hi, 25.5);
+    let m = clamp(2.0 - sat / max(f32(w >> 24u) / 255.0, 0.001), 0.0, 1.0);
+    let tint = vec3<f32>(f32(w & 0xFFu), f32((w >> 8u) & 0xFFu), f32((w >> 16u) & 0xFFu)) * (2.0 / 255.0);
+    let o = clamp(mix(c, dot(c, vec3<f32>(0.299, 0.587, 0.114)) * tint, vec3<f32>(m)) + 0.5, vec3<f32>(0.0), vec3<f32>(255.0));
+    return u32(o.x) | (u32(o.y) << 8u) | (u32(o.z) << 16u) | (t & 0xFF000000u);
+}
+
 fn blend4(c00: u32, c10: u32, c01: u32, c11: u32, fx: f32, fy: f32) -> u32 {
     var out = 0u;
     for (var ch = 0u; ch < 32u; ch = ch + 8u) {
@@ -1035,6 +1051,9 @@ fn plot(s: Setup, x: i32, y: i32, k: u32, at: Attr) {
         var t = 0x80808080u;
         if ((DIAG & 4u) == 0u) {
             t = texture(s, u, v, q, k);
+        }
+        if (has(s, F_FX)) {
+            t = fx_tint(s, t);
         }
         let tr = i32(t & 0xFFu);
         let tg = i32((t >> 8u) & 0xFFu);

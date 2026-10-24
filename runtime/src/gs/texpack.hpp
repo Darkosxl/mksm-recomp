@@ -31,6 +31,18 @@ std::uint64_t key(const State &st);
 // The pack's pixels for a key, 2^scale times the given size, read from disk (the caller keeps what it needs); empty
 // when the pack has none, or they are more than room pixels (they stay with the pack, unread or loaded, until they fit).
 std::vector<std::uint32_t> replacement(std::uint64_t key, std::uint32_t tw, std::uint32_t th, std::uint32_t &scale, std::size_t room);
+// Presentation effects (remaster): <pack>/fx.txt tints listed textures, replaced or not, so the switch is the file:
+//   fx <name> <period> <gain> <lut file>   an effect: the LUT (a file in the pack dir, one "r g b" line per step on the
+//                                          PS2 scale, 128 = 1.0; "#" lines skipped) read across <period> frames, looped,
+//                                          linearly between steps; the texel becomes its luma x colour x gain
+//   <key> <width> <height> <name> [threshold]
+//                                          a texture (its PS2_TEX_DUMP key and size): the effect tints only its
+//                                          near-neutral texels, saturation (max - min) / max under threshold (default
+//                                          0.06; 1 tints every texel)
+// fx(): the texture's entry (0: none). fx_word(): the entry's colour at a frame for the shaders (gs.wgsl fx): tint r, g,
+// b as colour x gain / 2 x 255 (so up to 2.0), threshold x 255 in the top byte.
+std::uint32_t fx(std::uint64_t key);
+std::uint32_t fx_word(std::uint32_t entry, std::uint64_t frame);
 #ifdef __EMSCRIPTEN__
 // Web: starts the fetches replacement() asked for (on the browser's main thread): fetch(file, out, bytes, row bytes,
 // state) fills out with the index's file and sets state to 3, or 4 when it fails (host/web.cpp, web/pack-worker.js).
