@@ -112,6 +112,7 @@
   }
   .banner.warn { background: rgba(90, 65, 15, .35); border-color: var(--gold-dk); }
   .banner > span { flex: 1; }
+  #warn { flex-direction: column; gap: .4rem; } #warn p, #warn ol { margin: 0; } #warn ol { padding-left: 1.4rem; }
   .x { min-height: 0; padding: 0 .4rem; background: none; border: 0; color: var(--muted); font-size: 1.1rem; line-height: 1.4; }
 
   details.card { padding: 0; }
@@ -195,7 +196,7 @@
     <p class="tag">Remastered · on the web</p>
     <p class="sub">Co-op for two. Desktop Chrome or Edge with a gamepad or keyboard.</p>
   </header>
-  <p id="warn" class="banner warn" hidden></p>
+  <div id="warn" class="banner warn" hidden></div>
   <div id="notice" class="banner" role="status" hidden><span id="notice-text"></span><button id="notice-x" class="x" type="button" aria-label="Dismiss">✕</button></div>
 
   <div id="home" hidden>
@@ -649,10 +650,42 @@ $('rumble').onclick = () => {
 
 // ---- start ----
 
-if (!('gpu' in navigator)) {
-  $('warn').hidden = false;
-  $('warn').textContent = 'This browser has no WebGPU. Use desktop Chrome or Edge (on Linux, enable WebGPU in chrome://flags).';
+// Step-by-step help for a browser without (hardware) WebGPU, by OS and browser: { text, steps }.
+// Same function in web/shell.html (the game page); keep the two in step.
+function webgpuHelp(onCpu) {
+  const ua = navigator.userAgent;
+  const os = /Android|iPhone|iPad/.test(ua) ? 'phone' : ua.includes('Windows') ? 'windows' : ua.includes('Mac OS') ? 'mac' : ua.includes('Linux') ? 'linux' : 'other';
+  const firefox = ua.includes('Firefox/'), edge = ua.includes('Edg/'), safari = !firefox && ua.includes('Safari/') && !ua.includes('Chrome/');
+  const flags = edge ? 'edge://flags' : 'chrome://flags', menu = edge ? 'Edge' : 'Chrome';
+  const slow = onCpu ? 'WebGPU runs on the CPU here, so the game is slow.' : 'This browser has WebGPU turned off, so the game runs on the slow software renderer.';
+  const accel = 'In ' + menu + ' Settings → System, turn on "Use graphics acceleration when available", then relaunch.';
+  const update = 'Update ' + menu + ' (menu → Help → About ' + menu + '): WebGPU needs version 113 or newer.';
+  const unsafe = 'paste ' + flags + '/#enable-unsafe-webgpu into the address bar, set it to Enabled, then relaunch. It turns WebGPU on for graphics chips the browser has not approved yet; it does not switch off any security.';
+  if (os === 'phone') return { text: 'The game needs a desktop or laptop computer.', steps: [] };
+  if (firefox && os !== 'windows') return { text: slow + ' Firefox has no WebGPU on this system yet.', steps: ['Open this page in Google Chrome or Microsoft Edge' + (os === 'mac' ? ' (or Safari on macOS 26 or newer).' : '.'), ...(os === 'linux' ? ['Then follow the steps Chrome shows here.'] : [])] };
+  if (firefox) return { text: slow, steps: ['Update Firefox (menu → Help → About Firefox): WebGPU needs version 141 or newer.', 'Still off: open about:config, set dom.webgpu.enabled to true, then reload.', 'Or open this page in Chrome or Edge.'] };
+  if (safari) return { text: slow, steps: ['Update to macOS 26 (Tahoe) or newer: its Safari has WebGPU on.', 'On older macOS: Safari → Settings → Advanced → turn on "Show features for web developers".', 'Then Develop menu → Feature Flags → turn on WebGPU, and reload this page.', 'Or open this page in Google Chrome.'] };
+  if (os === 'linux') return { text: slow, steps: [...(onCpu ? [] : ['Paste ' + flags + '/#enable-unsafe-webgpu into the address bar and set it to Enabled. (On Linux the browser does not turn WebGPU on by itself yet; this does not switch off any security.)']), 'Paste ' + flags + '/#enable-vulkan into the address bar and set it to Enabled.', 'Press Relaunch at the bottom of the page.', 'Laptop with an NVIDIA card: start the browser on it (prime-run ' + (edge ? 'microsoft-edge' : 'google-chrome') + '), or the game runs on the slow built-in graphics.'] };
+  if (os === 'windows') return { text: slow, steps: [update, accel, 'Update your graphics driver from NVIDIA, AMD or Intel.', 'Laptop with two graphics chips: Windows Settings → System → Display → Graphics → add ' + menu + ' → High performance.', 'Still off? Then ' + unsafe] };
+  if (os === 'mac') return { text: slow, steps: [update, accel, 'Still off? Then ' + unsafe] };
+  return { text: slow + ' A current Chrome, Edge or Safari on a desktop has WebGPU.', steps: [] };
 }
+
+// fills el with the help's sentence and numbered steps
+function showWebgpuHelp(el, help) {
+  const ol = document.createElement('ol');
+  for (const s of help.steps) ol.appendChild(document.createElement('li')).textContent = s;
+  const p = document.createElement('p');
+  p.textContent = help.text;
+  el.replaceChildren(p, ...(help.steps.length ? [ol] : []));
+  el.hidden = false;
+}
+
+// navigator.gpu alone is not enough: Chrome on Linux has it but returns no adapter until WebGPU is turned on
+(async () => {
+  const adapter = navigator.gpu ? await navigator.gpu.requestAdapter().catch(() => null) : null;
+  if (!adapter || adapter.info?.isFallbackAdapter) showWebgpuHelp($('warn'), webgpuHelp(!!adapter));
+})();
 if (DISCORD_URL) {
   $('discord').href = DISCORD_URL;
   $('discord').hidden = false;
