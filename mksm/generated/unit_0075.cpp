@@ -1,4 +1,9 @@
 #include "units.hpp"
+#include "ps2/decomp_hook.hpp"
+
+namespace decomp {
+extern ps2::DecompFn hook_002D44B8;
+}
 
 namespace gen {
 
@@ -741,6 +746,7 @@ L_002D44A8:
     c.budget -= 4;
     { const std::uint32_t t = c.r[31].w[0];  c.pc = t; return; }
 L_002D44B8:
+    if (::decomp::hook_002D44B8.on) [[unlikely]] { if (decomp_enter(c, ::decomp::hook_002D44B8, depth)) return; }
     set32(c.r[29], c.r[29].w[0] - 160u);
     c.r[2].sd[0] = static_cast<std::int32_t>(0x006C0000u);
     st128((c.r[29].w[0] + 32u) & ~15u, c.r[23]);
