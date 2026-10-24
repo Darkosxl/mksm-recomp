@@ -600,6 +600,7 @@ void answer_name(Cpu &c) {
 }
 
 PS2_MOD(001E6EF0, chameleon_name) {
+    if (!chameleon::select_hint(c)) return;
     const std::uint32_t id = c.r[a0].w[0], from = c.r[ra].w[0];
     if (id == kReptileName && from >= kSelectCode && from < kSelectCodeEnd && story_or_koop(rd<std::uint32_t>(kSelectMode)) &&
         rd<std::uint8_t>(kSelectPicked))

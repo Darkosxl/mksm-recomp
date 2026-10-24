@@ -5,6 +5,10 @@
 // Only meaningful with PS2_MOD on.
 #include <cstdint>
 
+namespace ps2 {
+struct Cpu;
+}
+
 namespace chameleon {
 
 // the fighter (actor address; player slot = u32 fighter+0x68 - 1, group = u16 fighter+0x1E0E) is a player who loaded
@@ -22,6 +26,10 @@ constexpr std::uint8_t kFxScorpion = 20, kFxSubzero = 36;
 // puts player slot's stance (a00_stnd / c00_stnd) in his mode's: Scorpion's in yellow, Sub-Zero's in blue, Reptile's
 // otherwise (chameleon_moves.cpp); no-op when the slot is not Chameleon
 void restance(std::uint32_t slot);
+
+// get_string (0x001E6EF0) asked by the select screen's button legend with a cursor on Reptile: draws the
+// "L1 Reptile / Chameleon" line under it (chameleon_hint.cpp); false: control left the hook
+bool select_hint(ps2::Cpu &c);
 
 }
 
