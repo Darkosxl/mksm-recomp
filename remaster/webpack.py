@@ -6,6 +6,8 @@
 # scale at its index ({"2": id, "4": id}). --scale 2 halves the 4x pack (2:1 box average): the variant for PS2_SCALE 1-2,
 # where 4x textures would shimmer (replacements have no mips).
 # --maps dir: per-map dumps (harvest.sh, dir/<map>/*.pam); the maps column lists the maps each texture was seen in.
+# The pack's fx.txt (presentation effects, runtime/src/gs/texpack.hpp) and the LUT files it names go into obj/ too,
+# content-named; current.json "fx" maps each one's name in the pack dir to its object (web/pack.js puts them back).
 # usage: webpack.py <pack dir> <out dir> [--scale 4|2] [--maps dir] [--jobs 4]
 import argparse, gzip, hashlib, json, multiprocessing, os, pathlib, sys
 import numpy as np
@@ -82,9 +84,19 @@ lines = ['#mksm-pack 1 gzip-up'] + [f'{k} {ow} {oh} {a.scale} {n} {name}' + (' '
 text = '\n'.join(lines) + '\n'
 pid = hashlib.sha256(text.encode()).hexdigest()[:16]
 (out / f'{pid}.txt').write_text(text)
+fx = {}
+if (src / 'fx.txt').exists():
+    fxl = [l.split() for l in (src / 'fx.txt').read_text().split('\n')]
+    for n in ['fx.txt'] + [l[4] for l in fxl if l[:1] == ['fx'] and len(l) >= 5]:
+        if '/' in n: sys.exit(f'fx.txt: LUT {n} must be a file in the pack dir')
+        b = (src / n).read_bytes()
+        fx[n] = f'{pathlib.Path(n).stem}.{hashlib.sha256(b).hexdigest()[:12]}.txt'
+        (out / 'obj' / fx[n]).write_bytes(b)
 cur = out / 'current.json'
 pointers = json.loads(cur.read_text()) if cur.exists() else {}
 pointers[str(a.scale)] = pid
+if fx: pointers['fx'] = fx
+else: pointers.pop('fx', None)
 cur.with_suffix('.tmp').write_text(json.dumps(pointers, sort_keys=True) + '\n')
 os.replace(cur.with_suffix('.tmp'), cur)
 
@@ -98,4 +110,5 @@ if a.scale == 2:
     for y, x in ((0, 0), (oh, ow), (2 * oh - 1, 2 * ow - 1)):
         if list(px[y, x]) != [(s[2 * y:2 * y + 2, 2 * x:2 * x + 2, c].sum() + 2) // 4 for c in range(4)]: sys.exit(f'self-check failed: box average at {x},{y}')
 total, raw = sum(r[5] for r in done), sum(r[3] for r in done)
-print(f'{len(done)} textures, {raw / 2**20:.0f} MB raw -> {total / 2**20:.0f} MB ({raw / total:.2f}:1); index {pid}.txt, scale {a.scale}; self-check ok ({name})')
+print(f'{len(done)} textures, {raw / 2**20:.0f} MB raw -> {total / 2**20:.0f} MB ({raw / total:.2f}:1); index {pid}.txt, scale {a.scale}; self-check ok ({name})'
+      + (f'; fx: {", ".join(fx.values())}' if fx else ''))

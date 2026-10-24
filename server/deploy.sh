@@ -163,7 +163,7 @@ if [ -n "$PACK_DIR" ]; then
     say "texture pack"
     # Objects and indexes are content-named and never change, so only new ones go up; current.json flips last, once
     # everything it points at is in place. The bytes to send are what a dry run of the same upload would send.
-    obj=(--include='*.tex' --exclude='*' "$PACK_DIR/obj/" "$host:/srv/mksm/pack/obj/")
+    obj=(--include='*.tex' --include='*.txt' --exclude='*' "$PACK_DIR/obj/" "$host:/srv/mksm/pack/obj/")  # .txt: fx.txt and its LUTs
     remote 'umask 022 && mkdir -p /srv/mksm/pack/obj'
     need=$(push -rlpt --ignore-existing --dry-run --stats --no-human-readable "${obj[@]}" |
         sed -n 's/^Total transferred file size: \([0-9]*\).*/\1/p')
