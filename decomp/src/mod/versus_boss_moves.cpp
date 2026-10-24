@@ -4,7 +4,7 @@
 // are not here (versus_combos.cpp grafts them).
 // Several ports may target one group: their clips take consecutive free slots, in table order.
 // Port 0: Reptile (group 84, any mode: the Versus and the story/NPC load paths, FUN_001CE6E8 and FUN_001D1068, both
-// register the callback hooked here) gets 9 of the story boss Reptile's states (group 59).
+// register the callback hooked here) gets 6 of the story boss Reptile's states (group 59).
 //
 // How a state plays (mksm/tools/scripts/fstates.py): global state s -> anim descriptor DAT_006C8A28[s] (u32[3010]),
 // descriptor d = 8 bytes in the state DB at 0x6B3000 (+4: table of {u8 format, u8 channels, u16 frames, u32 clip + 6});
@@ -17,7 +17,7 @@
 //   record: +0 slot, +8 player index). After it ran: for each port of the fighter's group, read the donor's nim.rtt,
 //   ERG.DAT and ERG.DT2 from the disc (GAMEDATA.WAD) and inflate them on the host (raw deflate, as wad.py), copy only the
 //   port's states' clips (a clip runs to the next one; its offsets are its own), clip names, records, cancel windows
-//   and event lists into one block of the fighter's heap (the boss port's 9 states: 128 KB, its whole files 367 KB;
+//   and event lists into one block of the fighter's heap (the boss port's 6 states: 68 KB, its whole files 367 KB;
 //   Scorpion's are 2 MB), fill the descriptors with FUN_002AF908 + FUN_002B1960 (what the bank parser FUN_002AE290 does per clip),
 //   patch the records (+0x11 group = target; partner +0x2A kept only if a
 //   port of the group loads it) and cut each event list at the clip's last frame (story t10_sung lists 3079 events up to
@@ -30,12 +30,15 @@
 // - 0x002ADAC0 resets DAT_006C8A28 to identity for groups 0-90 (round start, loads): the map is written again after it.
 // - 0x00303340, the set-state core (a0 = fighter, a1 = state): entering a donor state writes map, record and event
 //   pointers again first (0x321998 clears every event pointer at a load), then:
+//   vanish state played out (the game ends it for idle from 0x00303AF8, return address 0x00303B00, frame-in-state
+//   already reset to 0; a hit or another move calls from elsewhere): set-state goes to the teleport state
+//   instead, as the story boss AI does (t20_sung, then t10_sung). A press-0 command child cannot do it: it never fired.
 //   teleport state: the fighter is moved to the far side of the opponent, `gap` units past him, before it plays
 //   (the story clip plays in place: the boss AI places him itself). Leaving the fade states for another state calls
 //   the event-530 handler (0x001ABCB0: alpha percent | frames << 15) with 100% over 1 frame, so a teleport cut short
 //   (hit, round end) never leaves him invisible: the alpha it sets lasts across rounds.
-// Anything unexpected (no room in the heap or the clip slots, a file that does not read or inflate) loads nothing and
-// says so on stderr.
+// Anything unexpected (no room in the heap or the clip slots, a file that does not read or inflate, a guest call that
+// does not come back) loads nothing and says so on stderr. The hooks run their guest calls unpreempted (NoPreempt).
 #include "chameleon.hpp"
 #include "ps2/decomp.hpp"
 #include "ps2/disc.hpp"
@@ -62,6 +65,8 @@ struct Port {
     std::uint32_t count;
     std::int32_t teleport;      // state that moves the fighter behind the opponent on entry, or -1
     float gap;
+    std::int32_t vanish;        // this state, played out (set-state from kEndOfState), goes on into `teleport`
+                                // instead of what the game picked; -1: none
     const std::int32_t *fade;   // leaving these for another state restores full opacity
     std::uint32_t fade_count;
     const std::int16_t *strip;  // frame event ids turned into a no-op
@@ -70,10 +75,12 @@ struct Port {
     std::uint8_t fx_base;       // added to own-bank effect indices (event 114), 0 = none
 };
 
-// the states his command tree reaches (vsboss.py): d30_cntr 1578, g10_st_q 1580, g20_st_q 1581, s11_sp_s 1584,
-// s30_sp_n 1586, s40_sp_n 1587, s50_sp_n 1588, t10_sung 1592, t20_sung 1593 (none has a partner state)
-constexpr std::uint8_t kBossMoves[] = {14, 16, 17, 20, 22, 23, 24, 28, 29};
+// the states his command tree reaches (vsboss.py): d30_cntr 1578, s30_sp_n 1586, s40_sp_n 1587, s50_sp_n 1588,
+// t10_sung 1592, t20_sung 1593 (none has a partner state)
+constexpr std::uint8_t kBossMoves[] = {14, 22, 23, 24, 28, 29};
 constexpr std::int32_t kTeleportFade[] = {1593, 1592}; // t20_sung vanish, t10_sung reappear
+constexpr std::int32_t kVanish = 1593;                    // t20_sung
+constexpr std::uint32_t kEndOfState = 0x00303B00u;        // set-state's return address when a state played out
 
 // Chameleon's specials per colour mode (chamspecials.py report: the states his grafted command nodes reach, plus
 // their partners), gated by chameleon_moves.cpp. Scorpion's spear events 155/156 show/hide mesh parts by Scorpion's
@@ -85,12 +92,12 @@ constexpr std::uint8_t kChamSubzero[] = {39, 41, 43, 45, 46, 81, 96, 97, 99, 100
 constexpr std::int16_t kSpearParts[] = {155, 156};
 
 constexpr Port kPorts[] = {
-    {"Versus Reptile <- story boss Reptile", 84, 6512, 1564, kBossMoves, std::size(kBossMoves), 1592, 450.0f,
+    {"Versus Reptile <- story boss Reptile", 84, 6512, 1564, kBossMoves, std::size(kBossMoves), 1592, 450.0f, kVanish,
      kTeleportFade, std::size(kTeleportFade), nullptr, 0, kZero, 0},
-    {"Chameleon <- Scorpion", 84, 6742, 1994, kChamScorpion, std::size(kChamScorpion), -1, 0.0f, nullptr, 0,
+    {"Chameleon <- Scorpion", 84, 6742, 1994, kChamScorpion, std::size(kChamScorpion), -1, 0.0f, -1, nullptr, 0,
      kSpearParts, std::size(kSpearParts), kRebase, chameleon::kFxScorpion},
-    {"Chameleon <- Sub-Zero", 84, 6802, 2515, kChamSubzero, std::size(kChamSubzero), -1, 0.0f, nullptr, 0, nullptr, 0,
-     kRebase, chameleon::kFxSubzero},
+    {"Chameleon <- Sub-Zero", 84, 6802, 2515, kChamSubzero, std::size(kChamSubzero), -1, 0.0f, -1, nullptr, 0, nullptr,
+     0, kRebase, chameleon::kFxSubzero},
 };
 
 constexpr std::uint32_t kAlloc = 0x0020F058u;      // (heap, size, best fit, file, line): FUN_0020F058
@@ -549,38 +556,44 @@ void teleport(const Port &p, std::uint32_t fighter) {
 
 PS2_MOD(001D11F8, versus_boss_moves_load) {
     const std::uint32_t req = c.r[a0].w[0];
+    // The callback itself runs unpreempted too: in the mirror match its time slice ran out inside it (a thread switch
+    // unwinds the host stack, the callback finishes later without this hook) and neither fighter got its ports.
+    const NoPreempt guard(c);
     decomp::hook_001D11F8.enabled = false;
     const bool back = call(c, 0x001D11F8u, Ra{c.r[ra].w[0]});
     decomp::hook_001D11F8.enabled = true;
-    if (!back) return;
+    const auto left = [&c, req](const char *where) {
+        std::fprintf(stderr, "[mod] versus_boss_moves: bank request %08X: no ports: control left %s (pc %08X)\n", req, where, c.pc);
+    };
+    if (!back) return left("the bank callback");
     const Reg128 ret = c.r[v0];
     const std::uint32_t record = rd<std::uint32_t>(req + 28), slot = rd<std::uint32_t>(record);
     const std::uint32_t fighter = kFighters + rd<std::uint32_t>(record + 8) * kFighterSize;
     const std::uint32_t bank = rd<std::uint32_t>(req + 8);
     const std::uint32_t heap = rd<std::uint32_t>(req + 4) & 0x7F;
     const std::int16_t group = group_of(fighter);
-    const NoPreempt guard(c);
     std::uint32_t own = 0, used, hs[kMaxHeaders], n = 0;
     for (const std::uint32_t t = bank + rd<std::uint32_t>(bank); rd<std::uint32_t>(t + 4 * own); ++own) {}
     used = own;
     for (const Port &p : kPorts) {
         if (p.target_group != group) continue;
-        if (!load(c, p, fighter, heap, slot * 200 + used, hs[n])) return;
+        if (!load(c, p, fighter, heap, slot * 200 + used, hs[n])) return left(p.name);
         if (hs[n]) used += p.count, ++n;
     }
-    if (!n) return void(c.r[v0] = ret);
+    if (!n) return void(c.r[v0] = ret); // other fighters (no port), or a port that printed why it did not load
     std::fprintf(stderr, "[mod] versus_boss_moves: group %d slot %u: %u own + %u ported = %u of 200 clip slots (%u free)\n",
                  group, slot, own, used - own, used, 200 - used);
-    if (!windows(c, fighter, heap, hs, n)) return;
+    if (!windows(c, fighter, heap, hs, n)) return left("the cancel windows");
     for (std::uint32_t k = 0; k < n; ++k) apply(hs[k]);
     c.r[v0] = ret;
 }
 
 PS2_MOD(002ADAC0, versus_boss_moves_remap) {
+    const NoPreempt guard(c); // as above: the remap must run after it
     decomp::hook_002ADAC0.enabled = false;
     const bool back = call(c, 0x002ADAC0u, Ra{c.r[ra].w[0]});
     decomp::hook_002ADAC0.enabled = true;
-    if (!back) return;
+    if (!back) return void(std::fprintf(stderr, "[mod] versus_boss_moves: anim redo left (pc %08X): ports not remapped\n", c.pc));
     std::uint32_t hs[kMaxHeaders];
     for (std::uint32_t k = 0; k < kPoolScan; ++k)
         for (std::uint32_t i = 0, n = headers(kPool + k * kFighterSize, hs); i < n; ++i) apply(hs[i]);
@@ -588,10 +601,15 @@ PS2_MOD(002ADAC0, versus_boss_moves_remap) {
 
 PS2_MOD(00303340, versus_boss_moves_state) {
     const std::uint32_t fighter = c.r[a0].w[0];
-    const std::int32_t s = static_cast<std::int32_t>(c.r[a1].w[0]), cur = rd<std::int32_t>(fighter + 0x24);
+    const std::int32_t cur = rd<std::int32_t>(fighter + 0x24);
+    std::int32_t s = static_cast<std::int32_t>(c.r[a1].w[0]);
     std::uint32_t hs[kMaxHeaders];
     const std::uint32_t n = headers(fighter, hs);
     bool fade = false;
+    for (std::uint32_t i = 0; i < n; ++i) {
+        const Port &p = *port_of(hs[i]);
+        if (cur == p.vanish && s != cur && c.r[ra].w[0] == kEndOfState) c.r[a1].d[0] = static_cast<std::uint32_t>(s = p.teleport);
+    }
     for (std::uint32_t i = 0; i < n; ++i) {
         const Port &p = *port_of(hs[i]);
         if (loaded_state(p, s)) apply(hs[i]);
