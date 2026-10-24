@@ -45,11 +45,17 @@
 // below (kState); phase 2 (mode-gated specials) reads Player::mode.
 #include "chameleon.hpp"
 
+#include "../render/instance.hpp"
+
 #include "ps2/decomp.hpp"
 #include "ps2/mod_data.hpp"
 #include "ps2/system.hpp"
 
 #include <cstdio>
+
+namespace decomp {
+extern ps2::DecompFn hook_00247BD8;  // ChainCharacterBaseState (render/character_gs_state.cpp)
+}
 
 namespace {
 
@@ -98,8 +104,10 @@ constexpr std::uint32_t kState = 0x000A0000u;
 //         +0 u8 Chameleon (set by every player load), +1 u8 mode (0-3), +2 u8 L3 held last frame,
 //         +3 u8 served from PS2_MOD_DATA since his last load: 1 model, 2 textures,
 //         +4 u32 the texture slot showing his rainbow page (0: not found yet), +8 u8 picked Chameleon at the select
-//         screen, +9 u8 rainbow page (0xFF: none), +0xC u32 rainbow phase (frames, mod kRainbowCycle), +0x10 u32 that slot's CLUT address, +0x14 u32 build heap + 1
-//         to report on his next frame (0: none)
+//         screen, +9 u8 rainbow page (0xFF: none), +0xA u8 1: his served model is drawn blended by texel alpha (the
+//         layered variant: more than 5 texture pages), +0xB u8 1: said so, +0xC u32 rainbow phase (frames, mod
+//         kRainbowCycle), +0x10 u32 that slot's CLUT address, +0x14 u32 build heap + 1 to report on his next frame
+//         (0: none), +0x18 u32 and +0x1C u32 the model build's first and end address
 //   +0x80 "CHAMELEON"
 constexpr std::uint32_t kArmed = kState + 0x00, kSelectSlot = kState + 0x04, kSelectOrig = kState + 0x08,
                         kSelectShown = kState + 0x0C, kSelectHeld = kState + 0x10, kSelectPicked = kState + 0x12,
@@ -124,6 +132,10 @@ struct Player {
     Field<std::uint32_t> phase{addr + 0xC};
     Field<std::uint32_t> rclut{addr + 0x10};
     Field<std::uint32_t> heaplog{addr + 0x14};
+    Field<std::uint8_t> blend{addr + 0xA};
+    Field<std::uint8_t> blend_said{addr + 0xB};
+    Field<std::uint32_t> build_lo{addr + 0x18};
+    Field<std::uint32_t> build_hi{addr + 0x1C};
 };
 Player player(std::uint32_t slot) { return {kPlayers + slot * 0x20}; }
 
@@ -297,6 +309,21 @@ void rainbow(std::uint32_t slot) {
     wr<std::uint32_t>(kLastTexture, 0xFFFFFFFFu);  // the next character draw uploads its texture set again
 }
 
+// fn_247bd8 asks (decomp::render::g_blend_model): the model is a Chameleon's layered build, drawn blended by texel alpha
+bool blended_model(std::uint32_t model) {
+    for (std::uint32_t slot = 0; slot < 2; ++slot) {
+        const Player p = player(slot);
+        if (!p.chameleon || !p.blend || model < p.build_lo || model >= p.build_hi) continue;
+        if (!p.blend_said) {
+            p.blend_said = 1;
+            std::fprintf(stderr, "[mod] chameleon: player %u model %08x drawn blended by texel alpha (frame %llu)\n", slot + 1, model,
+                         static_cast<unsigned long long>(frame_count()));
+        }
+        return true;
+    }
+    return false;
+}
+
 void next_mode(std::uint32_t slot) {
     const Player p = player(slot);
     p.mode = static_cast<std::uint8_t>((p.mode + 1) % kModes);
@@ -396,7 +423,7 @@ PS2_MOD(001CE6E8, chameleon_costume) {
         const Player p = player(who - 1);
         const bool chameleon = group == kReptile && playing_story() && p.picked;
         p.chameleon = chameleon;
-        p.served = 0, p.rslot = 0, p.rpage = 0xFF, p.heaplog = 0;
+        p.served = 0, p.rslot = 0, p.rpage = 0xFF, p.heaplog = 0, p.blend = 0, p.blend_said = 0, p.build_lo = 0, p.build_hi = 0;
         wr<std::uint32_t>(kAltFlag[0], who == 1 && chameleon);
         wr<std::uint32_t>(kAltFlag[1], who == 2 && chameleon);
         if (chameleon) std::fprintf(stderr, "[mod] chameleon: player %u loads as Chameleon\n", who);
@@ -468,7 +495,12 @@ PS2_MOD(001CE380, chameleon_model) {
     std::fprintf(stderr, "[mod] chameleon: player %u model built in heap %u: %08x-%08x (%u bytes), %u bytes free (was %u); the file was at "
                  "%08x-%08x: %s by %d bytes\n", who, heap, bottom, built, built - bottom, heap_free(heap), top - bottom, data, data + size,
                  built <= data ? "clear" : "OVERLAPPED", static_cast<int>(data - built));
-    player(who - 1).heaplog = heap + 1;
+    const Player p = player(who - 1);
+    p.heaplog = heap + 1, p.build_lo = bottom, p.build_hi = built;
+    if (p.blend) {  // fn_247bd8's decompiled twin (exact; ci.sh gates it) carries the blend switch: turn it on
+        decomp::render::g_blend_model = blended_model;
+        decomp::hook_00247BD8.enabled = decomp::hook_00247BD8.on = true;
+    }
 }
 
 PS2_MOD(001D0688, chameleon_textures) {
@@ -479,6 +511,8 @@ PS2_MOD(001D0688, chameleon_textures) {
         const Player p = player(who - 1);
         p.rslot = 0, p.rpage = 0xFF;
         if (p.served & 2) find_rainbow_page(who - 1, data);
+        // ponytail: the layered variant is told apart by its 6th page (the shell); a flag in the files if that changes
+        p.blend = (p.served & 2) && rd<std::uint32_t>(data + 12) > 5;
     }
     decomp::hook_001D0688.enabled = false;
     tail(c, kTextureLoaded);

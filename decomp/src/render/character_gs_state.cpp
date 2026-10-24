@@ -8,6 +8,7 @@
 //   0x25-0x27   pass 2 (environment highlight): ALPHA_1, TEST_1, TEX0_1
 //   0x2d        FBA_1
 #include "ps2/decomp_vu0.hpp"
+#include "instance.hpp"
 #include "vif.hpp"
 
 namespace {
@@ -143,8 +144,11 @@ PS2_DECOMP(002478F0, PackCharacterBaseState) {
     }
 }
 
+bool (*decomp::render::g_blend_model)(std::uint32_t) = nullptr;
+
 // fn_247bd8(instance): pass-1 GS state of a fighter mesh, appended to the chain: opaque (alpha test, depth GREATER),
-// or blended by the instance's fixed alpha (fading fighters), or by FIX 128 in draw modes other than 0.
+// or blended by the instance's fixed alpha (fading fighters), or by FIX 128 in draw modes other than 0 (unless a mod
+// asks for the texel-alpha blend: g_blend_model, instance.hpp).
 PS2_DECOMP(00247BD8, ChainCharacterBaseState) {
     const Chain chain;
     const CharacterInstance inst{c.r[a0].w[0]};
@@ -156,7 +160,7 @@ PS2_DECOMP(00247BD8, ChainCharacterBaseState) {
     std::uint64_t blend, test;
     if (alpha != -1) {
         kind = Fade, blend = FadeBlend(static_cast<std::uint32_t>(alpha)), test = kFadeTest;
-    } else if (inst.draw_mode().get() != 0) {
+    } else if (inst.draw_mode().get() != 0 && !(g_blend_model && g_blend_model(inst.addr))) {
         kind = Mode, blend = FadeBlend(128), test = kFadeTest;
     } else {
         kind = Opaque, blend = kBlend, test = kOpaqueTest;
