@@ -11,8 +11,8 @@ namespace chameleon {
 // as Chameleon (Reptile, group 84, in story or Ko-op)
 bool is(std::uint32_t fighter);
 
-// his colour mode, chameleon.py MODES order: 0 rainbow, 1 scorpion (yellow), 2 subzero (blue), 3 reptile (green);
-// -1 when the fighter is not Chameleon
+// his mode, which picks whose specials he plays (it no longer changes his look), chameleon.py MODES order: 0 rainbow,
+// 1 scorpion (yellow), 2 subzero (blue), 3 reptile (green); -1 when the fighter is not Chameleon
 int mode(std::uint32_t fighter);
 
 }
