@@ -58,7 +58,7 @@ The boss's s50 attack (state 1588): a volley of acid. No damage on a standing op
 ### R1 + L1 + triangle: Invisibility (press again to reappear)
 
 The boss's invisibility (state 1586). He fades out in a burst of green particles and stays invisible, through his
-combos and the vanish, until you press R1 + L1 + triangle again. The clip presses it twice, about 3 s apart.
+combos, until you press R1 + L1 + triangle again. The clip presses it twice, about 3 s apart.
 
 <img src="clips/boss-triangle.webp" width="480" alt="Reptile: invisibility, then back">
 
@@ -68,18 +68,11 @@ The boss's s40 attack (state 1587). No damage on a standing opponent in the test
 
 <img src="clips/boss-circle.webp" width="480" alt="Reptile: boss s40">
 
-### R1 + L1 + R2: vanish
+### R1 + L1 + R2: the boss's counter
 
-He fades out (state 1593), then reappears behind the opponent (state 1592). A hit or another move during the vanish
-ends it, and he is always visible again afterwards.
+The boss's counter, d30 (state 1578), as its own move.
 
-<img src="clips/boss-r2.webp" width="480" alt="Reptile: vanish and reappear behind the opponent">
-
-### Triangle, triangle, circle: the boss's counter
-
-His own string. Its last hit is now the boss's counter, d30 (state 1578). Damage 51 in 5 hits.
-
-<img src="clips/combo-triangle-triangle-circle.webp" width="480" alt="Reptile: triangle, triangle, circle into the boss's counter">
+<img src="clips/boss-r2.webp" width="480" alt="Reptile: the boss's counter">
 
 Three boss attacks are not ported: s11 (1584), g20 (1581) and g10 (1580). They keep their travel in the clip's root
 bone, so the fighter's position would only catch up when the move ends (`vsboss.py`, DROPPED).
@@ -96,7 +89,7 @@ ones from the move data, not the only chains.
 |---|---|
 | square, square, square, circle | counter (d10) |
 | triangle, circle | g10 |
-| triangle, triangle, circle | the boss's counter (above) |
+| triangle, triangle, circle | counter (d30) |
 | triangle, square, square, circle | g21 |
 
 ### Ported combo extensions (Versus, story and Ko-op)

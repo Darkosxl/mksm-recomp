@@ -3,7 +3,7 @@
 <img src="clips/combo-triangle-circle-r2.webp" width="480" alt="Johnny Cage: triangle, circle, R2">
 
 Versus-only in the original game. This build adds the story fighters' combo extensions to his strings and gives him
-two moves of the story mode's Cage on R1 + L1. General notes (buttons, upgrades, damage): [Fighters](../README.md).
+the story mode's Cage's counter flip kick on R1 + L1. General notes (buttons, upgrades, damage): [Fighters](../README.md).
 
 ## Special moves
 
@@ -36,9 +36,9 @@ Grabs the opponent and holds him. Cross lets go. No damage on a standing opponen
 
 <!-- BM-CAGE: merge point for branch bm-cage. It adds docs/characters/cage/moves.md and the clips of his new boss
      specials; link or inline them here. -->
-## Story Cage's moves: R1 + L1
+## Story Cage's move: R1 + L1
 
-Two moves of the story mode's own Johnny Cage, from branch `bm-cage` (details in [moves.md](moves.md)). Hold R1 and
+A move of the story mode's own Johnny Cage, from branch `bm-cage` (details in [moves.md](moves.md)). Hold R1 and
 L1, then press the button. L1 does nothing else in a fight, so R1 + button stays his own special.
 
 ### R1 + L1 + square: counter flip kick
@@ -47,11 +47,6 @@ A flipping kick in the air (`d10_cntr`), then he lands and returns to his stance
 
 <img src="clips/counter.webp" width="480" alt="Johnny Cage: counter flip kick">
 
-### R1 + L1 + R2: vanish
-
-He vanishes (`t20_sung`, 80 frames), then reappears on the far side of the opponent (`t10_sung`).
-
-<img src="clips/vanish.webp" width="480" alt="Johnny Cage: vanish and reappear behind the opponent">
 <!-- /BM-CAGE -->
 
 ## Combos

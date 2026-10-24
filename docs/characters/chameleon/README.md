@@ -54,9 +54,7 @@ The same specials as [Reptile](../reptile/README.md#special-moves): Acid Spit (R
 | R1 + L1 + square | Acid volley |
 | R1 + L1 + triangle | The boss's invisibility (press again to reappear) |
 | R1 + L1 + circle | The boss's s40 attack |
-| R1 + L1 + R2 | Vanish, then reappear behind the opponent |
-
-His triangle, triangle, circle string ends in the boss's counter, as Reptile's does.
+| R1 + L1 + R2 | The boss's counter |
 
 ### Yellow: Scorpion's
 
