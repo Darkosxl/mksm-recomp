@@ -664,6 +664,16 @@ void *emulate(void *data) {
 // while a lockstep session runs, both pads come from the input ring only
 bool direct_pads() { return !(ps2::g_options.lockstep && g_ls.active.load()); }
 
+namespace ps2 { void debug_kill_player(int player); } // decomp/src/trace/debug_call.cpp
+
+// mksm.kill() in the page's console: player (0 = player 1) dies at the next frame. Solo only: a local kill would
+// desync a lockstep peer.
+extern "C" EMSCRIPTEN_KEEPALIVE int ps2web_kill_player(int player) {
+    if (!direct_pads()) return 0;
+    ps2::debug_kill_player(player);
+    return 1;
+}
+
 extern "C" EMSCRIPTEN_KEEPALIVE void ps2web_pad(int pad, int buttons, int lx, int ly, int rx, int ry) {
     if (!direct_pads()) return;
     ps2::set_pad_buttons(static_cast<std::uint16_t>(buttons), pad);

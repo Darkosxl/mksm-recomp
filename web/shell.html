@@ -543,6 +543,13 @@ document.addEventListener('webkitfullscreenchange', onFullscreenChange);
 fullscreenButton.addEventListener('click', toggleFullscreen);
 document.getElementById('exit-fullscreen').addEventListener('click', toggleFullscreen);
 canvas.addEventListener('dblclick', toggleFullscreen);
+// console: mksm.kill() kills player 1 (mksm.kill(2): player 2), e.g. when a fight cannot end. Solo only.
+window.mksm = {
+  kill(player = 1) {
+    if (!Module._ps2web_kill_player) return 'game not running';
+    return Module._ps2web_kill_player(player - 1) ? 'player ' + player + ' dies next frame' : 'not in a lockstep session';
+  },
+};
 // F8: download a savestate of this moment (bug reports; load it with ?state=)
 window.addEventListener('keydown', (e) => {
   if (e.code !== 'F8' || e.repeat || !Module._ps2web_save_state) return;
