@@ -70,6 +70,7 @@
 002752B0	screen_page_other_field	decomp/src/renderer/screen/screen_page_other_field.cpp
 00275300	screen_zbuffer_page	decomp/src/renderer/screen/screen_zbuffer.cpp
 002753A0	screen_zbuffer_format	decomp/src/renderer/screen/screen_zbuffer.cpp
+002F8640	versus_combos	decomp/src/mod/versus_combos.cpp (PS2_MOD)
 00326140	ObjectGetGroundY	decomp/src/paradox/object.cpp
 00379988	PointLightIsOn	decomp/src/paradox/point_light.cpp
 00474EDC	strlen	decomp/src/libc/strlen.cpp
