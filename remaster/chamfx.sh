@@ -4,7 +4,8 @@
 #   remaster/chamfx.sh vsstart <out> <rights>   Versus fight start, P1 = roster cell <rights> right of Liu Kang
 #                                               (1 Scorpion, 3 Reptile, 6 Sub-Zero), P2 Kung Lao, The Rooftops;
 #                                               saves <out>/fs.state at f$FS (vsrun.sh start's inputs; later for
-#                                               cells past Reptile's, the frame in <out>/fs.frame)
+#                                               cells past Reptile's, the frame in <out>/fs.frame); L3=1: press
+#                                               L3 on the cell (Reptile -> Chameleon)
 #   remaster/chamfx.sh story <out>              story from remaster-data/states/charsel.state as Chameleon (cell 7,
 #                                               one L3: Reptile -> Chameleon), saves <out>/fs.state at f$SS
 #   remaster/chamfx.sh move <out> <state> <f0> <fighter> <gstate> [N]
@@ -29,6 +30,7 @@ vsstart)
   n=${1:?rights}; state=$S/vs/versus-csel-unlocked-f1890.state end=$((FS + 5)) f=1900
   args=(--pad2)
   for _ in $(seq "$n"); do args+=(--press "$f:right:4"); f=$((f + 25)); done
+  [ -z "${L3:-}" ] || { args+=(--press "$f:l3:4"); f=$((f + 25)); }  # L3=1 on Reptile's cell: Chameleon
   d=$((f + 30 - 2005)); [ $d -gt 0 ] || d=0  # past Reptile's cell, P2 and the arena wait as long (P2's accept is lost
   FS=$((FS + d)) end=$((FS + 5))             # while P1's plays)
   echo $FS > "$O/fs.frame"

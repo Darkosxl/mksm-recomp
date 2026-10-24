@@ -33,7 +33,8 @@ say(f'{run}: call frame {call} state {int(m.group(3), 16) if m else "- (inputs)"
 def fx(path, since):
     cue = ev = cue0 = ev0 = 0
     hashes, defs = {}, {}
-    for line in open(path):
+    # a call nested in another (an effect lookup inside event 114) prints on the outer call's line, after its ra
+    for line in re.sub(r'(ra [0-9A-F]{8})(?=\d)', r'\1\n', open(path).read()).splitlines():
         p = line.split()
         if not p or not p[0].isdigit() or int(p[0]) < since:  # a wrapped line ("-> v0") has no frame
             continue
