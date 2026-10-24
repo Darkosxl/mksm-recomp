@@ -27,6 +27,9 @@ setup)
   until ssh -o BatchMode=yes -o ConnectTimeout=5 "$box" true 2>/dev/null; do sleep 5; done
   ssh "$box" 'umask 077; cat > ~/.k' < ~/.ssh/w-aws.key
   ssh "$box" "set -e; cloud-init status --wait > /dev/null; sudo loginctl enable-linger ubuntu
+    sudo apt-get -qq update > /dev/null && sudo DEBIAN_FRONTEND=noninteractive apt-get -qq install -y python3-venv clang lld \
+      cmake ninja-build pkg-config libsdl2-dev zlib1g-dev libssl-dev libsoundtouch-dev libavcodec-dev libavutil-dev \
+      libswscale-dev libopus-dev ffmpeg > /dev/null
     mkdir -p ~/w/wt ~/w/logs ~/w/out ~/w/remaster-data ~/w/tp ~/w/games/mksm/disc
     curl -sf '$url' | openssl enc -d -aes-256-ctr -pbkdf2 -iter 200000 -pass file:\$HOME/.k -out ~/w/games/mksm/disc.iso
     python3 -m venv ~/w/.venv-remaster && ~/w/.venv-remaster/bin/pip -q install pillow numpy"
