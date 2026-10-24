@@ -420,7 +420,10 @@ bool load(Cpu &c, const Port &p, std::uint32_t fighter, std::uint32_t heap, std:
             const std::int16_t frames = get<std::int16_t>(rtt, start + 2);
             put<std::uint8_t>(img, rec + 0x11, static_cast<std::uint8_t>(p.target_group));
             if (!loaded_any(p.target_group, get<std::int16_t>(img, rec + 0x2A))) put<std::int16_t>(img, rec + 0x2A, 0);
-            // events past the clip's last frame never fire on a fighter (the boss AI holds the state); dropped
+            // events past the clip's last frame never fire on a fighter (the boss AI holds the state); dropped.
+            // The list starts where add() puts its first event (16-aligned): the previous clip or name leaves the image
+            // unaligned, and a pointer into that padding reads event 0, an empty list.
+            while (img.size() % 16) img.push_back(0);
             ev_at[i] = static_cast<std::uint32_t>(img.size());
             for (std::uint32_t e = events + 16 * get<std::uint32_t>(dt2, starts + 4 * k);; e += 16) {
                 if (!fits(dt2, e, 16)) {
