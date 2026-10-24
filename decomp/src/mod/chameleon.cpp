@@ -5,7 +5,7 @@
 //  - Costume, 0x001CE6E8 (player load: player 1/2, group). The loader takes the alt costume for player 1 when u32
 //    0x4D5E1C is set and for player 2 when 0x4D5E20 is set and 0x4D5E1C is not; nothing in the game writes them (only
 //    a mirror match, both clear and the same group, gives player 2 the alt). The mod sets them for the player being
-//    loaded: Chameleon gets the alt, everyone else the base costume.
+//    loaded: Chameleon (Reptile picked as Chameleon at the select screen) gets the alt, everyone else the base costume.
 //  - Colour modes: 0 rainbow, 1 yellow (Scorpion's specials), 2 blue (Sub-Zero's), 3 green (Reptile's). Phase 1 is
 //    visual only: the green cloth of the costume's CLUTs is recoloured per mode (chameleon.py's green() mask and
 //    tint; rainbow = gray at luma x1.15, which the renderer's fx glow (texture pack fx.txt) cycles). 0x001D0688 (the
@@ -15,10 +15,10 @@
 //    the slots' CLUTs (TextureManager, found by their content) and has the next character draw upload them again.
 //  - Switch: L3 (pad bit 0x200, unused by every fighter's command tree), read per actor in 0x001EAF30 (the per-actor
 //    pad read) from the raw held word; the remapped words the actor keeps drop L3.
-//  - Select screen, 0x0013CD80 (its per-frame input): cell 7's pre-rendered image (front-end file 78 entry 4, found
-//    by its CLUT's hash) gets a recoloured copy of its CLUT for the mode of the player on cell 7 (L3 only switches
-//    in game).
-//    0x001E6EF0 (get_string) answers "CHAMELEON" for Reptile's name (text 0x6D0) to the select screen's calls.
+//  - Select screen, 0x0013CD80 (its per-frame input): L3 on cell 7 swaps Reptile and Chameleon for that cursor's player
+//    (Reptile until then; the pick lasts the session). For Chameleon, cell 7's pre-rendered image (front-end file 78
+//    entry 4, found by its CLUT's hash) gets a recoloured copy of its CLUT for his mode, and 0x001E6EF0 (get_string)
+//    answers "CHAMELEON" for Reptile's name (text 0x6D0) to the select screen's calls.
 //  - Name elsewhere (HUD, menus), 0x001E6EC8 (character name: get_string(0x67C + group)): "CHAMELEON" for group 84
 //    while a player is Chameleon. Story enemies that look like Reptile are other groups (0x3B), so they keep theirs.
 //  - Announcer: 0x0013B3B0 (lock: the cursor's "Reptile" line) arms a swap; 0x0041ABB8 (ADXT_StartAfs(adxt,
@@ -69,13 +69,15 @@ constexpr std::uint64_t kPageClut[4] = {0x18170f8c6aa34322ull, 0x6154cd79faad23e
 constexpr std::uint32_t kState = 0x000A0000u;
 //   +0x00 u32 armed: the next ADXT start of file 79 plays the Chameleon line
 //   +0x04 u32 the select image's slot, +0x08 its original CLUT address, +0x0C the mode its copy shows (+1, 0 = none)
+//   +0x10 u8[2] select screen: L3 held last frame, per cursor; +0x12 u8 cell 7 shows Chameleon
 //   +0x20 Player[2], 0x20 bytes each:
 //         +0 u8 Chameleon (set by every player load), +1 u8 mode (0-3), +2 u8 L3 held last frame,
 //         +3 u8 the mode his texture slots show, +4 u32 where file 6851 was loaded (0: not attached; only a flag, the
-//         buffer is freed after the load)
+//         buffer is freed after the load), +8 u8 picked Chameleon at the select screen
 //   +0x80 "CHAMELEON"
 constexpr std::uint32_t kArmed = kState + 0x00, kSelectSlot = kState + 0x04, kSelectOrig = kState + 0x08,
-                        kSelectShown = kState + 0x0C, kPlayers = kState + 0x20,
+                        kSelectShown = kState + 0x0C, kSelectHeld = kState + 0x10, kSelectPicked = kState + 0x12,
+                        kPlayers = kState + 0x20,
                         kName = kState + 0x80;
 constexpr std::uint32_t kSelectBackup = 0x000A0400u, kSelectCopy = 0x000A0800u;  // 1 KB each
 constexpr std::uint32_t kCostumeBackup = 0x000A1000u;  // + player * 0x1000 + page * 0x400
@@ -94,6 +96,7 @@ struct Player {
     Field<std::uint8_t> held{addr + 2};
     Field<std::uint8_t> shown{addr + 3};
     Field<std::uint32_t> file{addr + 4};
+    Field<std::uint8_t> picked{addr + 8};
 };
 Player player(std::uint32_t slot) { return {kPlayers + slot * 0x20}; }
 
@@ -257,7 +260,8 @@ void select_image(std::uint32_t select) {
     const std::uint32_t mode = rd<std::uint32_t>(kSelectMode);
     const std::uint32_t slots = rd<std::uint32_t>(rd<std::uint32_t>(kTextureManager) + 0x20);
     std::uint32_t slot = rd<std::uint32_t>(kSelectSlot);
-    if (!slot || rd<std::uint32_t>(slot + 0x38) != kSelectCopy) {  // find it (again)
+    const std::uint32_t clut = slot ? rd<std::uint32_t>(slot + 0x38) : 0;
+    if (clut != kSelectCopy && (clut != rd<std::uint32_t>(kSelectOrig) || fnv(clut, 0x400) != kSelectClut)) {  // find it (again)
         slot = 0;
         for (std::uint32_t i = 0; i < kSlots && !slot; ++i) {
             const std::uint32_t s = slots + i * kSlotSize;
@@ -275,10 +279,24 @@ void select_image(std::uint32_t select) {
         if (rd<std::uint32_t>(slot + 0x38) == kSelectCopy) wr<std::uint32_t>(slot + 0x38, rd<std::uint32_t>(kSelectOrig));
         return;
     }
-    // the player whose cursor is on cell 7 (story: the one cursor at +0x3C; Ko-op: +0x3C, +0x40)
+    // the player whose cursor is on cell 7 (story: the one cursor at +0x3C; Ko-op: +0x3C, +0x40); L3 there swaps
+    // Reptile and Chameleon (Ko-op: cursor k's pad port is at +0x2C + 4k, FUN_00378640, 2 = no pad yet; 0x50BC10 is
+    // only filled at the start)
     std::uint32_t on = 0;
-    for (std::uint32_t k = mode == 0 ? 1u : 2u; k-- > 0;)
-        if (rd<std::uint32_t>(select + 0x3C + 4 * k) == 7) on = k;
+    for (std::uint32_t k = mode == 0 ? 1u : 2u; k-- > 0;) {
+        if (rd<std::uint32_t>(select + 0x3C + 4 * k) != 7) continue;
+        on = k;
+        const std::uint32_t port = mode == 0 ? port_of(0) : rd<std::uint32_t>(select + 0x2C + 4 * k);
+        if (port < 2 && l3_pressed(port, kSelectHeld + k)) {
+            player(k).picked = !player(k).picked;
+            std::fprintf(stderr, "[mod] chameleon: player %u picks %s\n", k + 1, player(k).picked ? "Chameleon" : "Reptile");
+        }
+    }
+    wr<std::uint8_t>(kSelectPicked, player(on).picked);
+    if (!player(on).picked) {  // Reptile's own image
+        if (rd<std::uint32_t>(slot + 0x38) == kSelectCopy) wr<std::uint32_t>(slot + 0x38, rd<std::uint32_t>(kSelectOrig));
+        return;
+    }
     const std::uint8_t shown = player(on).mode;
     if (rd<std::uint32_t>(slot + 0x38) != kSelectCopy || rd<std::uint32_t>(kSelectShown) != shown + 1u) {
         recolour(kSelectBackup, kSelectCopy, shown, true);
@@ -301,7 +319,7 @@ int chameleon::mode(std::uint32_t fighter) {
 PS2_MOD(001CE6E8, chameleon_costume) {
     const std::uint32_t who = c.r[a0].w[0], group = c.r[a1].w[0] & 0xFFFFu;
     if (who == 1 || who == 2) {
-        const bool chameleon = group == kReptile && playing_story();
+        const bool chameleon = group == kReptile && playing_story() && player(who - 1).picked;
         player(who - 1).chameleon = chameleon;
         if (!chameleon) player(who - 1).file = 0;
         wr<std::uint32_t>(kAltFlag[0], who == 1 && chameleon);
@@ -356,7 +374,8 @@ void answer_name(Cpu &c) {
 
 PS2_MOD(001E6EF0, chameleon_name) {
     const std::uint32_t id = c.r[a0].w[0], from = c.r[ra].w[0];
-    if (id == kReptileName && from >= kSelectCode && from < kSelectCodeEnd && story_or_koop(rd<std::uint32_t>(kSelectMode)))
+    if (id == kReptileName && from >= kSelectCode && from < kSelectCodeEnd && story_or_koop(rd<std::uint32_t>(kSelectMode)) &&
+        rd<std::uint8_t>(kSelectPicked))
         return answer_name(c);
     decomp::hook_001E6EF0.enabled = false;
     tail(c, kGetString);
@@ -364,7 +383,8 @@ PS2_MOD(001E6EF0, chameleon_name) {
 }
 
 PS2_MOD(0013B3B0, chameleon_announce) {
-    const bool arm = c.r[a0].w[0] == 7 && story_or_koop(rd<std::uint32_t>(kSelectMode)) && mod_data("vo_name.adx");
+    const bool arm = c.r[a0].w[0] == 7 && story_or_koop(rd<std::uint32_t>(kSelectMode)) && rd<std::uint8_t>(kSelectPicked) &&
+                     mod_data("vo_name.adx");
     wr<std::uint32_t>(kArmed, arm);
     decomp::hook_0013B3B0.enabled = false;
     tail(c, kAnnounce);
