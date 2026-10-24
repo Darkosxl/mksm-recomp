@@ -65,6 +65,10 @@ struct EnvKill {
 
 }
 
+namespace decomp {
+extern ps2::DecompFn hook_001D6808; // defined by PS2_DECOMP below
+}
+
 namespace ps2 {
 void debug_kill_player(int player) {
     g_kill.store(player);
