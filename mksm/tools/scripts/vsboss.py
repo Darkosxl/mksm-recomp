@@ -8,8 +8,8 @@ over his own specials (R1 + button = his special, R1 + L1 + button = the boss's)
   R1 + L1 + square      s50_sp_n (1588): the acid volley           (his R1 + square: s00_sp_n, the acid spit)
   R1 + L1 + triangle    s30_sp_n (1586)                            (his R1 + triangle: s20_sp_n)
   R1 + L1 + circle      s40_sp_n (1587)                            (his R1 + circle: s10_sp_n)
-  R1 + L1 + R2          t20_sung (1593): vanish, then t10_sung (1592): reappear next to the opponent (a press-0
-                        child at t20's last frame)            (his R1 + R2: q00_st_d)
+  R1 + L1 + R2          t20_sung (1593): vanish, then t10_sung (1592): reappear behind the opponent (set by
+                        versus_boss_moves.cpp when t20 plays out)   (his R1 + R2: q00_st_d)
   his counter d30_cntr  the boss's d30_cntr (1578): his own nodes retargeted (links on field 0x00)
 Each input is a copy of the non-directional list-0 nodes of one of his specials (TEMPLATE), so that special's level and
 upgrade requirements gate it, plus L1 held (hold 0x04; ignore 0x04: L1 may go down in the same frame as the button).
@@ -27,10 +27,10 @@ import dt2
 import fstates
 from wad import Wad
 
-VOLLEY, S30, S40, VANISH, REAPPEAR, COUNTER = 1588, 1586, 1587, 1593, 1592, 1578
+VOLLEY, S30, S40, VANISH, COUNTER = 1588, 1586, 1587, 1593, 1578
 DIRS = 0xF000                 # direction bits in press / hold
 L1 = 0x04                     # pad bit (press / hold / ignore)
-S00, S10, S20, S12 = 136, 138, 141, 140   # his specials (local states); S12: its press-0 child is the child template
+S00, S10, S20 = 136, 138, 141   # his specials (local states)
 # (button tapped with R1 + L1 held, TEMPLATE: his special whose list-0 nodes are copied, boss global state)
 MOVES = ((0x80, S00, VOLLEY), (0x10, S20, S30), (0x20, S10, S40), (0x02, S00, VANISH))
 RETARGET = ((31, COUNTER),)   # (his local state, boss global state): every node of his d30_cntr
@@ -49,8 +49,6 @@ def add(tree, wad):
     f = tree.f
     st = fstates.states(f.name, wad)
     assert [st[i]['name'] for i in (S00, S10, S20)] == ['s00_sp_n', 's10_sp_n', 's20_sp_n']
-    vanish_len = fstates.states('reptile_npc', wad)[VANISH - 1564]['frames']
-    child_tpl = next(n for n in f.nodes if n.state == f.first + S12 and n.press == 0)
     top = [tree.nodes[i] for i in tree.top(0)]
     roots = []
     for button, local, state in MOVES:
@@ -60,11 +58,6 @@ def add(tree, wad):
     for i in tree.front(0, roots):
         n = tree.nodes[i]
         n.press, n.hold, n.ignore = [b for b, _, s in MOVES if s == n.state][0], L1, L1
-        if n.state == VANISH:
-            k = tree.add(child_tpl, REAPPEAR, i, [])
-            c = tree.nodes[k]
-            c.press = c.hold = c.nothold = c.ignore = c.cond = 0
-            c.req, c.window, c.link = 0, 5000, vanish_len - 1
     for local, new in RETARGET:
         for i in range(tree.n_disc - 1):
             n = tree.nodes[i]
