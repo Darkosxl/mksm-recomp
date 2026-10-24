@@ -10,7 +10,7 @@
 
 namespace ps2 {
 
-inline constexpr const char *kModDataFiles[] = {"vo_name.adx", "cham.pme2", "cham.pwf", "cham_select.p2n"};
+inline constexpr const char *kModDataFiles[] = {"vo_name.adx", "cham.pme2", "cham.pwf", "cham_select.p2n", "cham_glow.p2n"};
 
 // The file's bytes (read once, then cached), or nullptr when PS2_MOD_DATA is unset or the file is missing or empty.
 const std::vector<std::uint8_t> *mod_data(const char *name);
