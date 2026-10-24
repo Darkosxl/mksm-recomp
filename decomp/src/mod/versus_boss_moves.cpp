@@ -5,6 +5,9 @@
 // Several ports may target one group: their clips take consecutive free slots, in table order.
 // Port 0: Reptile (group 84, any mode: the Versus and the story/NPC load paths, FUN_001CE6E8 and FUN_001D1068, both
 // register the callback hooked here) gets 6 of the story boss Reptile's states (group 59).
+// Port 1: Kitana (group 89, any mode, same paths) gets her story sister Mileena's d20_cntr (group 66), the one move of
+// the story NPC groups (kitana_npc 65, mileena 66, jade 67) that hits in place and returns to stance
+// (vsboss_kitana.py).
 //
 // How a state plays (mksm/tools/scripts/fstates.py): global state s -> anim descriptor DAT_006C8A28[s] (u32[3010]),
 // descriptor d = 8 bytes in the state DB at 0x6B3000 (+4: table of {u8 format, u8 channels, u16 frames, u32 clip + 6});
@@ -79,9 +82,14 @@ constexpr std::int32_t kTeleportFade[] = {1593, 1592}; // t20_sung vanish, t10_s
 constexpr std::int32_t kVanish = 1593;                    // t20_sung
 constexpr std::uint32_t kEndOfState = 0x00303B00u;        // set-state's return address when a state played out
 
+// mileena d20_cntr 1762 (no partner state)
+constexpr std::uint8_t kMileenaMoves[] = {15};
+
 constexpr Port kPorts[] = {
     {"Versus Reptile <- story boss Reptile", 84, 6512, 1564, kBossMoves, std::size(kBossMoves), 1592, 450.0f, kVanish,
      kTeleportFade, std::size(kTeleportFade), nullptr, 0, kZero},
+    {"Versus Kitana <- story Mileena", 89, 6582, 1747, kMileenaMoves, std::size(kMileenaMoves), -1, 0.0f, -1, nullptr,
+     0, nullptr, 0, kZero},
 };
 
 constexpr std::uint32_t kAlloc = 0x0020F058u;      // (heap, size, best fit, file, line): FUN_0020F058
