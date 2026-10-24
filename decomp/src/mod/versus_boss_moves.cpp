@@ -4,7 +4,7 @@
 // are not here (versus_combos.cpp grafts them).
 // Several ports may target one group: their clips take consecutive free slots, in table order.
 // Port 0: Reptile (group 84, any mode: the Versus and the story/NPC load paths, FUN_001CE6E8 and FUN_001D1068, both
-// register the callback hooked here) gets 4 of the story boss Reptile's states (group 59).
+// register the callback hooked here) gets 2 of the story boss Reptile's states (group 59).
 // Ports 1-2: Chameleon (Reptile in Chameleon mode) gets Scorpion's and Sub-Zero's specials (chameleon_moves.cpp).
 // Port 3: Johnny Cage (group 90) gets the story Johnny Cage's (group 71: model 'Cage', his skeleton) counter strike
 // (mksm/tools/scripts/vsboss_cage.py).
@@ -25,7 +25,7 @@
 //   record: +0 slot, +8 player index). After it ran: for each port of the fighter's group, read the donor's nim.rtt,
 //   ERG.DAT and ERG.DT2 from the disc (GAMEDATA.WAD) and inflate them on the host (raw deflate, as wad.py), copy only the
 //   port's states' clips (a clip runs to the next one; its offsets are its own), clip names, records, cancel windows
-//   and event lists into one block of the fighter's heap (the boss port's 6 states: 68 KB, its whole files 367 KB;
+//   and event lists into one block of the fighter's heap (the boss port's first 6 states were 68 KB, its whole files 367 KB;
 //   Scorpion's are 2 MB), fill the descriptors with FUN_002AF908 + FUN_002B1960 (what the bank parser FUN_002AE290 does per clip),
 //   patch the records (+0x11 group = target; partner +0x2A kept only if a
 //   port of the group loads it) and cut each event list at the clip's last frame (story t10_sung lists 3079 events up to
@@ -87,10 +87,11 @@ struct Port {
     std::uint8_t fx_base;       // added to own-bank effect indices (event 114), 0 = none
 };
 
-// the states his command tree reaches (vsboss.py): d30_cntr 1578, s30_sp_n 1586, s40_sp_n 1587, s50_sp_n 1588 (none
-// has a partner state). The vanish (t20_sung 1593 -> t10_sung 1592) is gone (Cem): no port uses vanish / teleport now.
+// the states his command tree reaches (vsboss.py): d30_cntr 1578, s30_sp_n 1586 (no partner state). The vanish
+// (t20_sung 1593 -> t10_sung 1592) and the acid moves (s40_sp_n 1587, s50_sp_n 1588: no hit) are gone (Cem): no port
+// uses vanish / teleport now.
 // ponytail: teleport() and the vanish / teleport / fade fields stay for one; delete them if none comes back.
-constexpr std::uint8_t kBossMoves[] = {14, 22, 23, 24};
+constexpr std::uint8_t kBossMoves[] = {14, 22};
 constexpr std::uint32_t kEndOfState = 0x00303B00u;        // set-state's return address when a state played out
 // the state his command tree reaches (vsboss_cage.py): d10_cntr 1916 (his vanish, t20_sung / t10_sung, is gone)
 constexpr std::uint8_t kCageMoves[] = {14};
