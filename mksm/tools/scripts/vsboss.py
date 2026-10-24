@@ -5,9 +5,7 @@ decomp/src/mod/versus_boss_moves.cpp gives them clips, records and events on Ver
 
 Inputs: hold Special (R1) and L1, then tap a button. L1 does nothing else in Versus, so R1 + L1 is a free "boss" layer
 over his own specials (R1 + button = his special, R1 + L1 + button = the boss's):
-  R1 + L1 + square      s50_sp_n (1588): the acid volley           (his R1 + square: s00_sp_n, the acid spit)
-  R1 + L1 + triangle    s30_sp_n (1586)                            (his R1 + triangle: s20_sp_n)
-  R1 + L1 + circle      s40_sp_n (1587)                            (his R1 + circle: s10_sp_n)
+  R1 + L1 + triangle    s30_sp_n (1586): invisibility             (his R1 + triangle: s20_sp_n)
   R1 + L1 + R2          d30_cntr (1578): the boss's counter        (his R1 + R2: q00_st_d)
 Each input is a copy of the non-directional list-0 nodes of one of his specials (TEMPLATE), so that special's level and
 upgrade requirements gate it, plus L1 held (hold 0x04; ignore 0x04: L1 may go down in the same frame as the button).
@@ -15,8 +13,9 @@ The new nodes go in front of list 0 (vscombos.Tree.front), because his own R1 + 
 not look at L1. The only free inputs: without a lock-on target (Versus) FUN_001BFA68 strips the direction bits from the
 input word, so directional nodes are dead from neutral; cross is the engine's jump; L2 is his c00_stnd stance and a
 press-L2 node never matches; L3, R3 and select never reach the command input word; R1 + L1 alone would fire as soon as
-L1 goes down and take the layer. So four.
-Not ported (see DROPPED): s11_sp_s (1584), g20_st_q (1581), g10_st_q (1580), t20_sung / t10_sung (1593 / 1592).
+L1 goes down and take the layer. So four; R1 + L1 + square and circle are free again.
+Not ported (see DROPPED): s50_sp_n (1588), s40_sp_n (1587), s11_sp_s (1584), g20_st_q (1581), g10_st_q (1580),
+t20_sung / t10_sung (1593 / 1592).
 Usage: vsboss.py report
 """
 import sys
@@ -25,13 +24,17 @@ import dt2
 import fstates
 from wad import Wad
 
-VOLLEY, S30, S40, COUNTER = 1588, 1586, 1587, 1578
+S30, COUNTER = 1586, 1578
 DIRS = 0xF000                 # direction bits in press / hold
 L1 = 0x04                     # pad bit (press / hold / ignore)
 S00, S10, S20 = 136, 138, 141   # his specials (local states)
 # (button tapped with R1 + L1 held, TEMPLATE: his special whose list-0 nodes are copied, boss global state)
-MOVES = ((0x80, S00, VOLLEY), (0x10, S20, S30), (0x20, S10, S40), (0x02, S00, COUNTER))
+MOVES = ((0x10, S20, S30), (0x02, S00, COUNTER))
 DROPPED = """
+s50_sp_n (1588, the acid volley) and s40_sp_n (1587) were on R1 + L1 + square and circle: dropped (Cem), they never
+hit. Their projectiles (event 114 sub-op 0x08) lack flag 0x0001 of bits 16-31, which every damaging projectile has
+(his acid spit and Force Ball 0x193, Kitana's 0x13, the slide's pool 0x1013): the volley's are 0x192 / 0x8092, s40's
+0x92 (plus a 0x1013 pool), and the volley has no hit window (event 171). P2 lost 0 hp to either in Versus.
 t20_sung (1593, vanish) then t10_sung (1592, reappear behind the opponent) were on R1 + L1 + R2: dropped (Cem). The
 boss's counter d30_cntr (1578) replaced the last hit of his own triangle, triangle, circle (his d30_cntr retargeted):
 too strong as a combo finisher (Cem), so it is its own input on R1 + L1 + R2 and the string ends in his own counter.
