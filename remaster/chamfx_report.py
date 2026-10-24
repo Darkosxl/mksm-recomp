@@ -35,7 +35,7 @@ def fx(path, since):
     hashes, defs = {}, {}
     for line in open(path):
         p = line.split()
-        if not p or int(p[0]) < since:
+        if not p or not p[0].isdigit() or int(p[0]) < since:  # a wrapped line ("-> v0") has no frame
             continue
         name = p[1].split('(')[0]
         v = line.rsplit('->', 1)[-1].strip()
