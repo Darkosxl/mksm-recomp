@@ -1,0 +1,59 @@
+#!/usr/bin/env bash
+# chamfx.sh: headless checks of a fighter's special-move sounds and effects (the Chameleon donor moves). AWS box only
+# (from ~/w/wt/<tree>, normally via remaster/w.sh run); writes into <out>.
+#   remaster/chamfx.sh vsstart <out> <rights>   Versus fight start, P1 = roster cell <rights> right of Liu Kang
+#                                               (1 Scorpion, 3 Reptile, 6 Sub-Zero), P2 Kung Lao, The Rooftops;
+#                                               saves <out>/fs.state at f$FS (vsrun.sh start's inputs)
+#   remaster/chamfx.sh story <out>              story from remaster-data/states/charsel.state as Chameleon (cell 7,
+#                                               w27's inputs), saves <out>/fs.state at f$SS
+#   remaster/chamfx.sh move <out> <state> <f0> <fighter> <gstate> [N]
+#                                               from <state> (saved at f<f0>), FUN_00303340(<fighter>, <gstate>) at
+#                                               f<f0>+10 (debug_call; hex fighter, decimal state, 0 = no call), N
+#                                               frames (150): audio.wav + stems.wav, frames/ every 2nd, fx.txt (cue
+#                                               lookups, event-114 calls, bank loads), watch.txt (P1 state)
+# Env: MOD (1) runs with PS2_MOD=1; BIN = ps2run.
+set -uo pipefail
+mode=${1:?usage: chamfx.sh vsstart|story|move <out> ...}; O=${2:?out}; shift 2
+G=~/w/games/mksm S=~/w/remaster-data/states
+FS=3720 SS=7600
+mkdir -p "$O"
+export SDL_AUDIODRIVER=dummy PS2_GS=${PS2_GS:-soft} PS2_RTC=1792000000
+[ "${MOD:-1}" = 1 ] && export PS2_MOD=1 || unset PS2_MOD
+card=$S/vs/mc-gallery.ps2 extra=()
+case $mode in
+vsstart)
+  n=${1:?rights}; state=$S/vs/versus-csel-unlocked-f1890.state end=$((FS + 5)) f=1900
+  args=(--pad2)
+  for _ in $(seq "$n"); do args+=(--press "$f:right:4"); f=$((f + 25)); done
+  args+=(--press "$((f + 30)):cross:4" --press 2095:p2:cross:4 --press 2195:cross:4 --stick 3530:225,46:96
+         --save-state "$FS:$O/fs.state") ;;
+story)
+  state=$S/charsel.state end=$((SS + 5)) card=
+  args=(--press 2600:right --press 2640:right --press 2680:right --press 2740:l3 --press 2790:l3 --press 2840:l3
+        --press 2890:l3 --press 2950:cross --press 3100:cross --press 3400:cross --press 3700:cross --press 4000:cross
+        --save-state "$SS:$O/fs.state")
+  for f in $(seq 4500 240 7140); do args+=(--press "$f:start"); done ;;
+move)
+  state=${1:?state} f0=${2:?f0} fighter=${3:?fighter} gs=${4:?gstate} n=${5:-150}
+  end=$((f0 + n)) args=(--frames-dir "$O/frames" --frame-every 2)
+  export PS2_DECOMP=1D6808,31AE78,2E9700,1CF518,3195F8 PS2_TRACE_FX=$O/fx.txt PS2_DUMP_AUDIO=$O/audio.wav PS2_DUMP_STEMS=$O/stems.wav
+  [ "$gs" = 0 ] || export PS2_CALL="$((f0 + 10)):303340:$fighter:$(printf %X "$gs")"
+  export PS2_WATCH="5E6B64,4;5E6B5C,4;5E894E,2" PS2_WATCH_OUT=$O/watch.txt PS2_WATCH_EVERY=1 ;;
+*) echo "unknown mode $mode" >&2; exit 2 ;;
+esac
+if [ -n "$card" ]; then cp -f "$card" "$O/card.ps2" && chmod u+w "$O/card.ps2"; else rm -f "$O/card.ps2"; fi
+echo "[chamfx] $(date +%T) $mode MOD=${MOD:-1} state $state end $end PS2_CALL=${PS2_CALL:-} args ${args[*]}" | tee "$O/cmd.txt"
+timeout 3600 ${BIN:-build/native-mksm/ps2run} $G/disc/SLUS_210.87 --disc $G/disc.iso --load-state "$state" --frames "$end" \
+  --memcard "$O/card.ps2" "${args[@]}" > "$O/run.log" 2>&1
+rc=$?
+echo "[chamfx] $(date +%T) ps2run rc $rc $(grep -m1 '^\[ee\] halted' "$O/run.log")" | tee -a "$O/cmd.txt"
+rm -f "$O/card.ps2"
+if [ -d "$O/frames" ]; then
+  ~/w/.venv-remaster/bin/python - "$O" <<'PY'
+import sys, glob, os
+from PIL import Image
+for p in sorted(glob.glob(sys.argv[1] + '/frames/*.ppm')):
+    Image.open(p).save(p[:-4] + '.png'); os.remove(p)
+PY
+fi
+exit $rc

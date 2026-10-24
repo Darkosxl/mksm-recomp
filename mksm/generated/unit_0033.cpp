@@ -3,6 +3,7 @@
 
 namespace decomp {
 extern ps2::DecompFn hook_001CE6E8;
+extern ps2::DecompFn hook_001CF518;
 }
 
 namespace gen {
@@ -4310,6 +4311,7 @@ L_001CF4E0:
     c.budget -= 13;
     { const std::uint32_t t = c.r[31].w[0];  c.pc = t; return; }
 L_001CF518:
+    if (::decomp::hook_001CF518.on) [[unlikely]] { if (decomp_enter(c, ::decomp::hook_001CF518, depth)) return; }
     set32(c.r[29], c.r[29].w[0] - 96u);
     set32(c.r[2], 0u + 1u);
     st128((c.r[29].w[0] + 80u) & ~15u, c.r[16]);
