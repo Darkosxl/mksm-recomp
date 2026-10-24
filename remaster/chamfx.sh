@@ -6,7 +6,7 @@
 #                                               saves <out>/fs.state at f$FS (vsrun.sh start's inputs; later for
 #                                               cells past Reptile's, the frame in <out>/fs.frame)
 #   remaster/chamfx.sh story <out>              story from remaster-data/states/charsel.state as Chameleon (cell 7,
-#                                               w27's inputs), saves <out>/fs.state at f$SS
+#                                               one L3: Reptile -> Chameleon), saves <out>/fs.state at f$SS
 #   remaster/chamfx.sh move <out> <state> <f0> <fighter> <gstate> [N]
 #                                               from <state> (saved at f<f0>), FUN_00303340(<fighter>, <gstate>) at
 #                                               f<f0>+10 (debug_call; hex fighter, decimal state, 0 = no call), N
@@ -36,8 +36,7 @@ vsstart)
          --stick $((3530 + d)):225,46:96 --save-state "$FS:$O/fs.state") ;;
 story)
   state=$S/charsel.state end=$((SS + 5)) card=
-  args=(--press 2600:right --press 2640:right --press 2680:right --press 2740:l3 --press 2790:l3 --press 2840:l3
-        --press 2890:l3 --press 2950:cross --press 3100:cross --press 3400:cross --press 3700:cross --press 4000:cross
+  args=(--press 2600:right --press 2640:right --press 2680:right --press 2740:l3 --press 2950:cross --press 3100:cross --press 3400:cross --press 3700:cross --press 4000:cross
         --save-state "$SS:$O/fs.state")
   for f in $(seq 4500 240 7140); do args+=(--press "$f:start"); done ;;
 move)
