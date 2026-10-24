@@ -21,7 +21,8 @@
 //   Scorpion's are 2 MB), fill the descriptors with FUN_002AF908 + FUN_002B1960 (what the bank parser FUN_002AE290 does per clip),
 //   patch the records (+0x11 group = target; partner +0x2A kept only if a
 //   port of the group loads it) and cut each event list at the clip's last frame (story t10_sung lists 3079 events up to
-//   frame 670 on a 70-frame clip). Cancel windows (+0x2C first, +0x2E count) index the table at fighter +0x258 (the
+//   frame 670 on a 70-frame clip); with fx_base, effect events (114) that take the fighter's own effect bank get
+//   their index moved past his own effects (chameleon_fx.cpp loads the donors' effects there). Cancel windows (+0x2C first, +0x2E count) index the table at fighter +0x258 (the
 //   fighter's own ERG.DAT section 1 + 8, set by the DAT loader 0x003205E0), not the donor's, so per port: kZero drops
 //   them; kKeep / kRebase copy the fighter's table and the donor windows into one new table and point +0x258 at it
 //   (his own indices unchanged); kRebase also drops a window whose target state is neither common (< 194), his own
@@ -35,6 +36,7 @@
 //   (hit, round end) never leaves him invisible: the alpha it sets lasts across rounds.
 // Anything unexpected (no room in the heap or the clip slots, a file that does not read or inflate) loads nothing and
 // says so on stderr.
+#include "chameleon.hpp"
 #include "ps2/decomp.hpp"
 #include "ps2/disc.hpp"
 
@@ -65,6 +67,7 @@ struct Port {
     const std::int16_t *strip;  // frame event ids turned into a no-op
     std::uint32_t strip_count;
     Windows windows;            // the donor states' cancel windows
+    std::uint8_t fx_base;       // added to own-bank effect indices (event 114), 0 = none
 };
 
 // the states his command tree reaches (vsboss.py): d30_cntr 1578, g10_st_q 1580, g20_st_q 1581, s11_sp_s 1584,
@@ -83,11 +86,11 @@ constexpr std::int16_t kSpearParts[] = {155, 156};
 
 constexpr Port kPorts[] = {
     {"Versus Reptile <- story boss Reptile", 84, 6512, 1564, kBossMoves, std::size(kBossMoves), 1592, 450.0f,
-     kTeleportFade, std::size(kTeleportFade), nullptr, 0, kZero},
+     kTeleportFade, std::size(kTeleportFade), nullptr, 0, kZero, 0},
     {"Chameleon <- Scorpion", 84, 6742, 1994, kChamScorpion, std::size(kChamScorpion), -1, 0.0f, nullptr, 0,
-     kSpearParts, std::size(kSpearParts), kRebase},
+     kSpearParts, std::size(kSpearParts), kRebase, chameleon::kFxScorpion},
     {"Chameleon <- Sub-Zero", 84, 6802, 2515, kChamSubzero, std::size(kChamSubzero), -1, 0.0f, nullptr, 0, nullptr, 0,
-     kRebase},
+     kRebase, chameleon::kFxSubzero},
 };
 
 constexpr std::uint32_t kAlloc = 0x0020F058u;      // (heap, size, best fit, file, line): FUN_0020F058
@@ -159,6 +162,14 @@ bool loaded_any(std::int16_t group, std::int32_t s) {
     for (const Port &p : kPorts)
         if (p.target_group == group && loaded_state(p, s)) return true;
     return false;
+}
+
+// an effect event's (114) param with its own-bank index moved by base: sub-ops 3 (effect) and 0xB (projectile) without
+// the shared-bank flag (0x4000 of bits 16-31) take index bits 16-22 from the fighter's own bank (group + 3)
+std::uint64_t own_fx(std::uint64_t v, std::uint32_t base) {
+    const std::uint32_t op = v & 0xFF, w1 = (v >> 16) & 0xFFFF;
+    if ((op != 3 && op != 0xB) || (w1 & 0x4000)) return v;
+    return (v & ~(0x7Full << 16)) | static_cast<std::uint64_t>(((w1 & 0x7F) + base) & 0x7F) << 16;
 }
 
 bool in(const std::int32_t *list, std::uint32_t n, std::int32_t s) {
@@ -421,6 +432,7 @@ bool load(Cpu &c, const Port &p, std::uint32_t fighter, std::uint32_t heap, std:
                 const std::uint32_t at = add(dt2, e, 16);
                 for (std::uint32_t j = 0; j < p.strip_count; ++j)
                     if (id == p.strip[j]) put<std::int16_t>(img, at + 2, kNoEvent);
+                if (id == 114 && p.fx_base) put<std::uint64_t>(img, at + 8, own_fx(get<std::uint64_t>(img, at + 8), p.fx_base));
                 if (!id) break;
             }
             const std::uint32_t name = names + get<std::uint32_t>(rtt, names + 4 * k);
@@ -593,3 +605,6 @@ PS2_MOD(00303340, versus_boss_moves_state) {
     if (!call(c, kFade)) return;
     c.r[v0] = ret;
 }
+
+// for chameleon_fx.cpp
+std::vector<std::uint8_t> versus_boss_moves_wad_file(std::uint32_t id) { return wad_file(id); }

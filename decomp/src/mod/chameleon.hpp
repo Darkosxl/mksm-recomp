@@ -15,6 +15,10 @@ bool is(std::uint32_t fighter);
 // -1 when the fighter is not Chameleon
 int mode(std::uint32_t fighter);
 
+// his effect bank (87) while a player is Chameleon (chameleon_fx.cpp): Reptile's effects 0-18, Scorpion's from
+// kFxScorpion, Sub-Zero's from kFxSubzero (the donor ports' effect events are moved there, versus_boss_moves.cpp)
+constexpr std::uint8_t kFxScorpion = 20, kFxSubzero = 36;
+
 }
 
 inline bool chameleon_is(std::uint32_t fighter) { return chameleon::is(fighter); }
