@@ -72,9 +72,22 @@ struct Port {
 constexpr std::uint8_t kBossMoves[] = {14, 16, 17, 20, 22, 23, 24, 28, 29};
 constexpr std::int32_t kTeleportFade[] = {1593, 1592}; // t20_sung vanish, t10_sung reappear
 
+// Chameleon's specials per colour mode (chamspecials.py report: the states his grafted command nodes reach, plus
+// their partners), gated by chameleon_moves.cpp. Scorpion's spear events 155/156 show/hide mesh parts by Scorpion's
+// slot list, which on Reptile's are his hand, flaps, jaw and fingers: stripped, the spear pulls without its rope.
+constexpr std::uint8_t kChamScorpion[] = {30, 31, 61, 67, 69, 70, 71, 73, 78, 79, 108, 109, 110, 131, 132, 133, 134,
+                                          135, 142, 143, 146};
+constexpr std::uint8_t kChamSubzero[] = {39, 41, 43, 45, 46, 81, 96, 97, 99, 100, 114, 115, 116, 128, 129, 130, 131,
+                                         132, 133, 135, 137, 139};
+constexpr std::int16_t kSpearParts[] = {155, 156};
+
 constexpr Port kPorts[] = {
     {"Versus Reptile <- story boss Reptile", 84, 6512, 1564, kBossMoves, std::size(kBossMoves), 1592, 450.0f,
      kTeleportFade, std::size(kTeleportFade), nullptr, 0, kZero},
+    {"Chameleon <- Scorpion", 84, 6742, 1994, kChamScorpion, std::size(kChamScorpion), -1, 0.0f, nullptr, 0,
+     kSpearParts, std::size(kSpearParts), kRebase},
+    {"Chameleon <- Sub-Zero", 84, 6802, 2515, kChamSubzero, std::size(kChamSubzero), -1, 0.0f, nullptr, 0, nullptr, 0,
+     kRebase},
 };
 
 constexpr std::uint32_t kAlloc = 0x0020F058u;      // (heap, size, best fit, file, line): FUN_0020F058

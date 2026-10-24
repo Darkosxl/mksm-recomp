@@ -73,6 +73,7 @@
 00275300	screen_zbuffer_page	decomp/src/renderer/screen/screen_zbuffer.cpp
 002753A0	screen_zbuffer_format	decomp/src/renderer/screen/screen_zbuffer.cpp
 002ADAC0	versus_boss_moves_remap	decomp/src/mod/versus_boss_moves.cpp (PS2_MOD)
+002E7F30	chameleon_moves_cond	decomp/src/mod/chameleon_moves.cpp (PS2_MOD)
 002F8640	versus_combos	decomp/src/mod/versus_combos.cpp (PS2_MOD)
 00303340	versus_boss_moves_state	decomp/src/mod/versus_boss_moves.cpp (PS2_MOD)
 00306078	fighter_state_trace	decomp/src/trace/fighter_state_trace.cpp (debug trace, PS2_TRACE_STATES)
