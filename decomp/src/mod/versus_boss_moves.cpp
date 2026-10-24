@@ -17,7 +17,7 @@
 //   record: +0 slot, +8 player index). After it ran: for each port of the fighter's group, read the donor's nim.rtt,
 //   ERG.DAT and ERG.DT2 from the disc (GAMEDATA.WAD) and inflate them on the host (raw deflate, as wad.py), copy only the
 //   port's states' clips (a clip runs to the next one; its offsets are its own), clip names, records, cancel windows
-//   and event lists into one block of the fighter's heap (the boss port's 9 states: 128 KB, its whole files 367 KB;
+//   and event lists into one block of the fighter's heap (the boss port's 6 states: 68 KB, its whole files 367 KB;
 //   Scorpion's are 2 MB), fill the descriptors with FUN_002AF908 + FUN_002B1960 (what the bank parser FUN_002AE290 does per clip),
 //   patch the records (+0x11 group = target; partner +0x2A kept only if a
 //   port of the group loads it) and cut each event list at the clip's last frame (story t10_sung lists 3079 events up to
