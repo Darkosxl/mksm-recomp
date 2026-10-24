@@ -3,11 +3,15 @@
 MKA's COSTUME model (mka_chameleon.json) into a copy of Reptile's story alt costume (PME2 6852 + PWF 6851) with
 pme2.py's writer. Everything written is disc-derived: keep it out of git.
 
-Two variants, because it is not settled yet whether MK:SM can blend a character mesh:
-  cham.pme2 / cham.pwf                  layered: every MKA material keeps its own layer. The quilted shell (MKA 'trans')
-                                        is its own material 5 on a new page 5, drawn over the rainbow cloth, with MKA's
-                                        alpha in its CLUT; the see-through skin is material 1 on page 0 with the glass
-                                        alpha (0.2) in its CLUT; the eyes keep MKA's alpha fade.
+Two variants:
+  cham.pme2 / cham.pwf                  layered (MK:SM blends character meshes, measured on w39): every MKA material
+                                        keeps its own layer. Body materials 2-4 keep their slot-4 pass (so the model
+                                        loads as mode 2 and they draw first, opaque) with texel alpha --body-alpha
+                                        (0x80 story, 8 Versus). The skin (material 1, page 0, alpha 0x1a = MKA's 0.2
+                                        glass) and the quilted shell (MKA 'trans': new material 5 on new page 5, alpha =
+                                        MKA alpha / 2, pushed >= 2.5 units out from the cloth: Z GREATER is strict) have
+                                        no slot-4 pass (ptrs[4] = 0, pass count 1): the game blends them by CLUT alpha
+                                        (0x80 = 1.0; <= 0x3c without a Z write).
   cham_opaque.pme2 / cham_opaque.pwf    opaque fallback: the shell is baked into the rainbow page (shade x hue palette),
                                         the skin is a dark desaturated colour, the eyes are cut out at low alpha.
 Both keep Reptile's skeleton (all 5 copies), dummies, collision spheres, materials 0-4 and header; group 3 keeps
@@ -20,7 +24,7 @@ Pages (6851 entries; page 1 = the shared glow sprite stays). All 128x128 T8, CLU
   3  material 3           MKA leather (CHAMELEON_002, 256x256 -> 128x128)
   4  material 4           MKA leg (CHAMELEON_003, 256x256 -> 128x128)
   5  material 5 'trans'   layered only: MKA trans (CHAMELEON_005, the quilted shell, 256x256 -> 128x128), alpha kept
-Texel alpha on the opaque materials is MK:SM's highlight mask (the base pass is ALPHA FIX 128 + ATST GEQUAL 4, the
+Texel alpha on cham_opaque's materials is MK:SM's highlight mask (the base pass is ALPHA FIX 128 + ATST GEQUAL 4, the
 highlight pass adds Cs*Ad): MKA's specular mask mapped to 4..64, Reptile's range. Alpha < 4 is cut out by ATST.
 
 RAINBOW: the page 2 CLUT is 7 blocks of 32 hues (index 1 + 32*block + hue) plus fixed entries 225-255 (black/gray of
@@ -42,8 +46,10 @@ through bonemap.json, merge, are pruned to <= 3 bones per triangle, and triangle
 bones (one material each), stripified (first triangle along the normals, winding bit 1).
 
 Usage:
-  chammodel.py build [OUT]     bonemap.json, cham*.pme2/.pwf, cham_clut.json, checks, previews (default OUT =
-                               remaster-data/chameleon/model)
+  chammodel.py build [OUT] [--body-alpha N]
+                               bonemap.json, cham*.pme2/.pwf, cham_clut.json, checks, previews (default OUT =
+                               remaster-data/chameleon/model). N = the layered body texel alpha: 0x80 (default, story
+                               path) or 8 (Versus three-pass path)
   chammodel.py check [OUT]     re-parse and verify the written files
   chammodel.py preview [OUT]   cham_compare.png (pme2.raster, under MKA's preview.png), cham_preview.png,
                                cham_opaque_preview.png, cham_skeleton.png, cham_posed.png
@@ -65,12 +71,15 @@ OUT = os.path.join(DATA, 'model')
 MKA_JSON = os.path.join(OUT, 'mka_chameleon.json')
 MKA_TEX = os.path.join(DATA, 'mka')
 MODEL, TEXTURES = 6852, 6851
-GLASS_ALPHA = 26                 # MKA's skin: lerp(screen, skin, 0.2) (mkamesh GLASS) -> PS2 alpha 0.2 * 128
+GLASS_ALPHA = 0x1a               # MKA's skin: lerp(screen, skin, 0.2) (mkamesh GLASS) -> PS2 alpha 0.2 * 128
+BODY_ALPHA = 0x80                # layered body texel alpha: story path (a hook forces (Cs-Cd)*As+Cd): 0x80 = opaque;
+                                 # the Versus three-pass path wants 8 (alpha only scales the additive gloss there)
 DARK_SKIN = (58, 56, 52)         # opaque fallback: what MKA's see-through skin looks like in game (arena behind it)
 HUES, BLOCKS, FIXED0 = 32, 7, 225
 PHASE = 68                       # disc CLUT phase in gradient rows (green; mkamesh SCROLL_FRAME 1070 -> 68.5 rows)
 QUILT_W, STRIP, EYE = 112, (112, 118), (118, 128)
-SHELL_PUSH = 0.6                 # layered: shell vertices at least this far out along the normal (no z-fight)
+SHELL_PUSH = 2.5                 # layered: shell vertices at least this far out from the cloth along the normal:
+                                 # Z GREATER is strict, a coincident shell fails it (positions round to 1 unit)
 MAX_STRIP, MAX_MESH_V, MAX_MESH_T = 30, 400, 450      # shipped fighters: strips <= 32, meshes <= 510 verts
 
 # ---------------------------------------------------------------------------------------------------- bone map
@@ -446,8 +455,15 @@ def gradients():
     return g, sat, e
 
 
-def rainbow_blocks(opaque, shades):
+def rainbow_blocks(opaque, shades, body_alpha=BODY_ALPHA):
     """block parameters: colour = k * source[row] + add, alpha; source 'grad' or 'eye'"""
+    if not opaque:
+        b = [{'block': 0, 'what': 'plain cloth', 'source': 'cham_grad', 'k': 1.0, 'add': 0.0, 'alpha': body_alpha}]
+        b += [{'block': j, 'what': 'unused (layered: the shell is page 5)', 'source': 'cham_grad', 'k': 1.0,
+               'add': 0.0, 'alpha': body_alpha} for j in range(1, 5)]
+        b.append({'block': 5, 'what': 'eye pastel', 'source': 'eye_sat', 'k': 0.5, 'add': 127.5, 'alpha': body_alpha})
+        b.append({'block': 6, 'what': 'eye saturated', 'source': 'eye_sat', 'k': 1.0, 'add': 0.0, 'alpha': body_alpha})
+        return b
     b = [{'block': 0, 'what': 'plain cloth', 'source': 'cham_grad', 'k': 1.0, 'add': 0.0, 'alpha': 64}]
     for j in range(4):
         if opaque:
@@ -564,6 +580,8 @@ def frac_uv(uv_tri):
 
 # ---------------------------------------------------------------------------------------------------- build
 class Build:
+    body_alpha = BODY_ALPHA
+
     def __init__(self, out=OUT):
         from wad import Wad
         self.out = out
@@ -595,7 +613,7 @@ class Build:
         # plain strip and (layered) the whole cloth area: block 0, hue by row
         idx[:, :EYE[0]] = 1 + hue_row
         # eyes
-        fixed = [((255, 255, 255), 128)]                       # FIXED0: the eye's white core
+        fixed = [((255, 255, 255), 128 if opaque else self.body_alpha)]      # FIXED0: the eye's white core
         for c, (lev, al) in enumerate(eye_levels()):
             col = EYE[0] + c
             if lev == 'cut':
@@ -643,7 +661,7 @@ class Build:
             q[solid] = FIXED0 + 1 + glab
             idx[:, :QUILT_W] = q
             self.quilt_err = self.quilt_error(k, c, solid, C, lab, G, glab, gray)
-        blocks = rainbow_blocks(opaque, shades)
+        blocks = rainbow_blocks(opaque, shades, self.body_alpha)
         clut = rainbow_clut(blocks, fixed)
         return idx, clut, blocks, fixed
 
@@ -670,12 +688,11 @@ class Build:
         self.blocks, self.fixed = blocks, fixed
         for page, name in ((3, 'leather'), (4, 'leg')):
             t = down(mka_tex(name))
-            t[..., 3] = highlight(t[..., 3])
+            t[..., 3] = highlight(t[..., 3]) if opaque else self.body_alpha
             out[page] = quantize(t)
         if not opaque:
             t = down(mka_tex('trans'))
-            a = np.rint(t[..., 3] * 128 / 255)
-            t[..., 3] = np.where(a < 4, 0, a)                      # MKA alpha kept (PS2 0-128); < 4 = cut by ATST
+            t[..., 3] = np.floor(t[..., 3] / 2)                   # MKA alpha / 2 (0x80 = 1.0); < 4 is cut by ATST
             out[5] = quantize(t)
         return out
 
@@ -845,6 +862,8 @@ class Build:
         if not opaque:
             add_material(m, 5, 'trans', like=4)
             struct.pack_into('<I', m.header().data, 0x14, 6)
+            for mi in (1, 5):                                  # skin, shell: blended, no glow pass
+                drop_glow_pass(m, mi)
         piv = np.array([b.pos for b in sk])
         rot = [euler_matrix(b.rot) for b in sk]
         self.mesh_stats = []
@@ -873,6 +892,19 @@ class Build:
 
     def pwf_bytes_for(self, pages):
         return write_pwf(self.pwf_bytes, pages)
+
+
+def drop_glow_pass(m, index):
+    """material `index` without its slot-4 pass (the costume page 1 highlight): pass count 1, ptrs[4] = 0. The game
+    then draws it after the slot-4 materials, blended by texel alpha (0x80 = 1.0; <= 0x3c without a Z write)"""
+    mt = next(x for x in m.mats if struct.unpack_from('<i', x.data, 0xc)[0] == index)
+    sub = mt.ref(0x3c)
+    rec = sub.ref(0x20)
+    assert rec is not None and struct.unpack_from('<i', rec.data, 0xc)[0] == 1 and len(rec.data) == 0x70
+    sub.set_ref(0x20, None)
+    struct.pack_into('<i', sub.data, 0xc, 1)
+    m.blobs = [b for b in m.blobs if b is not rec]
+    m.runs = None
 
 
 def add_material(m, index, name, like):
@@ -1086,6 +1118,12 @@ def check_files(pme, pwf, label):
             nt += x.ntri
     h = m.header().data
     assert struct.unpack_from('<I', h, 0x14)[0] == max(mt.values()) + 1
+    mats = m.materials()
+    assert any(4 in x['pass_slots'] for x in mats), 'no slot-4 material: the model would not load as mode 2'
+    for x, blob in zip(mats, m.mats):
+        if x['texture'] >= 0:
+            n = struct.unpack_from('<i', blob.ref(0x3c).data, 0xc)[0]
+            assert x['pass_slots'] in ([1, 4], [1]) and n == len(x['pass_slots']), (x, n)
     print('%s: %d bytes, %d groups, %d meshes, %d verts, %d tris; pages %d; roundtrip %s' % (
         label, len(pme), len(m.groups), len(m.meshes()), nv, nt, len(pages), 'ok' if ok else 'FAIL'))
     return ok
@@ -1358,8 +1396,10 @@ def compare_sheet(out):
 
 
 # ---------------------------------------------------------------------------------------------------- main
-def build(out=OUT):
+def build(out=OUT, body_alpha=BODY_ALPHA):
+    assert 4 <= body_alpha <= 0x80, 'texels below alpha 4 are discarded'
     b = Build(out)
+    b.body_alpha = body_alpha
     os.makedirs(out, exist_ok=True)
     json.dump(bonemap_doc(b.rp), open(os.path.join(out, 'bonemap.json'), 'w'), indent=1)
     report = {'scale': b.rp.scale, 'notes': b.rp.notes, 'shell_matched': len(b.shell_match),
@@ -1424,9 +1464,14 @@ def main(argv):
     if not argv or argv[0] not in ('build', 'check', 'preview'):
         print(__doc__)
         return 2
+    body_alpha = BODY_ALPHA
+    if '--body-alpha' in argv:
+        k = argv.index('--body-alpha')
+        body_alpha = int(argv[k + 1], 0)
+        argv = argv[:k] + argv[k + 2:]
     out = argv[1] if len(argv) > 1 else OUT
     if argv[0] == 'build':
-        build(out)
+        build(out, body_alpha)
         previews(out)
     elif argv[0] == 'check':
         ok = True
