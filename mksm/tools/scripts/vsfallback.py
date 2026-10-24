@@ -23,6 +23,7 @@ import sys
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import dt2  # noqa: E402
 import fstates  # noqa: E402
+import vsboss  # noqa: E402
 import vscombos  # noqa: E402
 from wad import Wad  # noqa: E402
 
@@ -173,12 +174,15 @@ def port(tree, T, donor, wad, log, votes, links):
 
 
 def build(target, wad, log=None, votes=None, links=None):
-    """the target's vscombos.Tree with every donor of vscombos.PORTS[target] ported (for vscombos.emit)"""
+    """the target's vscombos.Tree with every donor of vscombos.PORTS[target] ported (for vscombos.emit), plus, for
+    Reptile, the story boss's moves (vsboss.py)"""
     T = Target(target, wad)
     tree = vscombos.Tree(dt2.Fighter(target, wad))
     for d in vscombos.PORTS[target]:
         port(tree, T, d, wad, log if log is not None else [], votes if votes is not None else
              collections.defaultdict(collections.Counter), links if links is not None else [])
+    if target == 'reptile':
+        vsboss.add(tree, wad)
     return tree
 
 

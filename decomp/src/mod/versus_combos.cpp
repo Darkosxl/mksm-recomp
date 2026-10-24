@@ -5,6 +5,8 @@
 // clip where the target has it (vscombos.py), else the target's own move for that button and direction that fits
 // best (vsfallback.py). The result is versus_combos.inc. No new states, clips or cancel windows: only command-tree
 // nodes (combo links run through the command queue, FUN_0016B138, not through ERG.DAT cancel windows).
+// Reptile's table also carries two of the story boss's moves as specials (vsboss.py); their states are boss ones,
+// which versus_boss_moves.cpp makes playable on him.
 //
 // The hook: int fn_2f8640(int group, S56 *nodes) at 0x002F8640, called by the four ERG.DT2 loaders (0x00320328,
 // 0x00320740, 0x003209A0, 0x00320E58) right after they copied the fighter's command tree (DT2 section 2, 56-byte
