@@ -39,7 +39,7 @@ DROP = {
     'baraka': {('square', 'square', 'triangle')},
     'cage': {('square', 'square', 'square', 'triangle'), ('square', 'square', 'triangle'), ('triangle', 'circle')},
     'kitana': {('square', 'square', 'square', 'triangle'), ('square', 'square', 'triangle')},
-    'reptile': {('square', 'square', 'circle'), ('square', 'square', 'square', 'r2')},
+    'reptile': {('square', 'square', 'circle'), ('square', 'square', 'square', 'r2'), ('square', 'square', 'triangle')},
 }
 
 

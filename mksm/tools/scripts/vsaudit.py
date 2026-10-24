@@ -10,7 +10,8 @@ Usage:
   vsaudit.py jobs                 one line per string: fighter name button... (button: l2 r2 l1 r1 triangle circle cross
                                   square, '+'-joined when one node needs several)
   vsaudit.py report DIR           DIR/<build>/<fighter>/<name>-g<gap>/summary.txt for builds mod and base: per string
-                                  the best damage over the gaps on each build; WORSE where the ports lose damage
+                                  the best damage over the gaps on each build; WORSE where the ports lose damage, by
+                                  best or at most gaps
 """
 import glob
 import os
@@ -73,6 +74,8 @@ def report(d):
         flag = ''
         if None not in (best.get('mod'), best.get('base')) and best['mod'] < best['base']:
             flag, worse = 'WORSE', worse + 1
+        elif sum((b.get('mod', {}).get(g) or 0) < (v or 0) for g, v in b.get('base', {}).items()) * 2 > len(b.get('base', {})):
+            flag, worse = 'WORSE at most gaps', worse + 1
         print('%-8s %-40s mod %4s base %4s  %s   %s' % (fighter, name, best.get('mod'), best.get('base'), flag, ' '.join(
             '%s:%s' % (k, ','.join('%d=%s' % (g, v) for g, v in sorted(b[k].items()))) for k in sorted(b))))
     print('%d strings, %d worse with the ports' % (len(rows), worse))
