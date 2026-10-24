@@ -1,9 +1,10 @@
-# chamfx_report.py <run dir> [<baseline run dir>]: what a chamfx.sh move run heard and drew.
+# chamfx_report.py <run dir> [<baseline run dir>]: what a chamfx.sh move run heard and drew (from its call, or its
+# first press).
 #   fx.txt     sound-cue lookups (FUN_0031AE78) and event-114 calls (FUN_002E9700) from the call frame on: count, and how
-#              many returned 0 (not found / nothing built)
+#              many returned 0 (not found / nothing built); effect definition lookups (FUN_002D8040) per bank#index
 #   stems.wav  voices-only loudness (core 0 + core 1 dry voices, stems 4-7) per 10-frame window from the call, in dBFS;
 #              with a baseline run (same start state, no call): the energy the move added over it
-#   frames     sheet.png: every 4th frame from the call to call + 80
+#   frames     sheet.png: every 4th frame from the call (or first press) to + 80
 # Writes <run dir>/report.txt and sheet.png; prints the report.
 import glob, math, os, re, struct, sys
 
@@ -15,7 +16,10 @@ base = sys.argv[2] if len(sys.argv) > 2 else None
 cmd = open(os.path.join(run, 'cmd.txt')).read()
 m = re.search(r'PS2_CALL=(\d+):303340:(\w+):(\w+)', cmd)
 call = int(m.group(1)) if m else None
-f0 = call - 10 if call else None  # the start state's frame: chamfx.sh calls at f0 + 10
+if not call and (pm := re.search(r'--press (\d+):', cmd)):
+    call = int(pm.group(1))  # input runs: from the first press
+lm = re.search(r'\[state\] loaded frame (\d+)', open(os.path.join(run, 'run.log'), errors='replace').read())
+f0 = int(lm.group(1)) if lm else call - 10 if call else None  # the start state's frame (the recordings start there)
 out = []
 
 
@@ -23,12 +27,12 @@ def say(s=''):
     out.append(s)
 
 
-say(f'{run}: call frame {call} state {int(m.group(3), 16) if m else "-"}')
+say(f'{run}: call frame {call} state {int(m.group(3), 16) if m else "- (inputs)"}')
 
 
 def fx(path, since):
     cue = ev = cue0 = ev0 = 0
-    hashes = {}
+    hashes, defs = {}, {}
     for line in open(path):
         p = line.split()
         if not p or int(p[0]) < since:
@@ -43,15 +47,19 @@ def fx(path, since):
         elif name == 'ev114':
             ev += 1
             ev0 += v == '00000000'
-    return cue, cue0, ev, ev0, hashes
+        elif name == 'fxdef':  # fxdef(bank, index, out): 0 = no such definition
+            d = re.search(r'fxdef\((\w+), (\w+),', line)
+            defs.setdefault(f'{int(d.group(1), 16)}#{int(d.group(2), 16)}', []).append(v != '00000000')
+    return cue, cue0, ev, ev0, hashes, defs
 
 
 since = call if call else 0
 if os.path.exists(os.path.join(run, 'fx.txt')):
-    cue, cue0, ev, ev0, hashes = fx(os.path.join(run, 'fx.txt'), since)
+    cue, cue0, ev, ev0, hashes, defs = fx(os.path.join(run, 'fx.txt'), since)
     say(f'cue lookups {cue} ({cue0} returned 0), event-114 calls {ev} ({ev0} returned 0)')
     for k, v in hashes.items():
         say(f'  cue {k}: ' + ' '.join(v[:8]) + (' ...' if len(v) > 8 else ''))
+    say('effect definitions (bank#index found/asked): ' + ' '.join(f'{k} {sum(v)}/{len(v)}' for k, v in sorted(defs.items())))
 
 
 def voices(path):
@@ -101,8 +109,9 @@ if fr and call:
     pick = []
     for p in fr:
         k = int(re.findall(r'(\d+)', os.path.basename(p))[-1])
-        if call <= k <= call + 80 and (k - call) % 4 == 0:
+        if call <= k <= call + 80:
             pick.append((k, p))
+    pick = pick[::2]  # every 4th frame (frames are dumped every 2nd)
     thumbs = []
     for k, p in pick:
         im = Image.open(p).convert('RGB')

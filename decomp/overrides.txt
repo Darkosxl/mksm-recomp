@@ -12,11 +12,11 @@
 001CF518	fx_trace_bank_group	decomp/src/trace/fx_trace.cpp (debug trace, PS2_TRACE_FX)
 001D0688	chameleon_textures	decomp/src/mod/chameleon.cpp (PS2_MOD)
 001D11F8	versus_boss_moves_load	decomp/src/mod/versus_boss_moves.cpp (PS2_MOD)
-001D6808	debug_call	decomp/src/trace/debug_call.cpp (debug tool, PS2_CALL; Versus)
+001D6808	debug_call	decomp/src/trace/debug_call.cpp (debug tool, PS2_CALL)
 001E6EC8	chameleon_group_name	decomp/src/mod/chameleon.cpp (PS2_MOD)
 001E6EF0	chameleon_name	decomp/src/mod/chameleon.cpp (PS2_MOD)
 001EAF30	chameleon_switch	decomp/src/mod/chameleon.cpp (PS2_MOD)
-001EB378	debug_call_fighters	decomp/src/trace/debug_call.cpp (debug tool, PS2_CALL; Versus)
+001EB378	debug_call_fighters	decomp/src/trace/debug_call.cpp (debug tool, PS2_CALL)
 002124C0	ArchiveGetFile	decomp/src/fileio/fileiodrv.cpp
 00213C78	MatrixSetTranslation	decomp/src/math/vu0math.cpp
 00213C98	MatrixGetTranslation	decomp/src/math/vu0math.cpp
@@ -90,6 +90,7 @@
 002C9A60	fx_trace_2c9a60	decomp/src/trace/fx_trace.cpp (debug trace, PS2_TRACE_FX)
 002CDDB8	fx_trace_2cddb8	decomp/src/trace/fx_trace.cpp (debug trace, PS2_TRACE_FX)
 002D44B8	chameleon_fx_bank	decomp/src/mod/chameleon_fx.cpp (PS2_MOD)
+002D8040	fx_trace_def	decomp/src/trace/fx_trace.cpp (debug trace, PS2_TRACE_FX)
 002E7F30	chameleon_moves_cond	decomp/src/mod/chameleon_moves.cpp (PS2_MOD)
 002E9700	fx_trace_ev114	decomp/src/trace/fx_trace.cpp (debug trace, PS2_TRACE_FX)
 002F8640	versus_combos	decomp/src/mod/versus_combos.cpp (PS2_MOD)

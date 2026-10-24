@@ -6,8 +6,10 @@
 // at the start of the update in that frame, with every GPR restored afterwards; then the recompiled update runs
 // unchanged (this hook off for the one call). Not state-exact on the frames that call: the callee's own effects are
 // the point. Each call is logged to stderr with v0.
-// fn_1d6808 does not run in Versus; there PS2_DECOMP=1EB378 hooks the per-frame fighter update fn_1eb378 at
-// 0x001EB378 (it walks the fighters from 0x5E6B40) the same way. With both on, whichever runs first in a frame calls.
+// PS2_DECOMP=1EB378 hooks the per-frame fighter update fn_1eb378 at 0x001EB378 (it walks the fighters from 0x5E6B40)
+// the same way. With both on, whichever runs first in a frame calls; the log names it (fn_1d6808 runs in Versus too).
+// A set-state call (0x303340) does not play a special the way its input does: the state holds at frame 1 and fires
+// no events. Real inputs (ps2run --press) do.
 #include "ps2/decomp.hpp"
 #include "ps2/system.hpp"
 
