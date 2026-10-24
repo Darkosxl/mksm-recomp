@@ -38,3 +38,4 @@ liukang	special-square	200	--press 3732:r1:20 --press 3740:square:4
 kunglao	special-circle	200	--press 3732:r1:20 --press 3740:circle:4
 scorpion	special-circle	200	--press 3732:r1:20 --press 3740:circle:4
 subzero	special-square	200	--press 3732:r1:20 --press 3740:square:4
+kitana	boss-square	140	--press 3728:r1:30 --press 3732:l1:26 --press 3740:square:4

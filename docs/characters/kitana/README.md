@@ -36,10 +36,18 @@ Grabs the opponent and holds him. Cross lets go. No damage on a standing opponen
 
 <!-- BM-KITANA: merge point for branch bm-kitana. It adds docs/characters/kitana/moves.md and the clips of her new
      boss specials; link or inline them here. -->
-## Borrowed boss specials
+## Boss moves: R1 + L1
 
-In progress on branch `bm-kitana`: new specials borrowed from a story boss. They will be described in
-[moves.md](moves.md).
+One move from the story's NPC fighters, from branch `bm-kitana` (details in [moves.md](moves.md)): none of the story
+Kitana's own moves play in place, so it comes from her sister Mileena. Hold R1 and L1, then press the button. L1 does
+nothing else in a fight, so R1 + button stays her own special. R1 + L1 + triangle, circle and R2 play her own specials.
+
+### R1 + L1 + square: low sweep
+
+Mileena's low sweep (state 1762): it launches the opponent, and she is back in her stance after 54 frames. Damage 3
+(bm-kitana's runs).
+
+<img src="clips/boss-square.webp" width="480" alt="Kitana: low sweep">
 <!-- /BM-KITANA -->
 
 ## Combos

@@ -11,11 +11,11 @@ picks whose specials he uses: Reptile's own, Scorpion's or Sub-Zero's.
 
 ## Picking him
 
-- **Story and Ko-op.** On the character select, put the cursor on Reptile's cell and press **L3**. That switches the
+- **Story and Ko-op.** On the character select, put the cursor on Reptile's cell and press **L1** (or L3). That switches the
   cell between Reptile and Chameleon. The name then reads CHAMELEON on the select screen, the HUD and the menus.
-  - In Ko-op each player switches with their own L3.
+  - In Ko-op each player switches with their own L1.
   - The choice lasts until you quit the game. Reptile is the default.
-- **Versus.** Not available. Reptile's cell stays Reptile, and L3 does nothing on the Versus select screen.
+- **Versus.** Not available. Reptile's cell stays Reptile, and L1 / L3 do nothing on the Versus select screen.
 - It is part of the gameplay mod: `PS2_MOD=1`, the default in `remaster/play.sh` and in the browser.
 - The announcer says "Chameleon" (MKA's line) when the mod data file `vo_name.adx` is installed. The browser has it.
   Without it you hear Reptile's name.

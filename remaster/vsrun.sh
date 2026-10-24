@@ -65,7 +65,7 @@ import sys, glob, os, struct
 from PIL import Image
 O, FS = sys.argv[1], int(sys.argv[2])
 for p in sorted(glob.glob(O + '/frames/*.ppm')):
-    Image.open(p).save(p[:-4] + '.png'); os.remove(p)
+    Image.open(p).save(p[:-4] + '.png', compress_level=1); os.remove(p)  # scratch frames: fast zlib
 fl = lambda h: struct.unpack('<f', struct.pack('<I', int(h, 16)))[0]
 rows = []
 for line in open(O + '/watch.txt'):
