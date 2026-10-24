@@ -19,6 +19,10 @@ int mode(std::uint32_t fighter);
 // kFxScorpion, Sub-Zero's from kFxSubzero (the donor ports' effect events are moved there, versus_boss_moves.cpp)
 constexpr std::uint8_t kFxScorpion = 20, kFxSubzero = 36;
 
+// puts player slot's stance (a00_stnd / c00_stnd) in his mode's: Scorpion's in yellow, Sub-Zero's in blue, Reptile's
+// otherwise (chameleon_moves.cpp); no-op when the slot is not Chameleon
+void restance(std::uint32_t slot);
+
 }
 
 inline bool chameleon_is(std::uint32_t fighter) { return chameleon::is(fighter); }

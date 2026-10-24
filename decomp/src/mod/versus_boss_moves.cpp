@@ -87,12 +87,14 @@ constexpr std::uint32_t kEndOfState = 0x00303B00u;        // set-state's return 
 // slot list, which on Reptile's are his hand, flaps, jaw and fingers: stripped, the spear pulls without its rope.
 // Event 303 (FUN_00169A10) sets the stance a move returns to from the donor's own stance sets, whose states are not
 // loaded: set-state gave up at the move's end and the clip looped. Stripped, he returns to Reptile's current stance.
-constexpr std::uint8_t kChamScorpion[] = {30, 31, 61, 67, 69, 70, 71, 73, 78, 79, 108, 109, 110, 131, 132, 133, 134,
-                                          135, 142, 143, 146};
-constexpr std::uint8_t kChamSubzero[] = {39, 41, 43, 45, 46, 81, 96, 97, 99, 100, 114, 115, 116, 128, 129, 130, 131,
-                                         132, 133, 134, 135, 136, 137, 138, 139};
+// a00_stnd / c00_stnd (local 0 and 18 / 19): his stance in their mode (chameleon_moves.cpp chameleon_stance); their
+// mesh-part events 155/156 are stripped as the spear's are.
+constexpr std::uint8_t kChamScorpion[] = {0, 18, 30, 31, 61, 67, 69, 70, 71, 73, 78, 79, 108, 109, 110, 131, 132, 133,
+                                          134, 135, 142, 143, 146};
+constexpr std::uint8_t kChamSubzero[] = {0, 19, 39, 41, 43, 45, 46, 81, 96, 97, 99, 100, 114, 115, 116, 128, 129, 130,
+                                         131, 132, 133, 134, 135, 136, 137, 138, 139};
 constexpr std::int16_t kStripScorpion[] = {155, 156, 303};
-constexpr std::int16_t kStripSubzero[] = {303};
+constexpr std::int16_t kStripSubzero[] = {155, 156, 303};
 
 constexpr Port kPorts[] = {
     {"Versus Reptile <- story boss Reptile", 84, 6512, 1564, kBossMoves, std::size(kBossMoves), 1592, 450.0f, kVanish,

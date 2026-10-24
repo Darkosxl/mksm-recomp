@@ -124,3 +124,37 @@ PS2_MOD(00167458, chameleon_spear_flag) {
     tail(c, 0x00167458u);
     decomp::hook_00167458.enabled = true;
 }
+
+// Stance per colour mode. FUN_00169A10(slot, set) loads the player's stance (0x004E8388 + 4 * slot, the state the end
+// of a move returns to: the set's +0, or its +8 when locked on an enemy) and walk from the stance set table 0x0064B9D8
+// (28-byte sets, FUN_001F5758); the game calls it on spawn, lock-on changes and frame event 303. In yellow / blue a
+// Chameleon stands as Scorpion / Sub-Zero (their a00_stnd and c00_stnd, loaded by versus_boss_moves.cpp); his walk and
+// run stay Reptile's. A mode switch remaps it at once (chameleon.cpp next_mode); the game walks him into it.
+namespace {
+
+constexpr std::uint32_t kStance = 0x004E8388u, kFighters = 0x005E6B40u, kFighterSize = 0x33C0u;
+// a00_stnd, c00_stnd per mode (rainbow and green are Reptile's)
+constexpr std::int32_t kStances[4][2] = {{2299, 2317}, {1994, 2012}, {2515, 2534}, {2299, 2317}};
+
+}
+
+void chameleon::restance(std::uint32_t slot) {
+    const int m = mode(kFighters + slot * kFighterSize);
+    if (m < 0) return;
+    const std::uint32_t at = kStance + 4 * slot;
+    const std::int32_t s = rd<std::int32_t>(at);
+    for (const auto &k : kStances)
+        for (int j = 0; j < 2; ++j)
+            if (s == k[j]) return wr<std::int32_t>(at, kStances[m][j]);
+}
+
+PS2_MOD(00169A10, chameleon_stance) {
+    const std::uint32_t slot = c.r[a0].w[0];
+    const std::int32_t budget = c.budget;
+    c.budget = 0x40000000; // not preempted: the remap has to follow the original
+    decomp::hook_00169A10.enabled = false;
+    const bool back = call(c, 0x00169A10u, Ra{c.r[ra].w[0]});
+    decomp::hook_00169A10.enabled = true;
+    c.budget = budget;
+    if (back) chameleon::restance(slot);
+}

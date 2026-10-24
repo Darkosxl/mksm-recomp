@@ -237,6 +237,7 @@ void attach(std::uint32_t slot, std::uint32_t data) {
 void next_mode(std::uint32_t slot) {
     const Player p = player(slot);
     p.mode = static_cast<std::uint8_t>((p.mode + 1) % kModes);
+    chameleon::restance(slot);
     std::fprintf(stderr, "[mod] chameleon: player %u mode %s (frame %llu)\n", slot + 1, kModeNames[p.mode],
                  static_cast<unsigned long long>(frame_count()));
 }

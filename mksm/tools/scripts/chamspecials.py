@@ -25,10 +25,13 @@ BASE = 12723                       # 12723..12738, after the game's last id 1272
 SPECIAL = 0x10000                  # requirement bit: R1 held
 DONORS = (('scorpion', 1), ('subzero', 2))
 GREEN = 3
-# ponytail: 200 clip slots per fighter (Reptile 144 + boss 9 leave 47) and these do not fit: g30's g31 (with its 4
+# ponytail: 200 clip slots per fighter (Reptile 144 + boss 6 leave 50) and these do not fit: g30's g31 (with its 4
 # partners), s20's v00 and q00's r20; g30, s20 and q00 return to stance without them (w30 playtest). Free slots (an
 # unused Reptile clip) would bring them back.
 NO_SLOT = {('scorpion', 62), ('scorpion', 147), ('subzero', 140)}
+# the donor's stance in its mode (chameleon_moves.cpp chameleon_stance): a00_stnd free, c00_stnd locked on an enemy.
+# ponytail: the last 4 free slots; his walk and run stay Reptile's (a10/a11/a25 would need 6 more)
+STANCE = ('a00_stnd', 'c00_stnd')
 
 
 def roots(f, nodes, lists):
@@ -84,6 +87,7 @@ def add(tree, wad, load=None):
         D = dt2.Fighter(name, wad)
         st = fstates.states(name, wad)
         reach = load.setdefault(name, set())
+        reach.update(D.first + x['local'] for x in st if x['name'] in STANCE)
 
         def graft(i, parent, chain):
             j = tree.add(D.nodes[i], D.nodes[i].state, parent, chain)
@@ -152,7 +156,7 @@ def main(argv):
         total += len(locals_)
         print('%s: %d states: %s' % (name, len(locals_), ' '.join('%d:%s' % (s + first, st[s]['name']) for s in locals_)))
         print('  constexpr std::uint8_t k%s[] = {%s};' % (name.capitalize(), ', '.join(map(str, locals_))))
-    print('clip slots: %d of 47' % total)
+    print('clip slots: %d of 50' % total)
     return 0
 
 

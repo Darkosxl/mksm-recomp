@@ -4,6 +4,7 @@
 0013B3B0	chameleon_announce	decomp/src/mod/chameleon.cpp (PS2_MOD)
 0013CD80	chameleon_select	decomp/src/mod/chameleon.cpp (PS2_MOD)
 00167458	chameleon_spear_flag	decomp/src/mod/chameleon_moves.cpp (PS2_MOD)
+00169A10	chameleon_stance	decomp/src/mod/chameleon_moves.cpp (PS2_MOD)
 0016B950	chameleon_moves_match	decomp/src/mod/chameleon_moves.cpp (PS2_MOD)
 0019FF30	reptile_store_draw	decomp/src/mod/chameleon_moves.cpp (PS2_MOD)
 001A1010	reptile_store_video	decomp/src/mod/chameleon_moves.cpp (PS2_MOD)
