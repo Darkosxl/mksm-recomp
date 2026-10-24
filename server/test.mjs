@@ -128,7 +128,7 @@ const femme = httpServer((req, res) => {
 });
 await new Promise((r) => femme.listen(0, '127.0.0.1', r));
 const femmeEnv = { FEMME_REPORT_URL: `http://127.0.0.1:${femme.address().port}/api/reports`, FEMME_REPORT_TOKEN: FEMME_TOKEN };
-const signalEnv = { ...secrets, HOST: '127.0.0.1', PORT: String(signalPort), DATA_DIR: join(tmp, 'data'), PUBLIC_ORIGIN: base, TURN_HOST: 'turn.test', ROOM_GRACE_MS: String(GRACE_MS), PROBE_BURST: String(PROBE_BURST), ...femmeEnv };
+const signalEnv = { ...secrets, PUBLIC_ACCESS: '0', HOST: '127.0.0.1', PORT: String(signalPort), DATA_DIR: join(tmp, 'data'), PUBLIC_ORIGIN: base, TURN_HOST: 'turn.test', ROOM_GRACE_MS: String(GRACE_MS), PROBE_BURST: String(PROBE_BURST), ...femmeEnv };
 const startSignal = () => start('signal.mjs', process.execPath, ['signal.mjs'], signalEnv, /listening on/);
 let signal = await startSignal();
 
@@ -156,6 +156,40 @@ if (caddy) {
   }, /serving initial configuration/);
 }
 console.log(`testing ${caddy ? `through Caddy ${caddy} ${base} -> ` : ''}signal.mjs ${direct}`);
+
+// The deployment default must stay public, independently of the legacy private-mode checks below.
+await check('public default: anonymous auth, TURN, room creation/join and reports; admin and Origin remain protected', async () => {
+  const port = await freePort(), at = `http://127.0.0.1:${port}`;
+  const other = await start('signal.mjs', process.execPath, ['signal.mjs'], {
+    ...signalEnv, PUBLIC_ACCESS: '', PORT: String(port), PUBLIC_ORIGIN: at,
+    DATA_DIR: join(tmp, 'public'), FEMME_REPORT_URL: '', FEMME_REPORT_TOKEN: '',
+  }, /listening on/);
+  const sockets = [];
+  try {
+    for (const headers of [{}, { cookie: '__Host-mksm=expired.invalid.cookie' }]) {
+      assert.equal((await fetch(at + '/auth', { headers })).status, 200);
+      assert.equal((await fetch(at + '/turn', { headers })).status, 200);
+    }
+    assert.equal((await fetch(at + '/admin/status')).status, 401);
+    const old = await fetch(at + '/invite?t=old&room=abcdefghijkm', { redirect: 'manual' });
+    assert.equal(old.status, 302);
+    assert.equal(old.headers.get('location'), '/play/abcdefghijkm');
+    assert.equal((await fetch(at + '/invite?room=//evil.example', { redirect: 'manual' })).status, 400);
+    await assert.rejects(client(at, null, { origin: 'https://evil.example' }), { status: 403 });
+    const host = await client(at, null); sockets.push(host);
+    const made = await host.ask({ type: 'create', build });
+    assert.equal(made.type, 'created');
+    const guest = await client(at, null); sockets.push(guest);
+    assert.equal((await guest.ask({ type: 'join', room: made.room, build })).type, 'joined');
+    // A report without an invite must reach validation rather than crash while looking up its note.
+    const report = await fetch(at + '/report', { method: 'POST', headers: { 'content-type': 'application/json' }, body: '{}' });
+    assert.equal(report.status, 400);
+    assert.equal((await fetch(at + '/auth')).status, 200);
+  } finally {
+    for (const socket of sockets) socket.close();
+    await stop(other);
+  }
+});
 
 // ---- invites and the cookie ----
 const get = (path, headers = {}, init = {}) => fetch(base + path, { redirect: 'manual', ...init, headers });

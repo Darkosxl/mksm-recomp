@@ -1,7 +1,7 @@
 # MKSM server
 
-Private, invite-only hosting for the browser build: Caddy (TLS, the auth gate, static files) in front of `signal.mjs` (invites, cookie auth, 2-player rooms, TURN credentials), plus coturn for relayed WebRTC.
-Everything, the disc image included, is behind the invite cookie.
+Public hosting for the browser build: Caddy (TLS, the auth gate, static files) in front of `signal.mjs` (invites, cookie auth, 2-player rooms, TURN credentials), plus coturn for relayed WebRTC.
+Pages, discs, multiplayer and TURN work without an invite by default. Admin endpoints still require their bearer secret. `PUBLIC_ACCESS=0` explicitly enables the legacy private mode. Public report/probe limits use a stable identity per client IP.
 
 No VPS? See [Host mode](#host-mode): the player who opens the lobby serves everything from their own PC through a Cloudflare quick tunnel.
 
@@ -44,7 +44,7 @@ scripts/build_web.sh mksm
 server/deploy.sh user@host your.domain
 ```
 
-The first deploy generates `COOKIE_SECRET`, `ADMIN_SECRET` and `TURN_SECRET` on the VPS in `/etc/mksm/signal.env`; they never leave it. The admin secret is printed once, on that first run: put it in a password manager. Then mint the first invite (below) and open it in your own browser.
+The first deploy generates `COOKIE_SECRET`, `ADMIN_SECRET` and `TURN_SECRET` on the VPS in `/etc/mksm/signal.env`; they never leave it. The admin secret is printed once, on that first run: put it in a password manager. Open the domain directly; no invite is required.
 
 ## Deploying a new build
 
@@ -87,7 +87,9 @@ PACK_DIR=<out> server/deploy.sh user@host your.domain
 
 Logs: `journalctl -u mksm-signal -u caddy -u coturn`.
 
-## Invites
+## Legacy private mode
+
+The site is public by default. The invite behavior below applies only when `PUBLIC_ACCESS=0` is explicitly set in `signal.env`.
 
 ```sh
 ssh user@host sudo mksm-invite 1 alice      # single-use link

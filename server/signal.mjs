@@ -18,6 +18,7 @@ const secret = (name) => {
 };
 const COOKIE_SECRET = secret('COOKIE_SECRET'), ADMIN_SECRET = secret('ADMIN_SECRET'), TURN_SECRET = secret('TURN_SECRET');
 const HOST = env.HOST || '127.0.0.1', PORT = Number(env.PORT ?? 8787);
+const PUBLIC_ACCESS = env.PUBLIC_ACCESS !== '0';
 const ORIGIN = env.PUBLIC_ORIGIN || ''; // https://your.domain, used for invite links and the WebSocket Origin check
 const TURN_HOST = env.TURN_HOST || (ORIGIN ? new URL(ORIGIN).hostname : '127.0.0.1');
 const TURN_PORT = Number(env.TURN_PORT || 3478), TURN_TTL = Number(env.TURN_TTL || 3600);
@@ -89,6 +90,15 @@ function user(req) {
   return m[1];
 }
 
+
+// Public visitors keep a stable identity for report/probe limits; Caddy appends the real peer last.
+function visitor(req) {
+  const member = user(req);
+  if (member || !PUBLIC_ACCESS) return member;
+  const peer = String(req.headers['x-forwarded-for'] || '').split(',').at(-1).trim() || req.socket.remoteAddress;
+  return `guest-${sign('guest:' + peer).slice(0, 16)}`;
+}
+
 const DENIED = '<!doctype html><meta charset="utf-8"><title>Invite only</title><p>This site is invite-only. Open the invite link you were sent.</p>\n';
 const BAD_INVITE = '<!doctype html><meta charset="utf-8"><title>Invite only</title><p>This invite link is invalid, revoked or used up. Ask for a new one.</p>\n';
 const BAD_ROOM = '<!doctype html><meta charset="utf-8"><title>Bad room</title><p>The room in this invite link is malformed. Ask for a new link.</p>\n';
@@ -134,13 +144,13 @@ function admin(req, res, url) {
 const server = createServer((req, res) => {
   const url = new URL(req.url, 'http://local');
   if (url.pathname === '/admin' || url.pathname.startsWith('/admin/')) return admin(req, res, url);
-  if (url.pathname === '/auth') return user(req) ? send(res, 200, 'ok\n') : send(res, 401, DENIED, 'text/html; charset=utf-8');
+  if (url.pathname === '/auth') return visitor(req) ? send(res, 200, 'ok\n') : send(res, 401, DENIED, 'text/html; charset=utf-8');
   if (url.pathname === '/invite') {
     // ?room= must be a well-formed room id, so the redirect stays on this site; a bad one does not use the token.
     const room = url.searchParams.get('room');
     if (room !== null && !ROOM_ID.test(room)) return send(res, 400, BAD_ROOM, 'text/html; charset=utf-8');
     const location = room === null ? '/' : ROOM_URL.replaceAll('{room}', room);
-    if (user(req)) return send(res, 302, '', undefined, { Location: location });
+    if (PUBLIC_ACCESS || user(req)) return send(res, 302, '', undefined, { Location: location });
     const hash = sha256(url.searchParams.get('t') || '');
     const id = Object.keys(invites).find((k) => same(invites[k].hash, hash));
     const invite = invites[id];
@@ -156,7 +166,7 @@ const server = createServer((req, res) => {
     });
   }
   if (url.pathname === '/turn') {
-    const id = user(req);
+    const id = visitor(req);
     if (!id) return send(res, 401, DENIED, 'text/html; charset=utf-8');
     // coturn use-auth-secret: username = expiry:id, credential = base64(HMAC-SHA1(static-auth-secret, username)).
     const username = `${Math.floor(Date.now() / 1000) + TURN_TTL}:${id}`;
@@ -168,8 +178,8 @@ const server = createServer((req, res) => {
     });
   }
   if (url.pathname === '/report') {
-    const id = user(req);
-    return report(req, id && { id, note: invites[id].note }).then((r) => send(res, r.status, r.body, undefined, r.headers));
+    const id = visitor(req);
+    return report(req, id && { id, note: invites[id]?.note || 'Public visitor' }).then((r) => send(res, r.status, r.body, undefined, r.headers));
   }
   send(res, 404, 'not found\n');
 });
@@ -191,9 +201,9 @@ server.on('upgrade', (req, socket, head) => {
   socket.on('error', () => socket.destroy());
   const path = new URL(req.url, 'http://local').pathname;
   const reject =(status) => socket.end(`HTTP/1.1 ${status}\r\nConnection: close\r\nContent-Length: 0\r\n\r\n`);
-  if (path === '/auth') return reject(user(req) ? '200 OK' : '401 Unauthorized'); // forward_auth of a WebSocket request
+  if (path === '/auth') return reject(visitor(req) ? '200 OK' : '401 Unauthorized'); // forward_auth of a WebSocket request
   if (path !== '/ws') return reject('404 Not Found');
-  const id = user(req);
+  const id = visitor(req);
   if (!id) return reject('401 Unauthorized');
   if (ORIGIN && req.headers.origin && req.headers.origin !== ORIGIN) return reject('403 Forbidden');
   wss.handleUpgrade(req, socket, head, (ws) => {

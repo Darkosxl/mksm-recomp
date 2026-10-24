@@ -1,4 +1,4 @@
-# Caddy front for the MKSM site: TLS, the invite-cookie gate, static files and the signalling proxy.
+# Caddy front for the MKSM site: TLS, public access, static files and the signalling proxy.
 # Environment (from /etc/mksm/caddy.env on the VPS):
 #   DOMAIN       site address, e.g. mksm.example.com (http://127.0.0.1:8480 for a local test without TLS)
 #   MKSM_ROOT    web root holding index.html, current.json, disc.iso, v/<build hash>/ and pack/ (HD textures)
@@ -46,14 +46,13 @@
 		match status 2xx 304
 	}
 
-	# Every path needs the invite cookie, the disc included. /invite is how the cookie is obtained and
-	# /admin checks its own bearer secret.
+	# /auth allows public visitors by default; /admin checks its own bearer secret.
 	@gated not path /invite /admin /admin/*
 	forward_auth @gated {$SIGNAL_ADDR:127.0.0.1:8787} {
 		uri /auth
 	}
 
-	# /report (player bug reports) is gated above like everything else; signal.mjs checks the cookie again.
+	# Player reports use the same visitor identity for their rate limit.
 	@signal path /ws /auth /invite /turn /report /admin /admin/*
 	handle @signal {
 		reverse_proxy {$SIGNAL_ADDR:127.0.0.1:8787}
