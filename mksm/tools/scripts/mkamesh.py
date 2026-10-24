@@ -31,7 +31,9 @@ Format (offsets are into chameleon.ssf; section 0 at 0x800, COSTUME at 0xA00, RW
 
 Usage:
   mkamesh.py extract [SSF] [OUTDIR]    mka_chameleon.json + mka_chameleon.gltf/.bin, with self-checks
-  mkamesh.py preview [OUTDIR]          front/back/three-quarter renders (1024 px) and preview.png
+  mkamesh.py preview [OUTDIR]          front/back/three-quarter renders (1024 px), preview.png (+ the rainbow
+                                       cycle) and compare_mka.png (MKA's own frames of Chameleon, if present)
+  mkamesh.py check [SSF]               decode + self-checks only
 Defaults: SSF = remaster-data/chameleon/chameleon.ssf, OUTDIR = remaster-data/chameleon/model,
 textures from remaster-data/chameleon/mka (chameleon.py sources).
 """
@@ -54,6 +56,11 @@ TEX = os.path.join(DATA, 'mka')
 NAME = 'mka_chameleon'
 SCROLL_FRAME = 1070         # preview rainbow phase: frames of MKA's V scroll (0.0005/frame, 2000 per cycle); 1070
                             # puts the cloth (v 0.94-1.0) on the green rows of CHAMELEON_004
+GLASS = (0.2, 0.45)         # skin (flag 0x200): MKA draws it as lerp(256x256 screen copy, skin, Ad) (ELF 0x304ea0,
+                            # ALPHA_2 0x54); Ad is VU1 vertex alpha, not decoded: 0.2 and the 0.45 colour gain
+                            # (MKA's darker arena lighting) are matched by eye to the oracle run fighters_05_24
+SPECULAR = (0.35, 12.0)     # strength, exponent of the specular pass (ALPHA_2 0x58, Cs*Ad+Cd, Ad = texture alpha) that
+                            # MKA adds when field_04 > 0 (thresholds 10/25/40; all are 25 here): estimated
 
 
 # ---------------------------------------------------------------------------------------------------- RW stream
@@ -468,12 +475,17 @@ def self_check(m):
 
 # ---------------------------------------------------------------------------------------------------- outputs
 def blend_mode(mat):
-    """preview / glTF treatment per material: 'hidden' (dismemberment caps: the 21 cham_stump caps and the 7 skin
-    rings at the neck/shoulders/elbows/wrists, the only materials with rgba 0xffffff00), 'blend' (the translucent
-    shell over the rainbow cloth) or 'opaque' (leather/leg: their texture alpha is a gloss mask, not coverage --
-    the gloves, collar and trousers have nothing under them)"""
+    """preview / glTF treatment per material (MKA ELF: per-mesh draw 0x304720, setup 0x304ea0):
+    'hidden'  dismemberment caps: the 21 cham_stump caps and the 7 skin rings at the neck/shoulders/elbows/wrists,
+              the only materials with rgba 0xffffff00
+    'glass'   flags 0x200 (bare skin): blended over a copy of the screen, so Chameleon's skin is nearly invisible
+    'blend'   flags 0x40000000 (the trans shell over the rainbow cloth): held back, drawn after the other meshes
+              with (Cs-Cd)*As+Cd
+    'opaque'  the rest; texture alpha only masks the specular pass (leather/leg are solid in game)"""
     if mat['rgba'] == 0xFFFFFF00:
         return 'hidden'
+    if mat['flags'] & 0x200:
+        return 'glass'
     if mat['flags'] & 0x40000000:
         return 'blend'
     return 'opaque'
@@ -565,7 +577,9 @@ def write_gltf(m, path):
         materials.append({'name': '%d_%s' % (mi, mat['texture']), 'doubleSided': True,
                           'pbrMetallicRoughness': {'baseColorTexture': {'index': texi[png]}, 'metallicFactor': 0.0,
                                                    'roughnessFactor': 0.8},
-                          'alphaMode': 'BLEND' if mode == 'blend' else 'OPAQUE'})
+                          'alphaMode': 'OPAQUE' if mode == 'opaque' else 'BLEND'})
+        if mode == 'glass':
+            materials[-1]['pbrMetallicRoughness']['baseColorFactor'] = [GLASS[1], GLASS[1], GLASS[1], GLASS[0]]
         idx = add(np.asarray(m['tris'][mi], np.uint16).ravel(), 34963, 5123, 'SCALAR')
         prims.append({'attributes': attrs, 'indices': idx, 'material': len(materials) - 1, 'mode': 4})
     nodes = []
@@ -602,6 +616,7 @@ def extract(path=SSF, out=OUT):
 
 # ---------------------------------------------------------------------------------------------------- preview
 VIEWS = {'front': (0.0, 4.0), 'three_quarter': (40.0, 8.0), 'back': (180.0, 4.0)}   # camera azimuth, elevation
+ORACLE = '/home/darkwarro/Documents/Twitter/PS2_REA_2/analysis/runs/fighters_05_24/frames/frame_%05d.ppm'
 
 
 def load_textures(m, tex_dir=TEX):
@@ -649,6 +664,8 @@ def render(m, texs, view='front', size=1024, ss=2, frame=SCROLL_FRAME, only=None
     key = np.array([-0.45, 0.55, -1.0]); key /= np.linalg.norm(key)
     fill = np.array([0.7, 0.1, -0.5]); fill /= np.linalg.norm(fill)
     rim = np.array([0.0, 0.35, 1.0]); rim /= np.linalg.norm(rim)
+    half = key + [0, 0, -1.0]; half /= np.linalg.norm(half)               # Blinn half vector, viewer at -z
+    spec_rgb = (1.0, 1.0, 1.0)                                              # rgba 0xff7f7f7f: grey, 0x7f ~ 1.0
     yy = np.linspace(0, 1, S)[:, None, None]
     img = (np.array([0.25, 0.26, 0.29]) * (1 - yy) + np.array([0.13, 0.13, 0.15]) * yy) * np.ones((S, S, 3))
     zbuf = np.full((S, S), np.inf)
@@ -660,7 +677,7 @@ def render(m, texs, view='front', size=1024, ss=2, frame=SCROLL_FRAME, only=None
         if mode == 'hidden' or (only and mat['texture'] not in only):
             continue
         for tri in t:
-            (blend if mode == 'blend' else opaque).append((mi, tri))
+            (opaque if mode == 'opaque' else blend).append((mi, tri))
     blend.sort(key=lambda x: -pc[x[1], 2].mean())                    # back to front
 
     def raster(mi, tri, write):
@@ -696,12 +713,17 @@ def render(m, texs, view='front', size=1024, ss=2, frame=SCROLL_FRAME, only=None
         tex = sample(texs[mat['texture']], uv[:, 0] + mat['uv_scroll'][0] * frame, uv[:, 1] + mat['uv_scroll'][1] * frame)
         light = (0.40 + 0.75 * np.clip(n @ key, 0, 1) + 0.25 * np.clip(n @ fill, 0, 1))[:, None]
         col = tex[:, :3] * light + 0.18 * np.clip(n @ rim, 0, 1)[:, None] ** 2
+        if mat['field_04'] > 0 and blend_mode(mat) == 'opaque':      # specular pass, masked by texture alpha
+            spec = np.clip(n @ half, 0, 1) ** SPECULAR[1] * SPECULAR[0]
+            col = col + (spec[:, None] * tex[:, 3:4]) * np.array(spec_rgb)
         col = np.clip(col, 0, 1)
         if write:
             img[Y, X] = col
             zbuf[Y, X] = depth
         else:
             a = tex[:, 3:4]
+            if blend_mode(mat) == 'glass':
+                col, a = col * GLASS[1], a * GLASS[0]
             img[Y, X] = col * a + img[Y, X] * (1 - a)
 
     for mi, tri in opaque:
@@ -737,7 +759,27 @@ def preview(out=OUT, path=SSF, only=None, tag=''):
         d.text((384 * k + 6, 1024 + 60), 'frame %d' % (250 * k), fill=(220, 220, 220))
     paths.append(os.path.join(out, 'preview%s.png' % tag))
     sheet.save(paths[-1])
+    if os.path.exists(ORACLE % 6400) and not only:
+        paths.append(compare_mka(m, texs, out))
     return paths
+
+
+def compare_mka(m, texs, out):
+    """MKA in game (fighter 05 = Chameleon, left, back to the camera) next to the preview at a matching hue"""
+    shots = [Image.open(ORACLE % f).crop((120, 60, 300, 420)).resize((540, 1080), Image.LANCZOS) for f in (6400, 6600)]
+    VIEWS['back_left'] = (215.0, 10.0)
+    ours = [render(m, texs, 'back_left', 1080, frame=f).crop((270, 0, 810, 1080)) for f in (420, 700)]
+    del VIEWS['back_left']
+    sheet = Image.new('RGB', (540 * 4, 1080 + 30), (20, 20, 24))
+    d = ImageDraw.Draw(sheet)
+    labels = ('MKA in game (oracle run fighters_05_24, frame 6400)', 'mkamesh preview, scroll frame 420',
+              'MKA in game, frame 6600', 'mkamesh preview, scroll frame 700')
+    for k, (im, lab) in enumerate(zip((shots[0], ours[0], shots[1], ours[1]), labels)):
+        sheet.paste(im, (540 * k, 30))
+        d.text((540 * k + 8, 8), lab, fill=(220, 220, 220))
+    path = os.path.join(out, 'compare_mka.png')
+    sheet.save(path)
+    return path
 
 
 def main(argv):
