@@ -102,7 +102,10 @@
 00306078	fighter_state_trace	decomp/src/trace/fighter_state_trace.cpp (debug trace, PS2_TRACE_STATES)
 003195F8	fx_trace_bank_file	decomp/src/trace/fx_trace.cpp (debug trace, PS2_TRACE_FX)
 0031AE78	fx_trace_cue	decomp/src/trace/fx_trace.cpp (debug trace, PS2_TRACE_FX)
+0031B6A8	chameleon_sound_trim	decomp/src/mod/chameleon_sound.cpp (PS2_MOD)
+0031BB18	chameleon_sound_unload	decomp/src/mod/chameleon_sound.cpp (PS2_MOD)
 00326140	ObjectGetGroundY	decomp/src/paradox/object.cpp
+00379188	chameleon_sound_load	decomp/src/mod/chameleon_sound.cpp (PS2_MOD)
 00379988	PointLightIsOn	decomp/src/paradox/point_light.cpp
 0041ABB8	chameleon_voice	decomp/src/mod/chameleon.cpp (PS2_MOD)
 00474EDC	strlen	decomp/src/libc/strlen.cpp
