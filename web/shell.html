@@ -35,7 +35,7 @@
   button { background: #2a3a55; color: #fff; border: 0; padding: 6px 14px; border-radius: 4px; cursor: pointer; }
   #overlay { position: fixed; inset: 0; display: flex; align-items: center; justify-content: center; background: rgba(0,0,0,.6); padding: 16px; }
   #panel { display: flex; flex-direction: column; align-items: center; gap: 14px; max-width: 520px; text-align: center; }
-  #help { margin: 0; line-height: 1.5; color: #e8c37a; }
+  #help { margin: 0; line-height: 1.5; color: #e8c37a; text-align: left; } #help p, #help ol { margin: 0 0 .5em; }
   .controls { display: none; }
   body.touch { overscroll-behavior: none; touch-action: none; -webkit-user-select: none; user-select: none; }
   body.touch #stage { flex: none; width: 100%; aspect-ratio: 4 / 3; max-height: 60vh; }
@@ -146,7 +146,7 @@
   <textarea id="report-text" maxlength="4000" placeholder="What did you see, and what were you doing? e.g. Liu Kang flickers black after the jump kick in the courtyard"></textarea>
   <div class="row"><span id="report-say"></span><button id="report-cancel" type="button">Cancel</button><button id="report-send" type="submit">Send</button></div>
 </form></div>
-<div id="overlay"><div id="panel"><p id="help" hidden></p><button id="start" disabled>Loading…</button></div></div>
+<div id="overlay"><div id="panel"><div id="help" hidden></div><button id="start" disabled>Loading…</button></div></div>
 <script src="input.js"></script>
 <script src="pack.js"></script>
 <script>
@@ -785,13 +785,35 @@ async function canPresent(power) {
   return failed ? null : name;
 }
 
+// Step-by-step help for a browser without (hardware) WebGPU, by OS and browser: { text, steps }.
+// Same function in server/site/index.html (the landing page); keep the two in step.
 function webgpuHelp(onCpu) {
-  const firefox = navigator.userAgent.includes('Firefox/');
-  const linux = navigator.userAgent.includes('Linux') && !navigator.userAgent.includes('Android');
-  if (firefox) return 'WebGPU is turned off in this Firefox, so the game runs on the slow software renderer. Set dom.webgpu.enabled to true in about:config and reload.';
-  if (linux && onCpu) return 'WebGPU runs on the CPU here, so the game is slow. Turn on chrome://flags/#enable-vulkan as well, then restart the browser.';
-  if (linux) return 'WebGPU is turned off in this browser, so the game runs on the slow software renderer. Turn on chrome://flags/#enable-unsafe-webgpu and chrome://flags/#enable-vulkan, then restart the browser.';
-  return 'This browser has no WebGPU, so the game runs on the slow software renderer. A current Chrome, Edge or Safari is much faster.';
+  const ua = navigator.userAgent;
+  const os = /Android|iPhone|iPad/.test(ua) ? 'phone' : ua.includes('Windows') ? 'windows' : ua.includes('Mac OS') ? 'mac' : ua.includes('Linux') ? 'linux' : 'other';
+  const firefox = ua.includes('Firefox/'), edge = ua.includes('Edg/'), safari = !firefox && ua.includes('Safari/') && !ua.includes('Chrome/');
+  const flags = edge ? 'edge://flags' : 'chrome://flags', menu = edge ? 'Edge' : 'Chrome';
+  const slow = onCpu ? 'WebGPU runs on the CPU here, so the game is slow.' : 'This browser has WebGPU turned off, so the game runs on the slow software renderer.';
+  const accel = 'In ' + menu + ' Settings → System, turn on "Use graphics acceleration when available", then relaunch.';
+  const update = 'Update ' + menu + ' (menu → Help → About ' + menu + '): WebGPU needs version 113 or newer.';
+  const unsafe = 'paste ' + flags + '/#enable-unsafe-webgpu into the address bar, set it to Enabled, then relaunch. It turns WebGPU on for graphics chips the browser has not approved yet; it does not switch off any security.';
+  if (os === 'phone') return { text: 'The game needs a desktop or laptop computer.', steps: [] };
+  if (firefox && os !== 'windows') return { text: slow + ' Firefox has no WebGPU on this system yet.', steps: ['Open this page in Google Chrome or Microsoft Edge' + (os === 'mac' ? ' (or Safari on macOS 26 or newer).' : '.'), ...(os === 'linux' ? ['Then follow the steps Chrome shows here.'] : [])] };
+  if (firefox) return { text: slow, steps: ['Update Firefox (menu → Help → About Firefox): WebGPU needs version 141 or newer.', 'Still off: open about:config, set dom.webgpu.enabled to true, then reload.', 'Or open this page in Chrome or Edge.'] };
+  if (safari) return { text: slow, steps: ['Update to macOS 26 (Tahoe) or newer: its Safari has WebGPU on.', 'On older macOS: Safari → Settings → Advanced → turn on "Show features for web developers".', 'Then Develop menu → Feature Flags → turn on WebGPU, and reload this page.', 'Or open this page in Google Chrome.'] };
+  if (os === 'linux') return { text: slow, steps: [...(onCpu ? [] : ['Paste ' + flags + '/#enable-unsafe-webgpu into the address bar and set it to Enabled. (On Linux the browser does not turn WebGPU on by itself yet; this does not switch off any security.)']), 'Paste ' + flags + '/#enable-vulkan into the address bar and set it to Enabled.', 'Press Relaunch at the bottom of the page.', 'Laptop with an NVIDIA card: start the browser on it (prime-run ' + (edge ? 'microsoft-edge' : 'google-chrome') + '), or the game runs on the slow built-in graphics.'] };
+  if (os === 'windows') return { text: slow, steps: [update, accel, 'Update your graphics driver from NVIDIA, AMD or Intel.', 'Laptop with two graphics chips: Windows Settings → System → Display → Graphics → add ' + menu + ' → High performance.', 'Still off? Then ' + unsafe] };
+  if (os === 'mac') return { text: slow, steps: [update, accel, 'Still off? Then ' + unsafe] };
+  return { text: slow + ' A current Chrome, Edge or Safari on a desktop has WebGPU.', steps: [] };
+}
+
+// fills el with the help's sentence and numbered steps
+function showWebgpuHelp(el, help) {
+  const ol = document.createElement('ol');
+  for (const s of help.steps) ol.appendChild(document.createElement('li')).textContent = s;
+  const p = document.createElement('p');
+  p.textContent = help.text;
+  el.replaceChildren(p, ...(help.steps.length ? [ol] : []));
+  el.hidden = false;
 }
 
 async function chooseGpu() {
@@ -933,11 +955,7 @@ var Module = {
     Promise.all([fetch(Module.discUrl, { method: 'HEAD' }), chooseGpu().catch((e) => 'GPU check failed: ' + e)]).then(([r, gpu]) => {
       Module.discSize = Number(r.headers.get('content-length')) || 0;
       Module.gpuInfo = gpu;
-      if (Module.gpuHelp && !missing.length) {
-        const help = document.getElementById('help');
-        help.textContent = Module.gpuHelp;
-        help.hidden = false;
-      }
+      if (Module.gpuHelp && !missing.length) showWebgpuHelp(document.getElementById('help'), Module.gpuHelp);
       statusEl.textContent = (Module.discSize ? 'Disc ' + (Module.discSize / 1073741824).toFixed(2) + ' GB' : 'No disc image at ' + Module.discUrl) + ', ' + gpu;
       Module.removeRunDependency('disc');
     });
