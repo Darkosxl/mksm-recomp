@@ -69,6 +69,8 @@ FIGHTERS = {
     'cage': (90, 6822, 2831, 2978),
     'big_snake': (50, 6422, 1338, 1345),      # story boss (Reptile fight, map 0x90): the serpent
     'reptile_npc': (59, 6512, 1564, 1595),    # story boss (Reptile fight, map 0x90): Reptile himself
+    'cage_npc': (71, 6632, 1902, 1936),       # story Johnny Cage (model 'Cage', Versus Cage's 50-bone skeleton)
+    'cage_stone': (86, 6782, 2479, 2513),     # the same moves on the 'stonecage' model
 }
 COMMON = (0, 194)  # group 92: states shared by everyone
 
