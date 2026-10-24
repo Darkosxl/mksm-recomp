@@ -48,7 +48,7 @@ flip kick and a vanish; Kitana borrows her sister Mileena's low sweep. Each one 
 
 <p align="center"><img src="docs/media/chameleon.webp" alt="Chameleon switching colours and fighting" width="640"></p>
 
-Reptile's story costume hides a new fighter. At the select screen, press L3 on Reptile to turn him into
+Reptile's story costume hides a new fighter. At the select screen, press L1 (or L3) on Reptile to turn him into
 Chameleon, with his rainbow colours always cycling. In a fight, L3 switches his mode: yellow fights with Scorpion's
 specials and stance, blue with Sub-Zero's. His page: [docs/characters/chameleon](docs/characters/chameleon/README.md).
 
