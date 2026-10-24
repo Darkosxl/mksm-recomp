@@ -14,11 +14,13 @@ namespace ps2 {
 
 struct DecompFn {
     using Body = void (*)(Cpu &);
-    DecompFn(std::uint32_t addr, const char *name, Body body);
+    DecompFn(std::uint32_t addr, const char *name, Body body, bool mod = false);
 
     std::uint32_t addr;
     const char *name;
     Body body;
+    // PS2_MOD (a gameplay change, not a decompiled twin): switched by PS2_MOD, never by PS2_DECOMP, never recorded
+    bool mod;
     // read by the generated hook. Starts true so the first entry configures the hooks from the environment
     // (decomp_configure); afterwards true only while the function is decompiled-on or being recorded
     bool on = true;

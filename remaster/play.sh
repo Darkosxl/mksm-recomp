@@ -10,8 +10,9 @@ D=$(cd "$here/../.." && pwd)/remaster-data
 G=$here/games/mksm
 if [ "${1:-}" = --original ]; then
   shift
-  unset PS2_SCALE PS2_PNACH PS2_ASPECT PS2_TEX_PACK PS2_FIELD_FLAG
+  unset PS2_SCALE PS2_PNACH PS2_ASPECT PS2_TEX_PACK PS2_FIELD_FLAG PS2_MOD
 else
+  export PS2_MOD=${PS2_MOD:-1}  # gameplay mods (decomp/src/mod): Versus fighters get every upgrade
   export PS2_SCALE=${PS2_SCALE:-3x6} PS2_PNACH=$here/mksm/patches/widescreen.pnach PS2_ASPECT=16:9
   export PS2_FIELD_FLAG=4F4D68,66189C,67B758  # game field flag + 3D-offset conditions: fields line up exactly (gs.cpp field_spec)
   [ -d "$D/textures/pack-v2" ] && export PS2_TEX_PACK=$D/textures/pack-v2

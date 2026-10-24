@@ -20,6 +20,7 @@ std::vector<DecompFn *> &registry() {
 }
 
 bool g_configured = false;
+bool g_mods = false; // PS2_MOD: the gameplay mods (PS2_MOD(...) functions) replace their recompiled functions
 
 // the decompiled function running right now (decomp_run nests them)
 struct Frame {
@@ -104,7 +105,7 @@ bool usable(const char *what) {
 
 }
 
-DecompFn::DecompFn(std::uint32_t a, const char *n, Body b) : addr(a), name(n), body(b) { registry().push_back(this); }
+DecompFn::DecompFn(std::uint32_t a, const char *n, Body b, bool m) : addr(a), name(n), body(b), mod(m) { registry().push_back(this); }
 
 const std::vector<DecompFn *> &decomp_functions() { return registry(); }
 
@@ -120,15 +121,16 @@ void decomp_configure(const char *spec) {
     std::vector<std::uint32_t> list;
     parse(spec, all, list);
     warn_unknown("PS2_DECOMP", list);
-    std::size_t on = 0;
+    std::size_t on = 0, mods = 0;
     for (DecompFn *f : registry()) {
-        f->enabled = all || std::find(list.begin(), list.end(), f->addr) != list.end();
+        f->enabled = f->mod ? g_mods : all || std::find(list.begin(), list.end(), f->addr) != list.end();
         f->record = false;
         f->on = f->enabled;
-        on += f->enabled;
+        (f->mod ? mods : on) += f->enabled;
     }
     g_recording = {};
     if (on) std::fprintf(stderr, "[decomp] %zu of %zu decompiled functions replace the recompiled code\n", on, registry().size());
+    if (mods) std::fprintf(stderr, "[mod] %zu gameplay mods on\n", mods);
 }
 
 void decomp_record(const char *dir, const char *funcs, std::uint32_t count, std::uint32_t every, std::uint32_t skip) {
@@ -143,7 +145,7 @@ void decomp_record(const char *dir, const char *funcs, std::uint32_t count, std:
     warn_unknown("PS2_DIFFTEST_FUNCS", list);
     std::size_t n = 0;
     for (DecompFn *f : registry()) {
-        f->record = !g_recording.dir.empty() && (all || std::find(list.begin(), list.end(), f->addr) != list.end());
+        f->record = !f->mod && !g_recording.dir.empty() && (all || std::find(list.begin(), list.end(), f->addr) != list.end());
         f->entries = f->recorded = 0;
         f->on = f->enabled || f->record;
         n += f->record;
@@ -152,6 +154,8 @@ void decomp_record(const char *dir, const char *funcs, std::uint32_t count, std:
 }
 
 void decomp_configure_from_env() {
+    const char *mod = std::getenv("PS2_MOD");
+    g_mods = mod && *mod && std::strcmp(mod, "0") && std::strcmp(mod, "off");
     decomp_configure(std::getenv("PS2_DECOMP"));
     if (const char *dir = std::getenv("PS2_DIFFTEST_RECORD"); dir && *dir)
         decomp_record(dir, std::getenv("PS2_DIFFTEST_FUNCS"), env_u32("PS2_DIFFTEST_COUNT", 8), env_u32("PS2_DIFFTEST_EVERY", 1),
