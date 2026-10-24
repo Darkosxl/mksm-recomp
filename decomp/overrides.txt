@@ -1,6 +1,7 @@
 # EE functions whose entry gets the decomp hook (decomp/README.md): address, then anything (name, notes).
 # Each needs a PS2_DECOMP(<address>, name) in decomp/src; retranslate after editing (mksm/build.sh --retranslate).
 001B90B8	versus_round_upgrades	decomp/src/mod/versus_upgrades.cpp (PS2_MOD)
+001D6808	debug_call	decomp/src/trace/debug_call.cpp (debug tool, PS2_CALL)
 002124C0	ArchiveGetFile	decomp/src/fileio/fileiodrv.cpp
 00213C78	MatrixSetTranslation	decomp/src/math/vu0math.cpp
 00213C98	MatrixGetTranslation	decomp/src/math/vu0math.cpp
