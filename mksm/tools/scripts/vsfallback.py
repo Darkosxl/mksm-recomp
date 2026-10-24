@@ -30,6 +30,31 @@ from wad import Wad  # noqa: E402
 
 DIR = 0xF00  # direction requirement bits (0x100..0x800)
 UPGRADE = range(12660, 12690)  # special levels, combos, team (dt2.COND_NAMES)
+BUTTONS = ('l2', 'r2', 'l1', 'r1', 'triangle', 'circle', 'cross', 'square')   # pad bits 0x01..0x80
+# strings the ports made weaker than the original game (vsaudit.py, 2026-10-24: best damage over 5 press gaps, mod
+# vs no ports). The target continues these through its own cancel windows (ERG.DAT), which the "input taken" check
+# below does not see, so the port intercepts the original follow-up. Every unit rooted at one of these button paths
+# is left out, whichever donor offers it.
+# ponytail: measured list; the real fix is to count the anchor state's cancel-window follow-ups as taken inputs
+DROP = {
+    'baraka': {('square', 'square', 'triangle')},
+    'cage': {('square', 'square', 'square', 'triangle'), ('square', 'square', 'triangle'), ('triangle', 'circle')},
+    'kitana': {('square', 'square', 'square', 'triangle'), ('square', 'square', 'triangle')},
+    'reptile': {('square', 'square', 'circle'), ('square', 'square', 'square', 'r2')},
+}
+
+
+def buttons(press):
+    return '+'.join(b for k, b in enumerate(BUTTONS) if press >> k & 1)
+
+
+def bpath(tree, j):
+    """the buttons of the string from list top to node j"""
+    out = []
+    while j:
+        out.append(buttons(tree.nodes[j].press))
+        j = tree.nodes[j].parent
+    return tuple(out[::-1])
 
 
 def isig(n):
@@ -109,6 +134,10 @@ def port(tree, T, donor, wad, log, votes, links):
         if cur is None:
             stats['no prefix'] += 1
             log.append('  skip   %s: target has no string with these inputs' % path)
+            continue
+        if bpath(tree, cur) + (buttons(D.nodes[g].press),) in DROP.get(T.F.name, ()):
+            stats['dropped (audit)'] += 1
+            log.append('  skip   %s: weaker than the original string (DROP)' % path)
             continue
         if any(isig(tree.nodes[c]) == isig(D.nodes[g]) for c in chain):
             stats['input taken'] += 1
