@@ -36,3 +36,22 @@ PS2_MOD(002E7F30, chameleon_moves_cond) {
     tail(c, kSelf);
     decomp::hook_002E7F30.enabled = true;
 }
+
+// Upgrades for Reptile and Chameleon (group 84). The Experience store picks its page by fighter group, key = the group
+// if it is 0, 1, 82 or 88, else 0 (Liu Kang's), in FUN_001A30F0 and FUN_001A37A0 (a0 = the menu, a1 = group); Liu
+// Kang's levels gate nothing in Reptile's tree, so nothing bought did anything. Group 84 gets Scorpion's page: the
+// levels are per player slot, not per fighter (FUN_001BB3F8), so his Specials gate the donor specials' level variants
+// and his Combos the combo extensions versus_combos.inc gave Reptile.
+PS2_MOD(001A30F0, reptile_store_page) {
+    if (c.r[a1].w[0] == 84) c.r[a1].d[0] = 82;
+    decomp::hook_001A30F0.enabled = false;
+    tail(c, 0x001A30F0u);
+    decomp::hook_001A30F0.enabled = true;
+}
+
+PS2_MOD(001A37A0, reptile_store_moves) {
+    if (c.r[a1].w[0] == 84) c.r[a1].d[0] = 82;
+    decomp::hook_001A37A0.enabled = false;
+    tail(c, 0x001A37A0u);
+    decomp::hook_001A37A0.enabled = true;
+}

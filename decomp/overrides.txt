@@ -1,5 +1,7 @@
 # EE functions whose entry gets the decomp hook (decomp/README.md): address, then anything (name, notes).
 # Each needs a PS2_DECOMP(<address>, name) in decomp/src; retranslate after editing (mksm/build.sh --retranslate).
+001A30F0	reptile_store_page	decomp/src/mod/chameleon_moves.cpp (PS2_MOD)
+001A37A0	reptile_store_moves	decomp/src/mod/chameleon_moves.cpp (PS2_MOD)
 001B90B8	versus_round_upgrades	decomp/src/mod/versus_upgrades.cpp (PS2_MOD)
 001D11F8	versus_boss_moves_load	decomp/src/mod/versus_boss_moves.cpp (PS2_MOD)
 001D6808	debug_call	decomp/src/trace/debug_call.cpp (debug tool, PS2_CALL)
