@@ -9,6 +9,7 @@
 #include <cstring>
 #include <map>
 #include <memory>
+#include <utility>
 
 namespace ps2::disc {
 
@@ -182,6 +183,24 @@ bool read(std::uint32_t sector, std::uint32_t count, void *out) {
         zero_at = ~0u;
     }
     if (got < want) std::memset(static_cast<std::uint8_t *>(out) + got, 0, want - got);
+    // PS2_DISC_WRONG=<lsn hex>[-<lsn hex>] (diagnostic): the 256 KB browser cache chunks holding those sectors are served
+    // from 16 chunks (4 MB) later, as when the solo cache hands back a slot that read-ahead re-targeted (host/web.cpp
+    // want(), 059c731). Every read that overlaps them gets the wrong bytes for the overlap.
+    static const std::pair<std::uint32_t, std::uint32_t> wrong = [] {
+        const char *env = std::getenv("PS2_DISC_WRONG");
+        if (!env || !*env) return std::pair<std::uint32_t, std::uint32_t>{1, 0};
+        char *end = nullptr;
+        const auto first = static_cast<std::uint32_t>(std::strtoul(env, &end, 16));
+        const auto last = *end == '-' ? static_cast<std::uint32_t>(std::strtoul(end + 1, nullptr, 16)) : first;
+        return std::pair<std::uint32_t, std::uint32_t>{first / 128 * 128, last / 128 * 128 + 128};
+    }();
+    const std::uint32_t lo = std::max(sector, wrong.first), hi = std::min(sector + count, wrong.second);
+    if (lo < hi) {
+        std::fprintf(stderr, "[disc] PS2_DISC_WRONG: read lsn 0x%X count %u gets lsn 0x%X-0x%X from +4 MB\n", sector, count, lo,
+                     hi - 1);
+        g_reader((static_cast<std::uint64_t>(lo) + 2048) * kSector, static_cast<std::uint8_t *>(out) + (lo - sector) * kSector,
+                 static_cast<std::size_t>(hi - lo) * kSector);
+    }
     return got > 0 || !count;
 }
 
