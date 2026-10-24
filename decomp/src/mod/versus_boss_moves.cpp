@@ -78,7 +78,7 @@ constexpr std::int32_t kTeleportFade[] = {1593, 1592}; // t20_sung vanish, t10_s
 constexpr std::uint8_t kChamScorpion[] = {30, 31, 61, 67, 69, 70, 71, 73, 78, 79, 108, 109, 110, 131, 132, 133, 134,
                                           135, 142, 143, 146};
 constexpr std::uint8_t kChamSubzero[] = {39, 41, 43, 45, 46, 81, 96, 97, 99, 100, 114, 115, 116, 128, 129, 130, 131,
-                                         132, 133, 135, 137, 139};
+                                         132, 133, 134, 135, 136, 137, 138, 139};
 constexpr std::int16_t kSpearParts[] = {155, 156};
 
 constexpr Port kPorts[] = {

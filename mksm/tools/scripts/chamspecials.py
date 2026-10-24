@@ -25,6 +25,10 @@ BASE = 12723                       # 12723..12738, after the game's last id 1272
 SPECIAL = 0x10000                  # requirement bit: R1 held
 DONORS = (('scorpion', 1), ('subzero', 2))
 GREEN = 3
+# ponytail: 200 clip slots per fighter (Reptile 144 + boss 9 leave 47) and these do not fit: g30's g31 (with its 4
+# partners), s20's v00 and q00's r20; g30, s20 and q00 return to stance without them (w30 playtest). Free slots (an
+# unused Reptile clip) would bring them back.
+NO_SLOT = {('scorpion', 62), ('scorpion', 147), ('subzero', 140)}
 
 
 def roots(f, nodes, lists):
@@ -97,10 +101,16 @@ def add(tree, wad, load=None):
             tree.nodes[j].cond = gate(1, 1 << (mode - 1))
             grafted.add(j)
             taken[(k, D.nodes[i].press & 0xFF)] |= 1 << (mode - 1)
-        for s in list(reach):
-            p = st[s - D.first]['partner']
-            if D.first <= p < D.end:
-                reach.add(p)
+        # plus each state's partner and the next state its frame event 86 (value 1) moves on to; without that one a
+        # held state such as Sub-Zero's p10 loops forever (w30)
+        todo = list(reach)
+        while todo:
+            s = todo.pop()
+            nxt = [st[s - D.first]['partner']] + [s + e[3] for e in D.state_events(s - D.first) if e[1] == 86]
+            for t in nxt:
+                if D.first <= t < D.end and t not in reach and (name, t - D.first) not in NO_SLOT:
+                    reach.add(t)
+                    todo.append(t)
     # Reptile's side: every other special root that plays a move (his own, the boss's, retargeted or added by
     # vsboss.py), not the common-state roots of lists 20-24
     f, gated = tree.f, 0
