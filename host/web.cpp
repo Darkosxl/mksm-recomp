@@ -232,7 +232,14 @@ Slot *find_slot(std::uint64_t index) {
 
 Slot *want(std::uint64_t index) {
     if (index * kChunk >= g_disc_size) return nullptr;
-    if (Slot *s = find_slot(index)) return s;
+    // A hit counts as a use. Otherwise a slot read-ahead filled long ago is the least recently used one when the
+    // game finally reads it, and the read_ahead() right after want() in chunk() re-targets it to a later chunk:
+    // chunk() then waits on it and hands the game 256 KB from the wrong place on the disc (solo play only;
+    // chunk_blocking() calls want() again each pass).
+    if (Slot *s = find_slot(index)) {
+        s->used = ++g_use_clock;
+        return s;
+    }
     Slot *victim = nullptr;
     for (Slot &s : g_slots) {
         const std::uint32_t state = s.state.load(std::memory_order_acquire);
