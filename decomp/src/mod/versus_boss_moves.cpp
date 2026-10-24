@@ -7,6 +7,8 @@
 // register the callback hooked here) gets 6 of the story boss Reptile's states (group 59).
 // Port 1: Johnny Cage (group 90) gets the story Johnny Cage's (group 71: model 'Cage', his skeleton) counter strike and
 // vanish / reappear (mksm/tools/scripts/vsboss_cage.py); t20_sung / t10_sung are the same clips as the boss Reptile's.
+// Port 2: Baraka (group 83, any mode) gets 2 of the story boss Baraka's states (group 56: GAMEDATA.WAD 6482 ERG.DT2,
+// 6483 ERG.DAT, 6484 nim.rtt; 15 KB): no teleport, no fades, no cancel windows (group 56 has none).
 //
 // How a state plays (mksm/tools/scripts/fstates.py): global state s -> anim descriptor DAT_006C8A28[s] (u32[3010]),
 // descriptor d = 8 bytes in the state DB at 0x6B3000 (+4: table of {u8 format, u8 channels, u16 frames, u32 clip + 6});
@@ -83,12 +85,16 @@ constexpr std::uint32_t kEndOfState = 0x00303B00u;        // set-state's return 
 // the states his command tree reaches (vsboss_cage.py): d10_cntr 1916, t10_sung 1934, t20_sung 1935
 constexpr std::uint8_t kCageMoves[] = {14, 32, 33};
 constexpr std::int32_t kCageFade[] = {1935, 1934};        // t20_sung vanish, t10_sung reappear
+// the states his command tree reaches (vsboss_baraka.py): d30_cntr 1480, t02_misc 1507 (no partner state)
+constexpr std::uint8_t kBarakaBossMoves[] = {15, 42};
 
 constexpr Port kPorts[] = {
     {"Versus Reptile <- story boss Reptile", 84, 6512, 1564, kBossMoves, std::size(kBossMoves), 1592, 450.0f, kVanish,
      kTeleportFade, std::size(kTeleportFade), nullptr, 0, kZero},
     {"Versus Cage <- story Cage", 90, 6632, 1902, kCageMoves, std::size(kCageMoves), 1934, 450.0f, 1935, kCageFade,
      std::size(kCageFade), nullptr, 0, kZero},
+    {"Versus Baraka <- story boss Baraka", 83, 6482, 1465, kBarakaBossMoves, std::size(kBarakaBossMoves), -1, 0.0f, -1,
+     nullptr, 0, nullptr, 0, kZero},
 };
 
 constexpr std::uint32_t kAlloc = 0x0020F058u;      // (heap, size, best fit, file, line): FUN_0020F058
@@ -587,12 +593,13 @@ PS2_MOD(00303340, versus_boss_moves_state) {
     bool fade = false;
     for (std::uint32_t i = 0; i < n; ++i) {
         const Port &p = *port_of(hs[i]);
-        if (cur == p.vanish && s != cur && c.r[ra].w[0] == kEndOfState) c.r[a1].d[0] = static_cast<std::uint32_t>(s = p.teleport);
+        if (p.vanish >= 0 && cur == p.vanish && s != cur && c.r[ra].w[0] == kEndOfState)
+            c.r[a1].d[0] = static_cast<std::uint32_t>(s = p.teleport);
     }
     for (std::uint32_t i = 0; i < n; ++i) {
         const Port &p = *port_of(hs[i]);
         if (loaded_state(p, s)) apply(hs[i]);
-        if (s == p.teleport && cur != s) teleport(p, fighter);
+        if (p.teleport >= 0 && s == p.teleport && cur != s) teleport(p, fighter);
         fade |= in(p.fade, p.fade_count, cur) && !in(p.fade, p.fade_count, s);
     }
     decomp::hook_00303340.enabled = false;
