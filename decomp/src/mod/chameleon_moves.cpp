@@ -56,3 +56,45 @@ PS2_MOD(001A37A0, reptile_store_moves) {
     tail(c, 0x001A37A0u);
     decomp::hook_001A37A0.enabled = true;
 }
+
+// Scorpion's spear and Sub-Zero's ice blast on the ground (command list 0) carry requirement bit 0x800000000000, which
+// FUN_0016B950 checks with the mode controller's virtual 0x11C (DAT_00524D1C, vtable 0x57ABC0): FUN_001C4A88(ctl,
+// fighter) passes only groups 52, 55, 82 and 88, and in Versus (or with FUN_001D8F08) not after a spear or ice blast
+// reached frame 20 (FUN_001EB378 -> FUN_00167458(fighter) sets (fighter +0x2C00) +0x7C for those groups and states
+// 2125 / 2644). Only donor nodes carry the bit (none of Reptile's own), so a Chameleon fighter is shown to both as
+// Scorpion (group 82; both functions treat 82 and 88 alike) for the one call; the mode gates still pick the nodes.
+namespace {
+
+constexpr std::uint32_t kSpearRule = 0x001C4A88u, kSpearFlag = 0x00167458u;
+constexpr std::uint16_t kAsDonor = 82;
+
+// the original with the fighter's group shown as kAsDonor; guest code run from a hook must not be preempted (a thread
+// switch would unwind the host stack with the group still swapped), so the budget is lifted around it
+void as_donor(Cpu &c, std::uint32_t fighter, DecompFn &hook) {
+    const std::uint16_t group = rd<std::uint16_t>(fighter + 0x1E0E);
+    const std::int32_t budget = c.budget;
+    c.budget = 0x40000000;
+    wr<std::uint16_t>(fighter + 0x1E0E, kAsDonor);
+    hook.enabled = false;
+    const bool back = call(c, hook.addr, Ra{c.r[ra].w[0]});
+    hook.enabled = true;
+    wr<std::uint16_t>(fighter + 0x1E0E, group);
+    c.budget = budget;
+    (void)back; // control left: the machine resumes in the caller, group restored
+}
+
+}
+
+PS2_MOD(001C4A88, chameleon_spear_rule) {
+    if (chameleon_is(c.r[a1].w[0])) return as_donor(c, c.r[a1].w[0], decomp::hook_001C4A88);
+    decomp::hook_001C4A88.enabled = false;
+    tail(c, kSpearRule);
+    decomp::hook_001C4A88.enabled = true;
+}
+
+PS2_MOD(00167458, chameleon_spear_flag) {
+    if (chameleon_is(c.r[a0].w[0])) return as_donor(c, c.r[a0].w[0], decomp::hook_00167458);
+    decomp::hook_00167458.enabled = false;
+    tail(c, kSpearFlag);
+    decomp::hook_00167458.enabled = true;
+}
