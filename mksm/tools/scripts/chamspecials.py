@@ -45,8 +45,9 @@ def gate(donor, mask):
 def add(tree, wad, load=None):
     """graft the donors' specials into tree (Reptile's vscombos.Tree) and gate the special roots; load (dict) gets
     donor name -> set of donor global states the grafted nodes reach (plus their partners)"""
-    load = load if load is not None else {}
+    load = tree.cham_load = load if load is not None else {}
     taken = collections.defaultdict(int)     # (list, button) -> modes with a donor special there
+    grafted = set()
     for name, mode in DONORS:
         D = dt2.Fighter(name, wad)
         st = fstates.states(name, wad)
@@ -66,22 +67,28 @@ def add(tree, wad, load=None):
             assert D.nodes[i].cond == 0, (name, i)
             j = graft(i, 0, tree.top(k))
             tree.nodes[j].cond = gate(1, 1 << (mode - 1))
+            grafted.add(j)
             taken[(k, D.nodes[i].press & 0xFF)] |= 1 << (mode - 1)
         for s in list(reach):
             p = st[s - D.first]['partner']
             if D.first <= p < D.end:
                 reach.add(p)
+    # Reptile's side: every other special root that plays a move (his own, the boss's, retargeted or added by
+    # vsboss.py), not the common-state roots of lists 20-24
     f, gated = tree.f, 0
-    for k, i in list(roots(f, tree.nodes, f.lists)):
-        n = tree.nodes[i]
-        mask = 7 & ~taken[(k, n.press & 0xFF)]
-        if mask == 7 or i in tree.added:
-            continue
-        assert n.cond == 0, i
-        n.cond = gate(0, mask)
-        # versus_combos.cpp writes a u32 at the field: keep the disc's +0x2E
-        tree.links.append((i, 0x2C, n.cond | int.from_bytes(n.tail[:2], 'little') << 16))
-        gated += 1
+    for k, h in sorted(f.lists.items()):
+        for i in tree.top(k):
+            n = tree.nodes[i]
+            mask = 7 & ~taken[(k, n.press & 0xFF)]
+            if not n.req & SPECIAL or n.state < dt2.COMMON[1] or i in grafted or mask == 7:
+                continue
+            assert n.cond == 0, i
+            n.cond = gate(0, mask)
+            if i < tree.n_disc - 1:
+                # versus_combos.cpp writes a u32 at the field: keep the disc's +0x2E
+                tree.links.append((i, 0x2C, n.cond | int.from_bytes(n.tail[:2], 'little') << 16))
+            gated += 1
+    tree.cham_counts = (len(grafted), gated)
     return gated
 
 
@@ -91,11 +98,10 @@ def main(argv):
         return 2
     import vsfallback
     wad = Wad()
-    tree = vsfallback.build('reptile', wad)
-    n0 = len(tree.added)
-    load = {}
-    gated = add(tree, wad, load)
-    print('%d nodes added (after %d of vsfallback/vsboss), %d Reptile roots gated' % (len(tree.added) - n0, n0, gated))
+    tree = vsfallback.build('reptile', wad)      # calls add()
+    load = tree.cham_load
+    print('%d donor roots grafted (%d nodes added in all), %d Reptile roots gated' % (
+        tree.cham_counts[0], len(tree.added), tree.cham_counts[1]))
     total = 0
     for name, _ in DONORS:
         first = dt2.FIGHTERS[name][2]
