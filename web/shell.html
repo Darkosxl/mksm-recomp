@@ -547,7 +547,7 @@ canvas.addEventListener('dblclick', toggleFullscreen);
 window.mksm = {
   kill(player = 1) {
     if (!Module._ps2web_kill_player) return 'game not running';
-    return Module._ps2web_kill_player(player - 1) ? 'player ' + player + ' dies next frame' : 'not in a lockstep session';
+    return Module._ps2web_kill_player(player - 1) ? 'player ' + player + ' dies next frame' : 'off in a 2-player online session';
   },
 };
 // F8: download a savestate of this moment (bug reports; load it with ?state=)
