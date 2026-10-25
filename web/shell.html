@@ -864,14 +864,36 @@ requestAnimationFrame(countShown);
 // Far from the disc (a host-mode guest, a VPS): a service worker keeps every disc block it has read in Cache Storage,
 // and prefetchDisc() pulls the game data files in the background, so level loads stop waiting on the network.
 const remoteDisc = !['localhost', '127.0.0.1', '[::1]'].includes(location.hostname) && 'serviceWorker' in navigator && !params.has('nodisccache');
+// The threads need cross-origin isolation: COOP and COEP on the page, its scripts and its workers. Our servers send
+// them; when a page is secure but not isolated, something between left them out (a plain static host, a proxy or
+// antivirus that strips headers) or the browser refuses isolation. The disc-sw.js?coi variant of the service worker
+// adds the headers to every same-origin response, which settles the first case.
+const needCoi = !window.crossOriginIsolated && isSecureContext && 'serviceWorker' in navigator && !params.has('nocoi');
+const swUrl = needCoi ? 'disc-sw.js?coi' : 'disc-sw.js';
+// Under the right worker already, or the coi worker is in control and the page is still not isolated: the browser
+// itself refuses, and another reload would not change that.
+const underWorker = (sw) => !!sw && (!needCoi || sw.scriptURL.endsWith('?coi'));
+const coiRetry = needCoi && !underWorker(navigator.serviceWorker.controller);
 // The game's threads (workers) must start under the service worker too, so the first visit installs it and reloads once.
-const discCacheReady = !remoteDisc ? Promise.resolve(false) : (async () => {
-  if (navigator.serviceWorker.controller) return true;
-  await navigator.serviceWorker.register('disc-sw.js');
+const discCacheReady = !(remoteDisc || needCoi) ? Promise.resolve(false) : (async () => {
+  if (underWorker(navigator.serviceWorker.controller)) return true;
+  const reg = await navigator.serviceWorker.register(swUrl);
   await navigator.serviceWorker.ready;
+  // a changed script (disc-sw.js -> ?coi) installs beside the old active worker: wait until the new one has taken over
+  const fresh = reg.installing || reg.waiting;
+  if (fresh && fresh.state !== 'activated') {
+    await new Promise((resolve) => fresh.addEventListener('statechange', () => ['activated', 'redundant'].includes(fresh.state) && resolve()));
+  }
   location.reload();
   return new Promise(() => {}); // the reload takes over
 })().catch((e) => (console.warn('disc cache off:', e), false));
+
+// Why a page is not cross-origin isolated although the server sends COOP and COEP.
+function isolationHelp() {
+  if (!isSecureContext) return 'The page is open over plain http, where browsers turn off threads and WebGPU: open it over https, or as http://localhost rather than http://<address>.';
+  if (window !== window.top) return 'The game is embedded in another page, which blocks cross-origin isolation: open it in a tab of its own.';
+  return 'The browser refused cross-origin isolation although the server sent the COOP and COEP headers. Usual causes: site isolation turned off (chrome://flags/#site-isolation-trial-opt-out), an antivirus web shield or extension that strips response headers, or an in-app browser. Try a plain Chrome or Edge window.';
+}
 
 async function prefetchDisc() {
   const BLOCK = 1 << 20, size = Module.discSize;
@@ -1095,9 +1117,14 @@ async function startSession() {
 updateControls();
 if (missing.length) {
   const help = document.getElementById('help');
-  help.textContent = 'This browser cannot run the game yet. It lacks ' + missing.join(', ') + '. A current Chrome or Edge has everything it needs.';
+  if (coiRetry) {
+    help.textContent = 'The server did not send the COOP and COEP headers the game threads need. The page adds them itself and reloads once.';
+  } else {
+    const why = window.crossOriginIsolated ? '' : ' ' + isolationHelp();
+    help.textContent = 'This browser cannot run the game yet. It lacks ' + missing.join(', ') + '.' + why + ' A current Chrome or Edge on a https page has everything it needs.';
+    document.getElementById('start').textContent = 'Unsupported browser';
+  }
   help.hidden = false;
-  document.getElementById('start').textContent = 'Unsupported browser';
 }
 
 document.getElementById('start').addEventListener('click', async () => {

@@ -1,7 +1,16 @@
 // Service worker for players who stream the disc from far away (a host-mode guest, a VPS): every Range read of
 // disc.iso is served from 1 MiB blocks kept in Cache Storage, so a block crosses the network at most once, and the
-// page can prefetch the game data in the background (shell.html prefetchDisc). Other requests pass through untouched.
+// page can prefetch the game data in the background (shell.html prefetchDisc). Other requests pass through untouched,
+// unless the worker was registered as disc-sw.js?coi: then every same-origin response also gets the COOP and COEP
+// headers the game threads need (SharedArrayBuffer), for servers that leave them out (a plain static host, a proxy
+// or antivirus that strips them). The page registers that variant when it finds itself not cross-origin isolated.
 const BLOCK = 1 << 20;
+const COI = new URL(self.location.href).searchParams.has('coi');
+const ISOLATION = {
+  'Cross-Origin-Opener-Policy': 'same-origin',
+  'Cross-Origin-Embedder-Policy': 'require-corp',
+  'Cross-Origin-Resource-Policy': 'same-origin',
+};
 const CACHE = 'disc-v1';
 const inflight = new Map();
 const sizes = new Map(); // disc url -> Promise<total bytes>
@@ -98,11 +107,24 @@ async function serve(request) {
   });
 }
 
+// Same bytes, with the isolation headers. Opaque and redirect responses (status 0) cannot be rebuilt and need none.
+function isolated(response) {
+  if (!COI || response.status === 0 || response.type !== 'basic') return response;
+  const headers = new Headers(response.headers);
+  for (const [name, value] of Object.entries(ISOLATION)) headers.set(name, value);
+  return new Response(response.body, { status: response.status, statusText: response.statusText, headers });
+}
+
 self.addEventListener('fetch', (event) => {
   const request = event.request;
-  if (request.method !== 'GET' || !new URL(request.url).pathname.endsWith('/disc.iso') || !request.headers.has('range')) return;
-  event.respondWith(serve(request).catch((e) => {
-    console.warn('disc cache:', e.message, '- falling back to the network');
-    return fetch(request);
-  }));
+  if (request.method !== 'GET') return;
+  const url = new URL(request.url);
+  if (url.pathname.endsWith('/disc.iso') && request.headers.has('range')) {
+    event.respondWith(serve(request).catch((e) => {
+      console.warn('disc cache:', e.message, '- falling back to the network');
+      return fetch(request);
+    }).then(isolated));
+  } else if (COI && url.origin === self.location.origin) {
+    event.respondWith(fetch(request).then(isolated));
+  }
 });

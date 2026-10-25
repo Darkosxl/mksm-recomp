@@ -24,6 +24,12 @@ mksm/build.sh <your.iso> --web [--jobs 3]     # = scripts/setup.sh --web-only (e
 python3 scripts/serve.py build/web-mksm games/mksm/disc.iso    # COOP/COEP + HTTP Range, http://127.0.0.1:8620/
 ```
 
+- The threads need cross-origin isolation (COOP + COEP). Caddy, host.mjs and serve.py send the headers. A server that
+  does not (a plain static host, a header-stripping proxy) still works: the page registers `disc-sw.js?coi`, which adds
+  the headers to every same-origin response, and reloads once (`?nocoi` turns that off). What nothing fixes: a plain
+  `http://<address>` page (not a secure context, so no SharedArrayBuffer and no WebGPU; `http://localhost` is fine), the
+  game inside an iframe or in-app browser, or Chrome with site isolation turned off. The page says which it is.
+
 - Chrome or Edge on Linux needs `--enable-unsafe-webgpu --enable-features=Vulkan`. On a hybrid laptop the page
   requests the `high-performance` adapter, which is the NVIDIA GPU. Add `?gpu=low` to force the iGPU.
 - URL parameters (from `web/shell.html`):
