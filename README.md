@@ -119,9 +119,9 @@ Pick Ko-op in the game's menus. The keyboard is always player 1. The browser wor
 
 ## Online co-op
 
-In the browser, **Play** shows your code (`ABCD-EFGH`) and a link to copy. Your friend types the code into **Join** or
-opens the link. They can join at any time, even mid-level, and the game uses your memory card. Their own saves are not
-touched.
+In the browser, **Play** shows your invite link (`mkshaolinmonks.com/play/ABCD-EFGH`). **Copy link** and send it: your
+friend opens it and lands straight in your game. They can also type the code into **Join**. They can join at any time,
+even mid-level, and the game uses your memory card. Their own saves are not touched.
 
 Desktop builds have their own online modes. See [Development](#development).
 

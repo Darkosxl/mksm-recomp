@@ -100,6 +100,7 @@
     background: rgba(0, 0, 0, .45); border: 1px dashed var(--gold-dk); border-radius: 4px; user-select: all;
   }
   .code.dim { color: #5d5146; text-shadow: none; user-select: none; }
+  .code.url { font-size: clamp(1rem, 4.4vw, 1.3rem); letter-spacing: .02em; text-indent: 0; word-break: break-all; }
   .msg { margin: .65rem 0 0; font-size: .95rem; overflow-wrap: anywhere; }
   .msg:empty { display: none; }
   .msg[data-kind=err] { color: var(--err); }
@@ -222,14 +223,14 @@
     <p id="hello" class="hello">Welcome, <strong id="hello-nick"></strong><button id="edit-nick" class="link" type="button">Edit</button></p>
 
     <section class="card">
-      <h2>Your code</h2>
-      <div id="code" class="code dim">····-····</div>
+      <h2>Your invite link</h2>
+      <div id="link" class="code url dim"></div>
       <div class="row">
+        <button id="copy-link" class="primary" type="button" disabled>Copy link</button>
         <button id="copy-code" type="button" disabled>Copy code</button>
-        <button id="copy-link" type="button" disabled>Copy link</button>
       </div>
       <input id="copy-field" class="wide" type="text" readonly hidden aria-label="Text to copy">
-      <p class="muted small">Friends join your game with this code. It stays the same.</p>
+      <p class="muted small">Send the link to a friend: it opens straight into your game. They can also type your code <strong id="code">····-····</strong> into Join. Both stay the same.</p>
       <p id="code-msg" class="msg" role="status"></p>
       <button id="retry" class="link" type="button" hidden>Try again</button>
       <button id="play" class="play" type="button">Play</button>
@@ -415,11 +416,13 @@ addEventListener('pageshow', (e) => {
 // ---- your code ----
 
 let myCode = null, codeReq = Promise.resolve(null), codeSeq = 0;
+const inviteLink = (code) => location.host + '/play/' + code; // what is shown; the copy adds the scheme
 function requestCode() {
   const seq = ++codeSeq;
   myCode = null;
   $('code').textContent = '····-····';
-  $('code').classList.add('dim');
+  $('link').textContent = inviteLink('····-····');
+  $('link').classList.add('dim');
   $('copy-code').disabled = $('copy-link').disabled = true;
   $('retry').hidden = true;
   say($('code-msg'), '');
@@ -428,7 +431,8 @@ function requestCode() {
     if (!CODE.test(reply.code)) throw new Error('The server sent a bad code.');
     myCode = reply.code;
     $('code').textContent = pretty(myCode);
-    $('code').classList.remove('dim');
+    $('link').textContent = inviteLink(pretty(myCode));
+    $('link').classList.remove('dim');
     $('copy-code').disabled = $('copy-link').disabled = false;
     return myCode;
   }).catch((e) => {
@@ -462,7 +466,7 @@ async function copy(button, text) {
   button.timer = setTimeout(() => { button.textContent = button.dataset.label; }, 1500);
 }
 $('copy-code').onclick = () => myCode && copy($('copy-code'), pretty(myCode));
-$('copy-link').onclick = () => myCode && copy($('copy-link'), location.origin + '/play/' + myCode);
+$('copy-link').onclick = () => myCode && copy($('copy-link'), location.protocol + '//' + inviteLink(pretty(myCode)));
 
 $('play').onclick = () => go($('play'), $('code-msg'), async () => {
   const code = myCode || await requestCode();
