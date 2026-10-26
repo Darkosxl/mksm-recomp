@@ -13,6 +13,14 @@
 </p>
 
 
+<p align="center">
+  <a href="https://mkshaolinmonks.com">
+    <strong>🔥 PLAY NOW — mkshaolinmonks.com</strong>
+  </a>
+  <br>
+  <sub>Two monks. One link. Finish it together.</sub>
+</p>
+
 **Two monks, one couch or one link: the PS2 classic, recompiled and remastered.**
 
 Mortal Kombat: Shaolin Monks (PS2, NTSC-U, `SLUS_210.87`), statically recompiled to run natively on Linux and in the
