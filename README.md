@@ -16,7 +16,8 @@
 <p align="center">
   <a href="https://mkshaolinmonks.com">
     <img src="./assets/mk-dragon.png" width="24" height="24" alt="">
-    <strong> PLAY NOW — mkshaolinmonks.com</strong>
+    <strong> PLAY NOW — mkshaolinmonks.com </strong>
+    <img src="./assets/mk-dragon.png" width="24" height="24" alt="">
   </a>
   <br>
   <sub>Two monks. One link. Finish it together.</sub>
