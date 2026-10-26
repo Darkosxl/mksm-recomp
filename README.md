@@ -15,7 +15,7 @@
 
 <p align="center">
   <a href="https://mkshaolinmonks.com">
-    <img src="assets/mk-dragon.png" width="24" height="24" alt="Mortal Kombat">
+    <img src="./assets/mk-dragon.png" width="24" height="24" alt="">
     <strong> PLAY NOW — mkshaolinmonks.com</strong>
   </a>
   <br>
