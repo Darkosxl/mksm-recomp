@@ -43,6 +43,7 @@ constexpr KeyBinding kKeys[] = {
     {SDL_SCANCODE_K, kTriangle},     {SDL_SCANCODE_Q, kL1},             {SDL_SCANCODE_C, kR1},
     {SDL_SCANCODE_LSHIFT, kL2},      {SDL_SCANCODE_RSHIFT, kL2},        {SDL_SCANCODE_E, kR2},
     {SDL_SCANCODE_RETURN, kStart},   {SDL_SCANCODE_KP_ENTER, kStart},   {SDL_SCANCODE_BACKSPACE, kSelect},
+    {SDL_SCANCODE_V, kL3},  // Chameleon's mode switch
 };
 
 struct PadBinding {

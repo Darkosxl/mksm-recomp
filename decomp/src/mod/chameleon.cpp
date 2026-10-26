@@ -49,6 +49,13 @@
 //    (profile to slot on save, slot to profile on load, profile and checkpoint both ways), and a load takes the pick
 //    from it. Load Game skips the select screen, so without it a Chameleon save would come back as Reptile. The game
 //    never reads those bytes: with the mod off a marked card plays as before.
+//  - Levels: a Chameleon player's four Specials (upgrade moves 0-3) are at their maximum from the moment he loads. The
+//    levels are per player slot in the profile's upgrade record (*0x4D8B80 + 0xE4, what 0x001DA528 returns: float
+//    timers [2][28] at +0, u8 levels [2][28] at +0xE0; 0x001BB3F8(slot, move) reads the byte), so one write covers
+//    Reptile's, Scorpion's and Sub-Zero's specials in every mode. The player load writes the byte (max table
+//    0x4CC448) and a zero timer, what 0x001B85A8(slot, move, max, 0.0) leaves; a timed level would be cleared by
+//    0x001BB218. Later grants and purchases go through 0x001BB328, which never lowers a level at the max, and the
+//    store shows them owned. A new story, Ko-op, Load Game, a checkpoint and the next level all run the player load.
 //  - Name elsewhere (HUD, menus), 0x001E6EC8 (character name: get_string(0x67C + group)): "CHAMELEON" for group 84
 //    while a player is Chameleon. Story enemies that look like Reptile are other groups (0x3B), so they keep theirs.
 //  - Announcer: 0x0013B3B0 (lock: the cursor's "Reptile" line) arms a swap; 0x0041ABB8 (ADXT_StartAfs(adxt,
@@ -92,6 +99,8 @@ constexpr std::uint32_t kSlots = 321, kSlotSize = 0x430;  // TextureSlot: +0 pix
 constexpr std::uint32_t kPads = 0x006B4330u, kPadSize = 0x98;  // +0x1C connected bits, port * 0x98 + 0x24 held
 constexpr std::uint32_t kPortOf = 0x0050BC10u;        // u32 [slot * 2]: the pad port of player slot 0/1
 constexpr std::uint16_t kL3 = 0x0200, kL1 = 0x0004;
+constexpr std::uint32_t kUpgrades = 0xE4, kLevelsAt = 0xE0, kSlotLevels = 28, kSlotTimers = 112, kSpecials = 4;  // profile + kUpgrades
+constexpr std::uint32_t kMaxLevel = 0x004CC448u;  // u8[28], as versus_upgrades.cpp
 constexpr std::uint32_t kReptileName = 0x6D0;
 constexpr std::uint32_t kSelectCode = 0x0013B000u, kSelectCodeEnd = 0x0013F000u;  // FUN_0013B050..FUN_0013EF48
 constexpr std::uint32_t kAdxtStartMem2 = 0x0041AE28u;
@@ -504,17 +513,27 @@ int chameleon::mode(std::uint32_t fighter) {
     return is(fighter) ? player(rd<std::uint32_t>(fighter + 0x68) - 1).mode % kModes : -1;
 }
 
+// player slot's four Specials at their maximum for good: the byte and a zero timer (see Levels above)
+void unlock_specials(std::uint32_t slot) {
+    const std::uint32_t up = rd<std::uint32_t>(kProfile) + kUpgrades;
+    for (std::uint32_t move = 0; move < kSpecials; ++move) {
+        wr<std::uint8_t>(up + kLevelsAt + slot * kSlotLevels + move, ld8(kMaxLevel + move));
+        wr<std::uint32_t>(up + slot * kSlotTimers + move * 4, 0u);
+    }
+}
+
 PS2_MOD(001CE6E8, chameleon_costume) {
     const std::uint32_t who = c.r[a0].w[0], group = c.r[a1].w[0] & 0xFFFFu;
     if (who == 1 || who == 2) {
         const Player p = player(who - 1);
         const bool chameleon = group == kReptile && playing_story() && p.picked;
         p.chameleon = chameleon;
+        if (chameleon) unlock_specials(who - 1);
         if (playing_story()) wr<std::uint8_t>(rd<std::uint32_t>(kProfile) + kSaveMark + 1 - who, chameleon);
         p.served = 0, p.rslot = 0, p.rpage = 0xFF, p.heaplog = 0, p.blend = 0, p.blend_said = 0, p.build_lo = 0, p.build_hi = 0;
         wr<std::uint32_t>(kAltFlag[0], who == 1 && chameleon);
         wr<std::uint32_t>(kAltFlag[1], who == 2 && chameleon);
-        if (chameleon) std::fprintf(stderr, "[mod] chameleon: player %u loads as Chameleon\n", who);
+        if (chameleon) std::fprintf(stderr, "[mod] chameleon: player %u loads as Chameleon, specials at level %u\n", who, ld8(kMaxLevel));
     }
     decomp::hook_001CE6E8.enabled = false;
     tail(c, kLoadPlayer);

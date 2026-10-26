@@ -45,7 +45,7 @@ ignored while hosting (port 2 belongs to the network player).
 
 Player 2's controls: any gamepad the browser exposes with the standard mapping (press a button on it
 once so the browser reveals it), or the keyboard: `W A S D` left stick, arrows d-pad, `Space` ✕, `Esc`
-○, `J` □, `K` △, `Q` L1, `C` R1, `Shift` L2, `E` R2, `Enter` Start, `Backspace` Select.
+○, `J` □, `K` △, `Q` L1, `C` R1, `Shift` L2, `E` R2, `V` L3, `Enter` Start, `Backspace` Select.
 
 ## Playing over the internet
 

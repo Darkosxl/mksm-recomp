@@ -55,8 +55,8 @@ flip kick; Kitana borrows her sister Mileena's low sweep. Each one has a page wi
 <p align="center"><img src="docs/media/chameleon.webp" alt="Chameleon switching colours and fighting" width="640"></p>
 
 Reptile's story costume hides a new fighter. At the select screen, press L1 (or L3) on Reptile to turn him into
-Chameleon, with his rainbow colours always cycling. In a fight, L3 switches his mode: yellow fights with Scorpion's
-specials and stance, blue with Sub-Zero's. His page: [docs/characters/chameleon](docs/characters/chameleon/README.md).
+Chameleon, with his rainbow colours always cycling. In a fight, L3 (V on the keyboard) switches his mode: yellow fights
+with Scorpion's specials and stance, blue with Sub-Zero's. His specials are at full level from the start. His page: [docs/characters/chameleon](docs/characters/chameleon/README.md).
 
 ## Install (Linux)
 
@@ -144,6 +144,7 @@ The keyboard is player 1, on the desktop and in the browser.
 | Triangle | K |
 | L1 / R1 | Q / C |
 | L2 / R2 | Shift / E |
+| L3 | V |
 | Start | Enter |
 | Select | Backspace |
 | Fullscreen | F11 (desktop), F (browser) |

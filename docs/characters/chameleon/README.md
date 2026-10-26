@@ -27,7 +27,7 @@ picks whose specials he uses: Reptile's own, Scorpion's or Sub-Zero's.
 
 ## Colour modes (L3 in a fight)
 
-L3 during a fight cycles the modes. The modes change only his special moves and his stance:
+L3 (V on the keyboard, the left stick's click on a controller) during a fight cycles the modes. The modes change only his special moves and his stance:
 
 | Mode | Specials | Stance |
 |---|---|---|
@@ -83,9 +83,10 @@ follow-ups, not the donor's normal combos.
 
 ## Upgrades
 
-In story his specials need special levels, like everyone's. A new story has none, so buy them first. On `cham-int`
-Reptile and Chameleon buy from Scorpion's store page. Their own page is coming (branch `cham-store`). The donor modes
-use the same four special levels.
+His four specials are at their top level from the moment he loads: a new story, Ko-op, a loaded save. There is
+nothing to buy; the store (Scorpion's page for his cell) shows them owned. The levels are per player slot, so the
+same four cover Reptile's, Scorpion's and Sub-Zero's specials in every mode, with their level 2+ extras (charged
+spear, Hellfire Fist, Winter's Flurry). Combos and the platform abilities come from the story as for everyone.
 
 ## Known gaps
 

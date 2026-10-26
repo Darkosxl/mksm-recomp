@@ -8,7 +8,8 @@
   // the layout of OAleex's Shaolin Monks recomp, as host/window.cpp kKeys (keys by position), less Ctrl for Circle:
   // Ctrl + W (Circle + stick up) would close the tab outside fullscreen
   const keyMap = { ArrowUp: 4, ArrowRight: 5, ArrowDown: 6, ArrowLeft: 7, Space: 14, Escape: 13,
-                   KeyJ: 15, KeyK: 12, KeyQ: 10, KeyC: 11, ShiftLeft: 8, ShiftRight: 8, KeyE: 9, Enter: 3, NumpadEnter: 3, Backspace: 0 };
+                   KeyJ: 15, KeyK: 12, KeyQ: 10, KeyC: 11, ShiftLeft: 8, ShiftRight: 8, KeyE: 9, Enter: 3, NumpadEnter: 3, Backspace: 0,
+                   KeyV: 1 };  // L3 (Chameleon's mode switch): next to C (R1)
   // left stick: W up, A left, S down, D right (opposite keys cancel out)
   const stickKeys = new Set(['KeyW', 'KeyA', 'KeyS', 'KeyD']);
   // [standard Gamepad API button index, PS2 bit]
