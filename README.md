@@ -12,10 +12,6 @@
   <a href="LICENSE"><img alt="License: MIT" src="https://img.shields.io/badge/License-MIT-6b5520?style=for-the-badge&logo=opensourceinitiative&logoColor=white"></a>
 </p>
 
-> [!IMPORTANT]
-> **No game data is included.** You need your own legally obtained NTSC-U PS2 copy of *Mortal Kombat: Shaolin Monks*
-> (`SLUS_210.87`) and a disc image made from it. This repository is private and has to stay private:
-> `mksm/generated/` is the game's executable translated to C++.
 
 **Two monks, one couch or one link: the PS2 classic, recompiled and remastered.**
 
