@@ -81,7 +81,7 @@ remaster/play.sh --original    # the original look, same build and memory card
 
 ## Play in the browser
 
-Open your invite link to **`https://<our-domain>`**. The site is invite-only. It runs in these desktop browsers (the
+Open **[mkshaolinmonks.com](https://mkshaolinmonks.com)**. It runs in these desktop browsers (the
 game needs WebAssembly JSPI, which is why the versions are recent; the page says what is missing when a browser can't):
 
 | Browser | Version | Opens | Full speed (WebGPU) |
