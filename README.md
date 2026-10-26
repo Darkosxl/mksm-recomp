@@ -15,7 +15,8 @@
 
 <p align="center">
   <a href="https://mkshaolinmonks.com">
-    <strong>🔥 PLAY NOW — mkshaolinmonks.com</strong>
+    <img src="assets/mk-dragon.png" width="24" height="24" alt="Mortal Kombat">
+    <strong> PLAY NOW — mkshaolinmonks.com</strong>
   </a>
   <br>
   <sub>Two monks. One link. Finish it together.</sub>
