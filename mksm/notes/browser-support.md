@@ -63,6 +63,8 @@ only says "it runs").
 | Chrome 137 | Chrome for Testing 137.0.7151.119 | yes | ok | yes, 11.2 fps software | the threshold |
 | Chrome 145 | Chrome for Testing 145.0.7632.117 | yes | ok | yes, 11.0 fps software | |
 | Chrome 156 | Chrome for Testing 156.0.8078.47 | yes | ok | yes, 11.1 fps software | current stable |
+| Firefox 140 (ESR 140) | Playwright 1.54.0 firefox-1489 | yes | lacks JSPI | no | |
+| WebKit 26.0 | Playwright 1.54.0 webkit-2191 | yes | lacks JSPI | no | matches real Safari 26; WebKit 26.5 below is trunk with JSPI |
 | Firefox 153 | Playwright 1.62.0 firefox-1538 | yes | ok | **no: reload loop** | the disc cache worker never controls the reloaded page under Playwright's Firefox, so the page reloaded forever; fixed below (one reload per tab). Real Firefox 157 on Windows was fine |
 | Firefox 157 | Playwright 1.64.1 firefox-1555 | yes | ok | **no: reload loop**, then yes, 18.5 fps software after the fix (build 5566a97, no disc cache) | same |
 | WebKit 26.5 | Playwright 1.62.0 webkit-2336 | yes | ok | yes, 13.4 fps software | **not Safari 26**: Playwright's WebKit is trunk and already has JSPI; real Safari 26.4 lacks it (cloud row) |
