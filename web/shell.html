@@ -1121,6 +1121,18 @@ async function startSession() {
   return s;
 }
 
+// What this person should do, from the UA family: the versions alone do not say where the update button is.
+function updateHint() {
+  const ua = navigator.userAgent;
+  if (/Firefox\//.test(ua)) return 'Update Firefox (menu > Help > About Firefox) to 153 or newer.';
+  if (/Edg\//.test(ua)) return 'Update Edge (menu > Help and feedback > About) to 137 or newer.';
+  if (/OPR\//.test(ua)) return 'Update Opera to 121 or newer.';
+  if (/Chrome\//.test(ua)) return 'Update Chrome (menu > Help > About Google Chrome) to 137 or newer, then reopen this page.';
+  if (/Safari\//.test(ua) && /Mac OS X/.test(ua)) return 'Safari 27 is needed: System Settings > General > Software Update. macOS 14 Sonoma and older never get it, use Chrome there.';
+  if (/iPhone|iPad|Android/.test(ua)) return 'Phones and tablets are not supported, open it on a PC or Mac.';
+  return '';
+}
+
 updateControls();
 if (missing.length) {
   const help = document.getElementById('help');
@@ -1128,7 +1140,7 @@ if (missing.length) {
     help.textContent = 'The server did not send the COOP and COEP headers the game threads need. The page adds them itself and reloads once.';
   } else {
     const why = window.crossOriginIsolated ? '' : ' ' + isolationHelp();
-    help.textContent = 'This browser cannot run the game yet. It lacks ' + missing.join(', ') + '.' + why + ' Chrome or Edge 137, Firefox 153 and Safari 27 or newer have everything it needs, on a https page.';
+    help.textContent = 'This browser cannot run the game yet. It lacks ' + missing.join(', ') + '.' + why + ' ' + updateHint() + ' Chrome or Edge 137, Firefox 153 and Safari 27 or newer have everything it needs, on a https page.';
     document.getElementById('start').textContent = 'Unsupported browser';
   }
   help.hidden = false;
