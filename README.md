@@ -4,7 +4,7 @@
 
 <p align="center">
   <a href="#install-linux"><img alt="Native: Linux" src="https://img.shields.io/badge/Native-Linux-8b0000?style=for-the-badge&logo=linux&logoColor=white"></a>
-  <a href="#play-in-the-browser"><img alt="Browser: Chrome · Edge" src="https://img.shields.io/badge/Browser-Chrome%20%C2%B7%20Edge-1c1c1c?style=for-the-badge&logo=googlechrome&logoColor=white"></a>
+  <a href="#play-in-the-browser"><img alt="Browser: Chrome 137+ · Firefox 153+ · Safari 27+" src="https://img.shields.io/badge/Browser-Chrome%20137%2B%20%C2%B7%20Firefox%20153%2B%20%C2%B7%20Safari%2027%2B-1c1c1c?style=for-the-badge&logo=googlechrome&logoColor=white"></a>
   <img alt="Renderer: WebGPU · Vulkan" src="https://img.shields.io/badge/Renderer-WebGPU%20%C2%B7%20Vulkan-8b0000?style=for-the-badge&logo=webgpu&logoColor=white">
   <img alt="Remaster: 3x6 · 16:9 · HD textures" src="https://img.shields.io/badge/Remaster-3%C3%976%20%C2%B7%2016%3A9%20%C2%B7%20HD%20textures-a07418?style=for-the-badge">
   <img alt="Co-op: local + online" src="https://img.shields.io/badge/Co--op-local%20%2B%20online-8b0000?style=for-the-badge">
@@ -76,9 +76,22 @@ remaster/play.sh --original    # the original look, same build and memory card
 
 ## Play in the browser
 
-Open your invite link to **`https://<our-domain>`**. The site is invite-only. It needs desktop Chrome or Edge (WebGPU
-and WebAssembly JSPI). On Linux, first turn on `chrome://flags/#enable-unsafe-webgpu` and
-`chrome://flags/#enable-vulkan` and restart the browser.
+Open your invite link to **`https://<our-domain>`**. The site is invite-only. It runs in these desktop browsers (the
+game needs WebAssembly JSPI, which is why the versions are recent; the page says what is missing when a browser can't):
+
+| Browser | Version | Opens | Full speed (WebGPU) |
+|---|---|---|---|
+| Chrome, Edge, Brave, Vivaldi | 137 or newer (May 2025) | yes | Windows, macOS: yes. Linux: turn on `chrome://flags/#enable-unsafe-webgpu` and `chrome://flags/#enable-vulkan`, restart |
+| Opera | 121 or newer | yes | same as Chrome |
+| Firefox | 153 or newer (ESR 153 too) | yes | Windows and Apple-silicon Macs: yes. Linux and Intel Macs: software renderer, slow |
+| Safari | 27 or newer (macOS Sequoia, Tahoe or 27) | yes | macOS Tahoe or newer; Sequoia gets the software renderer |
+| Chrome 136-, Firefox 152-, Safari 26- | | no | Safari 26 is the newest on macOS Sonoma and earlier |
+| Phones, tablets, in-app browsers, iframes | | no | |
+
+Checked on real machines on 2026-10-26: Safari 27 on macOS 27 and Safari 26 on Tahoe (refused, as listed), Chrome 155
+and Firefox 157 on Windows 11, Chrome 113 to 156 on Linux. If the page says the browser lacks something, update the
+browser; if it says cross-origin isolation is missing on a browser from the table, the page is open over plain `http://`,
+inside another page, or an antivirus web shield strips the headers.
 
 - The first visit asks for a nickname. **Play** starts your own game, and **Play offline** starts a game nobody can
   join.
@@ -154,6 +167,7 @@ Controllers use the usual layout:
 | Browser | The original game at native resolution: 60 fps on an NVIDIA GPU (`mksm/notes/web-build.md`). The remaster at 3x6: 60.0 fps mean at the Foundry, measured headless on the same RTX 4050 (commit 5bbe284). |
 | Online co-op | Browser lockstep: a 22-minute two-browser run (NVIDIA host, Intel iGPU guest) with zero desyncs under injected faults (`mksm/notes/web-lockstep.md`). Desktop lockstep uses the same protocol and was tested on localhost (`mksm/notes/native-lockstep.md`). |
 | Decomp | In progress. See [decomp/README.md](decomp/README.md). |
+| Browser support | About 72% of desktop browser sessions worldwide can open the site (StatCounter, September 2026); WebAssembly JSPI is the gate, Safari 26 and older the biggest miss. The thresholds, the numbers and the measured matrix: `mksm/notes/browser-support.md`. |
 
 ### Layout
 
@@ -167,7 +181,7 @@ Controllers use the usual layout:
 | `server/` | Invite-only web hosting, signalling, lobby page and host mode: [server/README.md](server/README.md). |
 | `web/` | The browser page (`shell.html`), lockstep co-op (`lockstep.js`, protocol in `lockstep.md`), input, disc cache and texture pack streaming. |
 | `recomp/`, `runtime/`, `host/` | The recompilers (`eerecomp`, `vurecomp`), the emulated console, and the `ps2run` and web entry points. |
-| `scripts/` | Toolchain setup, the web build, a local server (`serve.py`), disc image tools. |
+| `scripts/` | Toolchain setup, the web build, a local server (`serve.py`), disc image tools, the browser checks (`coi_test.mjs`, `browser_matrix.mjs`, `browser_matrix_cloud.mjs`). |
 | `docs/netplay.md` | Streaming co-op (`--host`). |
 
 ### Building by hand

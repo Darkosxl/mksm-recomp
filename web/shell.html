@@ -873,10 +873,16 @@ const swUrl = needCoi ? 'disc-sw.js?coi' : 'disc-sw.js';
 // Under the right worker already, or the coi worker is in control and the page is still not isolated: the browser
 // itself refuses, and another reload would not change that.
 const underWorker = (sw) => !!sw && (!needCoi || sw.scriptURL.endsWith('?coi'));
-const coiRetry = needCoi && !underWorker(navigator.serviceWorker.controller);
+// One reload per tab and worker script: a browser whose worker never takes control of the reloaded page (Playwright's
+// Firefox does this) would otherwise reload forever. sessionStorage can throw where storage is blocked.
+const RELOADED = 'mksm-sw-reloaded';
+const reloadMark = (value) => { try { return value ? sessionStorage.setItem(RELOADED, value) : sessionStorage.getItem(RELOADED); } catch (e) { return null; } };
+const reloaded = reloadMark() === swUrl;
+const coiRetry = needCoi && !underWorker(navigator.serviceWorker.controller) && !reloaded;
 // The game's threads (workers) must start under the service worker too, so the first visit installs it and reloads once.
 const discCacheReady = !(remoteDisc || needCoi) ? Promise.resolve(false) : (async () => {
   if (underWorker(navigator.serviceWorker.controller)) return true;
+  if (reloaded) { console.warn('service worker not in control after the reload: disc cache off'); return false; }
   const reg = await navigator.serviceWorker.register(swUrl);
   await navigator.serviceWorker.ready;
   // a changed script (disc-sw.js -> ?coi) installs beside the old active worker: wait until the new one has taken over
@@ -884,6 +890,7 @@ const discCacheReady = !(remoteDisc || needCoi) ? Promise.resolve(false) : (asyn
   if (fresh && fresh.state !== 'activated') {
     await new Promise((resolve) => fresh.addEventListener('statechange', () => ['activated', 'redundant'].includes(fresh.state) && resolve()));
   }
+  reloadMark(swUrl);
   location.reload();
   return new Promise(() => {}); // the reload takes over
 })().catch((e) => (console.warn('disc cache off:', e), false));
@@ -1121,7 +1128,7 @@ if (missing.length) {
     help.textContent = 'The server did not send the COOP and COEP headers the game threads need. The page adds them itself and reloads once.';
   } else {
     const why = window.crossOriginIsolated ? '' : ' ' + isolationHelp();
-    help.textContent = 'This browser cannot run the game yet. It lacks ' + missing.join(', ') + '.' + why + ' A current Chrome or Edge on a https page has everything it needs.';
+    help.textContent = 'This browser cannot run the game yet. It lacks ' + missing.join(', ') + '.' + why + ' Chrome or Edge 137, Firefox 153 and Safari 27 or newer have everything it needs, on a https page.';
     document.getElementById('start').textContent = 'Unsupported browser';
   }
   help.hidden = false;
