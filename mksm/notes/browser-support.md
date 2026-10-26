@@ -32,7 +32,8 @@ browserslist cannot compute this; the numbers below come from StatCounter's per-
 ## Coverage, StatCounter desktop worldwide, September 2026
 
 Per-version CSV (`gs.statcounter.com/chart.php?device=Desktop&statType=Browser%20Version&...&csv=1`) crossed with the
-thresholds above (script: `coverage.mjs`, kept with the CSV in the session scratchpad; rerun it for a new month).
+thresholds above: `node scripts/browser_coverage.mjs mksm/notes/statcounter-desktop-version-2026-09.csv` (download a new
+month's CSV from the same URL to rerun).
 
 | | all desktop sessions | updatable only (no Win7/8.1-pinned Chrome/Edge 109 and Firefox 115, no Safari < 16, no "Chrome for Android") |
 |---|---|---|

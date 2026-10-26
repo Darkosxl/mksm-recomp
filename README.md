@@ -186,7 +186,7 @@ Controllers use the usual layout:
 | `server/` | Invite-only web hosting, signalling, lobby page and host mode: [server/README.md](server/README.md). |
 | `web/` | The browser page (`shell.html`), lockstep co-op (`lockstep.js`, protocol in `lockstep.md`), input, disc cache and texture pack streaming. |
 | `recomp/`, `runtime/`, `host/` | The recompilers (`eerecomp`, `vurecomp`), the emulated console, and the `ps2run` and web entry points. |
-| `scripts/` | Toolchain setup, the web build, a local server (`serve.py`), disc image tools, the browser checks (`coi_test.mjs`, `browser_matrix.mjs`, `browser_matrix_cloud.mjs`). |
+| `scripts/` | Toolchain setup, the web build, a local server (`serve.py`), disc image tools, the browser checks (`coi_test.mjs`, `browser_matrix.mjs`, `browser_matrix_cloud.mjs`, `browser_coverage.mjs`). |
 | `docs/netplay.md` | Streaming co-op (`--host`). |
 
 ### Building by hand
