@@ -413,6 +413,12 @@ bool alloc(Cpu &c, std::uint32_t heap, std::uint32_t size, std::uint32_t &block)
 
 // ponytail: one spill block of 432 KB; Scorpion's port is the one that needs it. More ports: a bigger guest RAM
 constexpr std::uint32_t kSpill = 0x00004000u, kSpillEnd = 0x00070000u;
+// What the heap must keep after a port: the fighter's effect system (FUN_0011FBA8: 129 nodes, context, 32 projectile
+// entries, pool; about 19 KB) is allocated from the same heap after the ports, and a failed allocation there is
+// skipped silently: the pool then has no entry table and every projectile event returns without a projectile
+// (Chameleon's Acid Spit, Spear, Freeze Blast all played their motion with nothing thrown while his heap had 21 KB
+// left). Plain Reptile runs with about 180 KB left; a port that would leave less spills or is skipped.
+constexpr std::uint32_t kReserve = 128u * 1024u;
 
 // the spill block is another fighter's load, still live (headers() terms)
 bool spill_held(std::uint32_t fighter) {
@@ -505,7 +511,7 @@ bool load(Cpu &c, const Port &p, std::uint32_t fighter, std::uint32_t heap, std:
     }
     while (img.size() % 16) img.push_back(0);
     const auto size = static_cast<std::uint32_t>(img.size());
-    if (!skip && heap_free(heap) < size + 256) {
+    if (!skip && heap_free(heap) < size + kReserve) {
         if (spilled || size > kSpillEnd - kSpill || spill_held(fighter)) skip = "no room in the heap";
         else block = kSpill, spilled = true;
     }
